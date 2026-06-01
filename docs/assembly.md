@@ -1,12 +1,10 @@
 # Assembly & Wiring Notes
 
-Build/wiring companion to the
-[PROJECT_IMPLEMENTATION_PLAN.md](../PROJECT_IMPLEMENTATION_PLAN.md). The canonical, full instructions
-live in the plan — this file is the quick on-the-bench reference. Capture your own photos as you go
-(great B-roll for the [video](../PROJECT_IMPLEMENTATION_PLAN.md#phase-9-youtube-video-plan)).
+On-the-bench build & wiring reference for LocalAiRobot. Pairs with the setup steps in the
+[README](../README.md). Capture your own photos as you go.
 
-> 📷 `docs/wiring.png` is referenced by the plan but is intentionally not committed (binary asset).
-> Drop your own annotated wiring photo/diagram there when you have one.
+> 📷 Drop your own annotated wiring photo/diagram at `docs/wiring.png` when you have one
+> (binary assets are intentionally not committed).
 
 ---
 
@@ -21,12 +19,12 @@ Never bridge these. The Pico is powered and data-linked over the single USB cabl
 ```
 
 - ✅ Verify cell **polarity and voltage with a multimeter** before inserting 18650s. A reversed cell can destroy the Pi.
-- ✅ Confirm the UPS HAT's 5V output is rated **≥ 4A** (see [Power Budget](../PROJECT_IMPLEMENTATION_PLAN.md#latency-and-power-budgets)).
+- ✅ Confirm the UPS HAT's 5V output is rated **≥ 4A** — many 18650 HATs only do ~2.5–3A and will brown out a Pi 5 under LLM load.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained LLM inference thermal-throttles without it.
 
 ---
 
-## Mechanical build (Phase 2)
+## Mechanical build
 
 1. Build the Freenove car base: motors, mecanum wheels, main PCB; seat the Pico W in its socket.
    - **Roller direction matters.** Front-left & rear-right are a mirror pair of front-right & rear-left.
@@ -51,7 +49,7 @@ straight to a Pico pin can damage the board. Pick **one**:
 
 ---
 
-## Pin mapping (Phase 5)
+## Pin mapping
 
 The pin numbers in [`firmware/main.py`](../firmware/main.py) are **placeholders** — set them to match
 your Freenove board revision's schematic before the car will move correctly.
@@ -70,7 +68,7 @@ Tuning constants also live at the top of the firmware: `SPEED` (default duty),
 
 ---
 
-## OS / host setup quick refs (Phase 3)
+## OS / host setup quick refs
 
 ```bash
 # Mic device id  →  put the plughw string in config/robot.env (ROBOT_MIC)
@@ -86,9 +84,9 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## Bring-up order (Phase 7) — keep wheels OFF the ground until step 6
+## Bring-up order — keep wheels OFF the ground until step 6
 
-1. **Pico alone** (Thonny REPL): type `FWD`, `STOP`, `DIST?`; confirm each direction and that strafe slides (not rotates).
+1. **Pico alone** (Pico REPL — MicroPico in VS Code, or Thonny): type `FWD`, `STOP`, `DIST?`; confirm each direction and that strafe slides (not rotates).
 2. **Serial loopback from the Pi**: close Thonny first, then `screen /dev/ttyACM0 115200` → `PING`→`PONG`, `FWD` → `LOG watchdog stop` after ~1.5 s.
 3. **STT alone**: record with the fan running and transcribe.
 4. **LLM alone**: confirm Ollama returns clean JSON.
