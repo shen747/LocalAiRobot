@@ -1,0 +1,10 @@
+# Raspberry Pi 5 hardware-control dependencies for the LocalAiRobot brain.
+# Install into a virtualenv (Raspberry Pi OS Bookworm is externally-managed):
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# The AI stack (Ollama, whisper.cpp, Piper, arecord/aplay) is NOT pip-installed --
+# it is set up by scripts/install_stack.sh and invoked as external processes.
+
+adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
+gpiozero                          # forward HC-SR04 obstacle sensor
+lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5

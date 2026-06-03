@@ -1,70 +1,88 @@
 # Assembly & Wiring Notes
 
-On-the-bench build & wiring reference for LocalAiRobot. Pairs with the setup steps in the
-[README](../README.md). Capture your own photos as you go.
+On-the-bench build & wiring reference for the LocalAiRobot RC crawler. Pairs with the setup steps in
+the [README](../README.md). Capture your own photos as you go.
 
 > 📷 Drop your own annotated wiring photo/diagram at `docs/wiring.png` when you have one
 > (binary assets are intentionally not committed).
 
 ---
 
-## Two independent power domains
+## Two isolated power domains
 
-Never bridge these. The Pico is powered and data-linked over the single USB cable from the Pi.
+**Never bridge the two batteries.** But **do** tie all the *grounds* together, or the PWM signals from
+the Pi won't register at the ESC/servo.
 
 ```
- car battery pack ──▶ motors + Pico                (motor power)
- GeeekPi UPS (2× 18650) ──▶ Raspberry Pi 5         (brain power)
- Pi 5 USB-A ──── micro-USB ───▶ Pico W             (command/data link, 115200 8N1)
+ 2S 7.4V LiPo ──▶ ESC (battery input) ──▶ drive motor          (motor power)
+ UPS HAT (2× cells) ──▶ Raspberry Pi 5                          (brain power)
+ ── all GNDs common: Pi ⟷ PCA9685 ⟷ ESC ──
 ```
 
-- ✅ Verify cell **polarity and voltage with a multimeter** before inserting 18650s. A reversed cell can destroy the Pi.
-- ✅ Confirm the UPS HAT's 5V output is rated **≥ 4A** — many 18650 HATs only do ~2.5–3A and will brown out a Pi 5 under LLM load.
+- ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC; don't solder if you can pick the right one.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained LLM inference thermal-throttles without it.
+- ✅ A **LiPo balance charger** is required for the 2S pack; never charge LiPo on a dumb charger.
+- 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach. With no hardware
+  watchdog (the Pico is gone), this is your last-resort stop if the software dies. See the safety note below.
 
 ---
 
-## Mechanical build
+## The PCA9685 — the PWM bridge
 
-1. Build the Freenove car base: motors, mecanum wheels, main PCB; seat the Pico W in its socket.
-   - **Roller direction matters.** Front-left & rear-right are a mirror pair of front-right & rear-left.
-     Mounting them wrong breaks strafing — match Freenove's diagram exactly.
-2. Attach the active cooler to the Pi 5; mount the UPS HAT; insert the 18650s (polarity!).
-3. Mount the brain stack on the top deck (M2.5 standoffs or heavy-duty Velcro). Keep the fan airflow clear.
-4. Plug in: USB mic + speaker → Pi USB; **Pi USB-A → Pico micro-USB**.
-5. Zip-tie cables clear of the wheels; keep the mic away from the fan to reduce recorded noise.
+The Pi 5 cannot cleanly bit-bang three+ servo signals while running an LLM, so a PCA9685 generates them
+over I2C. Wire it like this:
 
-**Verify:** car rolls freely by hand; Pi boots from the UPS; Pico's onboard LED matches Freenove's "powered" state.
+| PCA9685 pin | Connect to | Why |
+|---|---|---|
+| `VCC` (logic) | Pi **3.3V** | chip logic + I2C level (matches the Pi's 3.3V I2C) |
+| `SDA` | Pi **GPIO2 / SDA** | I2C data |
+| `SCL` | Pi **GPIO3 / SCL** | I2C clock |
+| `GND` | Pi **GND** | common ground (also shared with the ESC) |
+| `V+` (servo rail) | **ESC 6V BEC** (the red wire of the ESC's servo plug) | powers the steering servo — **not** from the Pi |
+| Channel 0 (signal/V+/GND) | **ESC signal plug** | throttle PWM to the ESC (+ BEC feeds V+, + GND) |
+| Channel 1 (signal/V+/GND) | **steering servo** | steering PWM + 6V power + GND |
+
+Notes:
+- The ESC's 3-wire plug (the one that normally goes to an RC receiver's throttle channel) carries
+  **signal + 6V BEC + GND**. Signal → PCA9685 ch0 signal; BEC red → PCA9685 V+ rail; GND → PCA9685 GND.
+- Default I2C address is **0x40** (`i2cdetect -y 1`). If you stacked boards/changed solder jumpers,
+  update the driver accordingly.
+- The DS3225 is a hungry servo (stall ~2.5–3A). The QuicRun's 6V/3A BEC is enough for normal steering;
+  if you see brownouts under hard steering load, add a separate servo BEC on the V+ rail.
 
 ---
 
 ## ⚠️ HC-SR04: 5V on a 3.3V pin
 
-A bare HC-SR04 drives its **ECHO line at 5V**. The RP2040 GPIO is **NOT 5V-tolerant** — wiring 5V ECHO
-straight to a Pico pin can damage the board. Pick **one**:
+A bare HC-SR04 drives its **ECHO line at 5V**; the Pi's GPIO is **NOT 5V-tolerant**. Pick one:
 
-- Use the Freenove PCB's **level-shifted ultrasonic header** (easiest), **or**
-- Add a divider: **1kΩ** from ECHO → the GPIO pin, **2kΩ** from that pin → GND (5V → ~3.3V), **or**
-- Use a **3.3V HC-SR04P** module.
+- Use an **HC-SR04P** (3.3V-tolerant module) — simplest, **or**
+- Add a divider on ECHO only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND (5V → ~3.3V).
+
+Wiring (defaults in `config/robot.env`):
+
+| HC-SR04 | Connect to |
+|---|---|
+| `VCC` | Pi **5V** |
+| `GND` | Pi **GND** |
+| `TRIG` | Pi **GPIO23** (3.3V out is fine) |
+| `ECHO` | Pi **GPIO24** — **via the divider / HC-SR04P** |
+
+Mount it forward-facing, clear of the wheels and chassis, roughly level.
 
 ---
 
-## Pin mapping
+## Mechanical build
 
-The pin numbers in [`firmware/main.py`](../firmware/main.py) are **placeholders** — set them to match
-your Freenove board revision's schematic before the car will move correctly.
-
-| Signal | Default in firmware | Set to your board's… |
-|---|---|---|
-| FL motor (fwd / bwd) | GP2 / GP3 | front-left driver pins |
-| FR motor | GP4 / GP5 | front-right driver pins |
-| RL motor | GP6 / GP7 | rear-left driver pins |
-| RR motor | GP8 / GP9 | rear-right driver pins |
-| Ultrasonic TRIG | GP16 | TRIG pin (3.3V OK) |
-| Ultrasonic ECHO | GP17 | ECHO pin (**level-shifted!**) |
-
-Tuning constants also live at the top of the firmware: `SPEED` (default duty),
-`OBSTACLE_CM` (forward stop distance), `MOVE_TIMEOUT_MS` (watchdog).
+1. Assemble the 1/10 roller chassis (or start from your built RTR): drivetrain, portal axles, links,
+   shocks, 1.9" wheels. Mount the **540 35T motor** into the transmission; mesh the pinion/spur with a
+   sliver of slack (a strip of paper between the gears while you tighten sets the backlash).
+2. Mount the **steering servo** to the front axle servo mount; connect the steering link. Leave the
+   horn off until you've found the servo's center in calibration, then attach it pointing straight.
+3. Build the brain stack: Pi 5 + active cooler + UPS HAT. Mount on a 3D-printed/cut deck on the frame
+   rails (the SCX10 313 mm form factor has many free community trays). Keep fan airflow clear.
+4. Mount the **ESC**, **PCA9685**, and **LiPo** on the chassis; route wiring clear of the driveshafts
+   and steering links. Keep the mic away from the cooler fan to reduce recorded noise.
 
 ---
 
@@ -74,21 +92,34 @@ Tuning constants also live at the top of the firmware: `SPEED` (default duty),
 # Mic device id  →  put the plughw string in config/robot.env (ROBOT_MIC)
 arecord -l
 
-# Audio sanity check (SAME format the app uses: 16 kHz mono S16_LE)
+# Audio sanity check (same 16 kHz mono S16_LE the app uses)
 arecord -D plughw:1,0 -d 3 -f S16_LE -r 16000 -c 1 /tmp/test.wav && aplay /tmp/test.wav
 
-# Pico serial port + serial access without sudo (re-login after)
-ls /dev/ttyACM* /dev/ttyUSB*
-sudo usermod -aG dialout $USER
+# Confirm I2C is on and the PCA9685 is visible
+i2cdetect -y 1        # expect a device at 0x40
 ```
 
 ---
 
-## Bring-up order — keep wheels OFF the ground until step 6
+## Bring-up order — keep the wheels OFF the ground until the very end
 
-1. **Pico alone** (Pico REPL — MicroPico in VS Code, or Thonny): type `FWD`, `STOP`, `DIST?`; confirm each direction and that strafe slides (not rotates).
-2. **Serial loopback from the Pi**: close Thonny first, then `screen /dev/ttyACM0 115200` → `PING`→`PONG`, `FWD` → `LOG watchdog stop` after ~1.5 s.
-3. **STT alone**: record with the fan running and transcribe.
-4. **LLM alone**: confirm Ollama returns clean JSON.
-5. **TTS alone**: `echo "test" | ~/piper/piper/piper -m ~/piper/en_US-lessac-medium.onnx --output_file /tmp/t.wav && aplay /tmp/t.wav`
-6. **Full loop on blocks**: run `./brain`, press ENTER, say "drive forward". Only after this passes, put the car on the floor.
+1. **Bus check:** `i2cdetect -y 1` shows `0x40`.
+2. **ESC arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
+   ESC should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
+3. **Steering:** run the brain, say *"center" / "left" / "right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`
+   so the wheels center true and turn fully without the servo buzzing (binding = back the angle off).
+4. **Throttle direction:** say *"go forward"* slowly. Backwards? Set `ROBOT_THROTTLE_INVERT=1` (or swap
+   the motor wires). Reverse may need the ESC put in a forward/reverse mode (see the ESC manual).
+5. **Obstacle gate:** *"go forward"* + hand ~20 cm ahead of the HC-SR04 → motor cuts, robot says
+   *"Obstacle ahead. Stopping."*
+6. **On the floor:** only now, at low `ROBOT_MAX_THROTTLE`, with the kill switch in hand.
+
+---
+
+## Safety note — software failsafe, not hardware
+
+`driver.py` runs a control thread that forces the ESC to **neutral** on STOP, on error, on a forward
+obstacle, and when a move's `duration_ms` deadline passes; the ESC is armed at neutral on boot. This
+replaces the old Pico hardware watchdog **in software only** — if the whole Python process is killed,
+the PCA9685 keeps emitting the last pulse and nothing in hardware stops the motor. The **physical kill
+switch on the LiPo is your real safety net.** Keep `ROBOT_MAX_THROTTLE` low and durations short.

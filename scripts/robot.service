@@ -1,5 +1,5 @@
 [Unit]
-Description=Local AI Robot Brain
+Description=Local AI Robot Brain (RC crawler)
 After=ollama.service
 Wants=ollama.service
 
@@ -8,7 +8,7 @@ Type=simple
 User=YOUR_USER
 EnvironmentFile=/home/YOUR_USER/LocalAiRobot/config/robot.env
 WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
-ExecStart=/home/YOUR_USER/LocalAiRobot/brain/brain
+ExecStart=/home/YOUR_USER/LocalAiRobot/brain/.venv/bin/python /home/YOUR_USER/LocalAiRobot/brain/main.py
 Restart=on-failure
 RestartSec=3
 
