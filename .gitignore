@@ -1,21 +1,8 @@
-# Go build output
-/brain/brain
-# Generic Go binaries / plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-# Test binary, built with `go test -c`
-*.test
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-# Go workspace file
-go.work
-go.work.sum
+# Python
+brain/.venv/
+__pycache__/
+*.pyc
+*.pyo
 
 # Runtime audio scratch (normally written to /dev/shm, but guard anyway)
 *.wav
@@ -26,7 +13,7 @@ go.work.sum
 *.onnx.json
 *.gguf
 
-# env file (committed config/robot.env is a template; ignore stray local .env)
+# Local env override (config/robot.env IS committed as a template)
 .env
 
 # Editor/IDE

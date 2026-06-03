@@ -1,279 +1,171 @@
 # LocalAiRobot
 
-> A mecanum-wheel robot car you can **talk to** — running a local LLM, speech-to-text, and
-> text-to-speech **entirely on a Raspberry Pi 5 (16GB)**. No cloud. No Wi-Fi. Fully offline.
-> It drives on voice command, **stops itself when it detects an obstacle directly ahead**, and talks back.
-
-<!-- TODO: drop a hero GIF here once filmed. -->
+> A 1/10 RC crawler you can **talk to** — local LLM, speech-to-text, and text-to-speech running
+> **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline. It drives on voice
+> command, **stops for an obstacle directly ahead**, and talks back.
 
 ```
- "drive forward"  ──▶  🎙️ mic ──▶ whisper.cpp ──▶ gemma3:4b ──▶ {action,duration,speed,reply}
-                                                                      │            │
-                                                                      ▼            ▼
-                                                            🔊 Piper TTS     ⚙️ Pico W → 4× mecanum wheels
+ "go forward"  ─▶ 🎙️ mic ─▶ whisper.cpp ─▶ gemma3:4b ─▶ {drive,steer,speed,duration,reply}
+                                                              │            │
+                                                              ▼            ▼
+                                                    🔊 Piper TTS    PCA9685 (I2C PWM)
+                                                                     ├─▶ ESC ─▶ drive motor
+                                                                     └─▶ steering servo
 ```
 
-**What v1 is:** voice teleoperation with a forward safety stop.
-**What v1 is *not*:** self-driving, obstacle *avoidance*, or wake-word — those are future work.
+The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
+command (**Ollama** `gemma3:4b`), speaks a reply (**Piper**), and drives the car. A **PCA9685** over I2C
+generates the 50 Hz ESC/steering PWM (jitter-free even under LLM load); a forward **HC-SR04P** refuses
+forward motion under a set distance. Steering is **Ackermann** (drive + steer, no strafe/spin). Control
+is **push-to-talk** (press ENTER over SSH).
 
----
+**Is:** voice teleop with a forward safety stop. **Is not:** self-driving, obstacle *avoidance*, or wake-word.
 
-## How it works
-
-Two boards split the work over a single USB cable, which carries **both power to the Pico and the
-serial command link**:
-
-| Role | Board | Responsibilities |
-|------|-------|------------------|
-| **Brain (master)** | Raspberry Pi 5 (16GB) | Audio capture, speech-to-text, LLM reasoning, text-to-speech, command supervision |
-| **Nervous system (slave)** | Pico W (on the Freenove PCB) | Real-time motor PWM, mecanum kinematics, sensor reads, **hardware watchdog auto-stop** |
-
-The Pi runs the whole AI stack locally — **Ollama** (`gemma3:4b`), **whisper.cpp** (`base.en`), and
-**Piper** (`en_US-lessac-medium`). The Pico keeps hard real-time control of the motors and stops the
-car on its own within 1.5 s if the link ever drops.
-
-Interaction is **push-to-talk**: press <kbd>ENTER</kbd> over SSH, speak during the record window, then
-wait for the spoken reply. This deliberately avoids self-listening feedback loops and Whisper's
-silence hallucinations.
-
----
-
-## Two boards, two completely separate software installs
-
-This is the part people get wrong. **Nothing is shared except the one file's protocol and the USB cable.**
-
-| | 🧠 Raspberry Pi 5 | ⚙️ Pico W |
-|---|---|---|
-| **What you install** | Go, Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + a voice, and the compiled `brain` binary | The **MicroPython runtime** + the single file `firmware/main.py` (saved on the Pico as `main.py`) |
-| **How** | `scripts/install_stack.sh` (one shot, needs internet once) | Flash MicroPython UF2, then copy the file with **Thonny** |
-| **Runs** | Linux (Raspberry Pi OS Lite 64-bit) | Bare MicroPython, auto-runs `main.py` on power-up |
-
-The Pico has **no** Python packages, no Ollama, no AI — just that one ~130-line file. The Pi 5 has the
-entire AI stack. They only ever exchange short ASCII lines (`FWD`, `STOP`, `OK FWD`, `DIST 42.0`, …)
-over USB serial at 115200 8N1.
+> 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC to neutral on STOP / error /
+> obstacle / move-timeout and arms it at neutral on boot — **but if the process is killed, the PCA9685
+> holds the last pulse.** Keep a **physical kill switch on the motor battery** in reach, and start slow.
 
 ---
 
 ## Repository layout
 
 ```
-LocalAiRobot/
-├── README.md                       # you are here
-├── LICENSE                         # MIT
-├── .gitignore
-├── firmware/
-│   └── main.py                     # → goes on the Pico W (serial listener + mecanum + watchdog)
-├── brain/
-│   ├── go.mod                      # Go module
-│   └── main.go                     # → runs on the Pi 5 (listen → think → speak → move)
-├── config/
-│   └── robot.env                   # runtime config (env vars) for the Pi
-├── scripts/
-│   ├── install_stack.sh            # one-shot Pi installer (Go + Ollama + whisper.cpp + Piper)
-│   └── robot.service               # optional systemd unit
-└── docs/
-    └── assembly.md                 # build / wiring reference
+brain/main.py            # orchestrator: listen → think → speak → command the car
+brain/driver.py          # PCA9685 ESC + steering servo, HC-SR04 gate, software failsafe
+brain/requirements.txt   # Pi 5 hardware deps (ServoKit, gpiozero, lgpio)
+config/robot.env         # runtime config (env vars)
+scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + venv)
+scripts/robot.service    # optional systemd unit
+docs/assembly.md         # wiring + build reference
 ```
 
 ---
 
-## Before you start
+## Parts list (with search terms)
 
-This guide assumes the **hardware is already assembled** (Freenove car built with the Pico W seated,
-Pi 5 + active cooler + UPS mounted, mic/speaker plugged into the Pi, and the **Pi USB-A → Pico
-micro-USB** cable connected) and that **Raspberry Pi OS Lite (64-bit)** is flashed on the Pi with
-SSH enabled. Build/wiring details are in [docs/assembly.md](docs/assembly.md).
+Search terms are generic — use your preferred retailer.
 
-You will need, on a laptop/desktop for the Pico step:
-- A USB cable to the Pico, and **VS Code** with the **[MicroPico](https://marketplace.visualstudio.com/items?itemName=paulober.pico-w-go)** extension (`paulober.pico-w-go`) installed. (Prefer a zero-setup tool instead? [Thonny](https://thonny.org/) works too — see the note at the end of Step 2.)
+**Compute, power & audio (Pi side):**
 
-> ⚠️ **5V on a 3.3V pin (read before wiring the ultrasonic).** A bare HC-SR04 drives its ECHO line at
-> **5V**, but the Pico's RP2040 GPIO is **not 5V-tolerant** — connecting 5V ECHO straight to a pin can
-> damage the board. Use the Freenove PCB's level-shifted ultrasonic header, **or** a divider (1kΩ from
-> ECHO→pin, 2kΩ from pin→GND), **or** a 3.3V HC-SR04P module.
+| Part | Search term | Notes |
+|---|---|---|
+| Raspberry Pi 5, 16GB | `Raspberry Pi 5 16GB` | the brain |
+| Active cooler | `Raspberry Pi 5 active cooler` | mandatory under sustained LLM load |
+| UPS HAT | `Raspberry Pi 5 UPS HAT 18650` | on-board Pi power (e.g. GeeekPi Gen 6); confirm it sustains the Pi 5 under load |
+| 2× 18650 cells | `18650 flat-top high-drain 3000mAh` | genuine (Samsung/Sony); if not bundled with the UPS |
+| Official PSU, 27 W | `Raspberry Pi 5 27W USB-C power supply` | bench power while building |
+| microSD (or NVMe) | `high-endurance microSD 64GB` | OS storage (or NVMe SSD + M.2 HAT) |
+| USB microphone | `mini USB microphone` | voice input |
+| USB speaker | `USB sound card speaker Raspberry Pi` | TTS output |
+
+**Vehicle & control electronics:**
+
+| Part | Search term | Notes |
+|---|---|---|
+| Chassis | `1/10 SCX10 frame all-metal chassis 313mm` | roller, wheels included; you assemble it |
+| Motor | `SURPASS 540 brushed motor 35T` | high-turn = torque; **not** a low-turn 13T |
+| Pinion | `32P pinion gear 3.175mm 12T` | **32DP / M0.8**, 12–13T, 3.175 mm bore |
+| ESC | `HobbyWing QuicRun 1060 brushed ESC` | 60 A; its 6 V BEC powers the servo |
+| Steering servo | `DSSERVO DS3225 digital servo 180` | 25 kg, **180°** (not 270°) |
+| Battery | `2S 7.4V 5200mAh LiPo Deans` | match the plug to the ESC |
+| Charger | `IMAX B6 lipo balance charger` | balance-charges the 2S pack |
+| Plug adapter | `T plug to Tamiya adapter` | only if the ESC plug ≠ battery plug |
+| PWM driver | `PCA9685 16 channel servo driver I2C` | the PWM bridge to ESC + servo |
+| Distance sensor | `HC-SR04P ultrasonic sensor` | the **P** version is 3.3 V — no level shifter |
+| Jumper wires | `dupont jumper wire kit female female` | PCA9685↔Pi and sensor↔Pi |
+
+Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
+
+> ⚠️ **Confirm with the chassis seller:** which of the two gearboxes you want (asked after you order),
+> and the **spur gear pitch** — it must match the pinion (SCX10 standard is **32P / Mod 0.8**).
 
 ---
 
-## Setup — step by step
+## Wiring at a glance
 
-### Step 1 — Map the Pico pins (do this BEFORE flashing)
+Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
-The motor and sensor pin numbers at the top of [`firmware/main.py`](firmware/main.py) are
-**placeholders**. The car will not move correctly until they match **your** Freenove board revision.
+```
+ 2S LiPo ─▶ ESC ─▶ drive motor
+              └ ESC signal/BEC plug ─▶ PCA9685 ch0 signal + V+ rail (6V) + GND
+ Steering servo ───────────────────▶ PCA9685 ch1 (signal / V+ / GND)
+ PCA9685  VCC + SDA + SCL + GND ────▶ Pi 3.3V, GPIO2/SDA, GPIO3/SCL, GND
+ HC-SR04P  VCC▶Pi 3.3V   GND▶Pi GND   TRIG▶GPIO23   ECHO▶GPIO24
+ Pi 5 ◀── UPS HAT (its own battery)
+```
 
-1. **Get your board's pinout.** Open the tutorial/datasheet for your exact kit (Freenove publishes a
-   PDF + GitHub repo per kit, e.g. *"Mecanum Wheel Car Kit for Raspberry Pi Pico"*). Find the
-   pin-assignment table or schematic.
-2. **Identify the GPIO (`GPxx`) numbers** — not the physical pin numbers — wired to:
-   - each motor's **two** driver inputs (one drives it forward, one backward): front-left, front-right,
-     rear-left, rear-right;
-   - the ultrasonic **TRIG** and **ECHO**.
-3. **Edit `firmware/main.py`** to match. Defaults shipped in the file:
+- **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC) or the PWM won't register.
+- PCA9685 **V+ rail = the ESC's 6 V BEC**, *not* the Pi. The HC-SR04**P** runs at **3.3 V**, so ECHO is Pi-safe (no divider).
 
-   | Signal | Default in file | Change to |
-   |---|---|---|
-   | `FL = Motor(2, 3)` | GP2 / GP3 | your front-left `(fwd, bwd)` GPIO numbers |
-   | `FR = Motor(4, 5)` | GP4 / GP5 | your front-right |
-   | `RL = Motor(6, 7)` | GP6 / GP7 | your rear-left |
-   | `RR = Motor(8, 9)` | GP8 / GP9 | your rear-right |
-   | `TRIG = Pin(16, …)` | GP16 | your ultrasonic TRIG |
-   | `ECHO = Pin(17, …)` | GP17 | your ultrasonic ECHO (level-shifted!) |
+---
 
-4. **If a motor later spins the wrong way**, swap that motor's two numbers (e.g. `Motor(2, 3)` →
-   `Motor(3, 2)`). You'll confirm directions in Step 3.
+## Setup
 
-### Step 2 — Put MicroPython + the firmware on the Pico W (from VS Code)
+> Assumes the crawler is built and wired per [docs/assembly.md](docs/assembly.md), and **Raspberry Pi OS
+> Lite (64-bit)** is flashed with SSH enabled.
 
-1. **Flash the MicroPython runtime** (only needed once per Pico — this part uses no IDE):
-   - Hold the Pico's **BOOTSEL** button while plugging it into your computer → it mounts as a USB
-     drive named `RPI-RP2`.
-   - Download the **Pico W** MicroPython `.uf2` from <https://micropython.org/download/RPI_PICO_W/>.
-   - Drag the `.uf2` onto the `RPI-RP2` drive. The Pico reboots running MicroPython.
-2. **Open the project in VS Code** with the **MicroPico** extension installed. Open the `LocalAiRobot`
-   folder, then connect: open the Command Palette (<kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) and
-   run **`MicroPico: Connect`** (the status bar shows the connected port). If it can't find the board,
-   pick the port with **`MicroPico: Configure project`**.
-3. **Upload the firmware as `main.py`.** Open your edited [`firmware/main.py`](firmware/main.py), then
-   run **`MicroPico: Upload current file to Pico`** from the Command Palette. The file **must** land on
-   the Pico as `main.py` (root of the device filesystem) so it auto-runs on boot, replacing Freenove's
-   default firmware. Then run **`MicroPico: Soft reset`** (or tap the Pico's reset) to start it.
-4. **Quick check in the MicroPico REPL** (keep wheels off the ground): run **`MicroPico: Open REPL`** —
-   on reset you should see `LOG Pico ready`. The running loop owns stdin, so to test a single reading,
-   stop it first (<kbd>Ctrl</kbd>+<kbd>C</kbd> in the REPL) and type `print(distance_cm())` (returns a
-   number). To watch motion, instead send line commands while the loop runs — type `FWD` then `STOP`
-   and watch each wheel. Fix pin order/polarity now if any direction is wrong (Step 1), and confirm
-   **strafe slides** rather than rotates (if it rotates, a wheel-roller pair or a motor pair is swapped).
-5. **Disconnect MicroPico** when done (**`MicroPico: Disconnect`**) — it holds the serial port, and the
-   Pi needs that port next.
-
-> **Prefer the command line?** With the official MicroPython tool `mpremote` (`pip install mpremote`)
-> the whole step is two commands — no IDE at all:
-> ```bash
-> mpremote connect /dev/ttyACM0 cp firmware/main.py :main.py   # upload as main.py
-> mpremote connect /dev/ttyACM0 repl                           # watch boot output / test
-> ```
-> **Prefer zero setup?** [Thonny](https://thonny.org/) also works: set *Tools ▸ Options ▸ Interpreter ▸
-> MicroPython (Raspberry Pi Pico)*, open `firmware/main.py`, *Save as… ▸ Raspberry Pi Pico ▸ `main.py`*,
-> and use its Shell for the same checks. Whichever tool you use, **close it afterward** so it releases
-> the serial port.
-
-### Step 3 — Install the AI stack on the Raspberry Pi 5 (needs internet for this step only)
-
-SSH into the Pi, then:
-
+**1. Install (needs internet once).**
 ```bash
 git clone https://github.com/<you>/LocalAiRobot.git ~/LocalAiRobot
-cd ~/LocalAiRobot
-chmod +x scripts/install_stack.sh
-./scripts/install_stack.sh
+cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
+```
+Installs Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + voice, enables I2C, adds you to the
+`i2c`/`gpio` groups, and builds a venv in `brain/.venv`.
+
+**2. Reboot and verify.**
+```bash
+sudo reboot
+ollama list        # lists gemma3:4b
+i2cdetect -y 1    # PCA9685 shows at 0x40
+arecord -l         # find your mic → plughw:x,y ;  aplay -l → find the USB speaker card
 ```
 
-This installs Go, Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + a voice, and builds the
-`brain` binary into `brain/brain`. Verify the model is served:
+**3. Configure** [`config/robot.env`](config/robot.env): set `YOUR_USER` in the whisper/piper paths,
+`ROBOT_MIC`, and `ROBOT_TRIG_PIN`/`ROBOT_ECHO_PIN`. (If playback is silent, make the USB sound card the
+default ALSA output.) Leave steering/throttle at defaults until calibration.
 
+**4. Calibrate on a stand — wheels OFF the ground.** Run the brain (step 5) and:
+- say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT` so the wheels center true and turn fully without the servo buzzing;
+- say *"go forward"* (low speed); if it reverses, set `ROBOT_THROTTLE_INVERT=1`;
+- say *"go forward"* + hand ~20 cm ahead → motor cuts, robot says *"Obstacle ahead. Stopping."*
+
+**5. Talk to it.**
 ```bash
-ollama list            # should list gemma3:4b
-```
-
-### Step 4 — Configure the Pi (`config/robot.env`)
-
-```bash
-# Find your mic's ALSA device  →  e.g. "card 1, device 0" means plughw:1,0
-arecord -l
-# Find the Pico's serial port (usually /dev/ttyACM0)
-ls /dev/ttyACM*
-# Grant serial access without sudo, then LOG OUT AND BACK IN for it to apply
-sudo usermod -aG dialout $USER
-```
-
-Edit [`config/robot.env`](config/robot.env):
-- replace **`YOUR_USER`** (in the whisper/piper paths) with your Linux username,
-- set **`ROBOT_MIC`** to the `plughw:x,y` string from `arecord -l`,
-- set **`ROBOT_PICO_PORT`** if your Pico isn't on `/dev/ttyACM0`.
-
-Optional audio sanity check (same 16 kHz mono format the app uses):
-
-```bash
-arecord -D plughw:1,0 -d 3 -f S16_LE -r 16000 -c 1 /tmp/test.wav && aplay /tmp/test.wav
-```
-
-### Step 5 — Bring-up on blocks (keep the wheels OFF the ground)
-
-Verify each piece before the full loop:
-
-```bash
-# Serial link to the Pico (close Thonny first):
-sudo apt install -y screen
-screen /dev/ttyACM0 115200      # type PING → PONG ; FWD → wheels spin, ~1.5s later: LOG watchdog stop
-                                # exit screen: Ctrl-a then k then y
-```
-
-The `LOG watchdog stop` after ~1.5 s proves the hardware safety watchdog works.
-
-### Step 6 — Talk to it
-
-```bash
-cd ~/LocalAiRobot
 set -a; source config/robot.env; set +a
-./brain/brain
+brain/.venv/bin/python brain/main.py
 ```
-
 ```
-Robot Brain online.
-Push-to-talk: press ENTER, speak after the prompt, then wait.
-
 [ENTER]=talk  q=quit > ⏎
-Heard: "drive forward"
-Action=FWD dur=2000ms speed=40 reply="Driving forward."
-Pico: OK FWD
+Heard: "go forward and bear left"
+drive=FORWARD steer=LEFT speed=40 dur=2000ms reply="Driving forward, easing left."
 ```
-
-> 🛟 **Only put the car on the floor after Step 6 succeeds on blocks.** Start with low speed and short
-> durations. Keep a hand on the car battery's power switch.
-
-> Note: the brain reads stdin (push-to-talk), so run it **interactively over SSH**. The provided
-> `scripts/robot.service` is for restart plumbing only — as a boot service it idles waiting for input
-> until you add a wake word or GPIO button.
+Only put the car on the floor after step 4 passes, at low `ROBOT_MAX_THROTTLE`, kill switch in hand.
+The brain reads stdin (push-to-talk), so run it over SSH; `scripts/robot.service` is restart plumbing only.
 
 ---
 
-## Safety (defense in depth)
+## Voice command model
 
-- **Pico hardware watchdog** auto-STOPs if no fresh command arrives within 1500 ms (a dropped USB link always stops the car).
-- **Ultrasonic gate** refuses `FWD` under `OBSTACLE_CM` and emits `EVT OBSTACLE`, which also cancels motion on the Pi side.
-- **Action whitelist** on the Pi: any unknown LLM action collapses to `STOP`; speed and duration are clamped to safe ranges.
-- **No shell for TTS:** Piper is invoked directly with text via stdin, so an LLM reply can never inject shell commands.
-- **Half-duplex audio lock** so the mic is never open while the speaker is talking (no self-listening loop).
-- Keep a **physical power kill switch** on the car battery within reach while testing.
+The LLM returns one JSON object; the Pi validates and clamps it before driving:
 
----
-
-## Tuning knobs
-
-| Where | Knob | Effect |
+| Key | Values | Notes |
 |---|---|---|
-| `config/robot.env` | `ROBOT_MODEL` | swap the LLM (e.g. `gemma3:1b` for faster demos, `gemma3:12b` for richer replies) |
-| `config/robot.env` | `ROBOT_WHISPER_MODEL` | STT model path (`tiny.en` is faster, `base.en` more accurate) |
-| `config/robot.env` | `ROBOT_RECORD_SECS` | length of the push-to-talk record window |
-| `firmware/main.py` | `SPEED` | default motor duty |
-| `firmware/main.py` | `OBSTACLE_CM` | forward stop distance |
-| `firmware/main.py` | `MOVE_TIMEOUT_MS` | watchdog timeout |
+| `drive` | `FORWARD` / `REVERSE` / `STOP` | unknown → `STOP` (fail-safe) |
+| `steer` | `LEFT` / `CENTER` / `RIGHT` | unknown → `CENTER`; to turn, the car must be moving |
+| `speed` | `0`–`100` | scaled by `ROBOT_MAX_THROTTLE` |
+| `duration_ms` | `300`–`5000` | run time before the failsafe neutralizes the move |
+| `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 
----
+**Tuning** (all in `config/robot.env`): `ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`, `ROBOT_RECORD_SECS`,
+`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`, `ROBOT_MAX_MOVE_MS`.
 
-## Going offline
-
-After the one-time downloads in Step 3, disable Wi-Fi and everything still runs on-device — Ollama,
-whisper.cpp, and Piper are all local. Re-run the bring-up to prove the "Wi-Fi off, still works" claim.
+After the one-time downloads, disable Wi-Fi — everything runs on-device.
 
 ---
 
 ## Credits & license
 
-MIT — see [LICENSE](LICENSE).
-
-Built on the work of [Freenove](https://www.freenove.com/) (chassis/kit),
-[Ollama](https://ollama.com/) + [Google Gemma 3](https://ai.google.dev/gemma) (LLM),
-[whisper.cpp](https://github.com/ggerganov/whisper.cpp) (STT), and
-[Piper](https://github.com/rhasspy/piper) (TTS). Respect each project's license and model
-usage terms when redistributing.
+MIT — see [LICENSE](LICENSE). Built on [Ollama](https://ollama.com/) +
+[Gemma 3](https://ai.google.dev/gemma), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
+[Piper](https://github.com/rhasspy/piper), [gpiozero](https://gpiozero.readthedocs.io/), and
+[Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit).
