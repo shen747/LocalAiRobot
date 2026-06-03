@@ -4,14 +4,7 @@
 > **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline. It drives on voice
 > command, **stops for an obstacle directly ahead**, and talks back.
 
-```
- "go forward"  ─▶ 🎙️ mic ─▶ whisper.cpp ─▶ gemma3:4b ─▶ {drive,steer,speed,duration,reply}
-                                                              │            │
-                                                              ▼            ▼
-                                                    🔊 Piper TTS    PCA9685 (I2C PWM)
-                                                                     ├─▶ ESC ─▶ drive motor
-                                                                     └─▶ steering servo
-```
+![LocalAiRobot voice teleop control flow: voice command -> USB mic -> whisper.cpp -> gemma3:4b -> JSON command; a control loop with the HC-SR04P forward obstacle gate cuts FORWARD throttle (steering and reverse pass through) and the PCA9685 drives the ESC / drive motor and steering servo, while replies are spoken via Piper TTS](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 command (**Ollama** `gemma3:4b`), speaks a reply (**Piper**), and drives the car. A **PCA9685** over I2C

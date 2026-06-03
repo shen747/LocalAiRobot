@@ -13,11 +13,12 @@ the [README](../README.md). Capture your own photos as you go.
 **Never bridge the two batteries.** But **do** tie all the *grounds* together, or the PWM signals from
 the Pi won't register at the ESC/servo.
 
-```
- 2S 7.4V LiPo ──▶ ESC (battery input) ──▶ drive motor          (motor power)
- UPS HAT (2× cells) ──▶ Raspberry Pi 5                          (brain power)
- ── all GNDs common: Pi ⟷ PCA9685 ⟷ ESC ──
-```
+![Two isolated power domains: 2S 7.4V LiPo -> ESC -> drive motor (motor power) and UPS HAT -> Raspberry Pi 5 (brain power); the two battery positives are never bridged, but all grounds are tied common across Pi, PCA9685 and ESC](images/assembly.png)
+
+For the full picture — where the two domains *legitimately* meet (shared ground, plus the ESC's **6 V
+BEC** feeding the PCA9685 V+ rail and the steering servo), and where the HC-SR04P sits:
+
+![Detailed power domains: 2S 7.4V LiPo -> ESC -> drive motor, and the ESC 6V/3A BEC -> PCA9685 V+ rail -> DS3225 steering servo (servo power stays inside the LiPo/motor domain); UPS HAT -> Raspberry Pi 5 -> PCA9685 3.3V logic + I2C and the HC-SR04P; every device shares a common ground bus, while the two battery positives are never bridged](images/power-domains.png)
 
 - ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC; don't solder if you can pick the right one.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained LLM inference thermal-throttles without it.
@@ -52,23 +53,27 @@ Notes:
 
 ---
 
-## ⚠️ HC-SR04: 5V on a 3.3V pin
+## Distance sensor — HC-SR04P (3.3 V, no level shifter)
 
-A bare HC-SR04 drives its **ECHO line at 5V**; the Pi's GPIO is **NOT 5V-tolerant**. Pick one:
-
-- Use an **HC-SR04P** (3.3V-tolerant module) — simplest, **or**
-- Add a divider on ECHO only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND (5V → ~3.3V).
+The BOM uses the **HC-SR04P** (the 3.3 V variant). Powered from the Pi's **3.3 V** rail, its **ECHO**
+line stays at 3.3 V, so it wires **straight to the Pi's GPIO — no divider, no level shifter** (this
+matches the README).
 
 Wiring (defaults in `config/robot.env`):
 
-| HC-SR04 | Connect to |
+| HC-SR04P | Connect to |
 |---|---|
-| `VCC` | Pi **5V** |
+| `VCC` | Pi **3.3V** |
 | `GND` | Pi **GND** |
-| `TRIG` | Pi **GPIO23** (3.3V out is fine) |
-| `ECHO` | Pi **GPIO24** — **via the divider / HC-SR04P** |
+| `TRIG` | Pi **GPIO23** |
+| `ECHO` | Pi **GPIO24** — Pi-safe at 3.3 V, no divider |
 
 Mount it forward-facing, clear of the wheels and chassis, roughly level.
+
+> ⚠️ **Bare HC-SR04 fallback.** A non-P **HC-SR04** wants **5 V** on `VCC` and then drives its **ECHO at
+> 5 V** — and the Pi's GPIO is **NOT 5 V-tolerant**. If that's all you have, power `VCC` from Pi **5V** and
+> add a divider on `ECHO` only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND
+> (5 V → ~3.3 V). `TRIG` driven by the Pi's 3.3 V output is fine either way.
 
 ---
 
