@@ -117,7 +117,7 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
 > Assumes the crawler is built and wired per [docs/assembly.md](docs/assembly.md), and **Raspberry Pi OS
 > Lite (64-bit, Bookworm)** is flashed with SSH enabled. You can do most of this **on the bench before
-> the chassis exists** — see [docs/assembly.md](docs/assembly.md) "Phase 0".
+> the chassis exists** — see [docs/assembly.md](docs/assembly.md) "Phase 1".
 
 **1. Install (needs internet once).**
 ```bash
