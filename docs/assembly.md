@@ -3,9 +3,7 @@
 On-the-bench build & wiring reference for the LocalAiRobot RC crawler. Pairs with the setup steps in
 the [README](../README.md). Capture your own photos as you go.
 
-> 📷 Drop your own annotated wiring photo at `docs/wiring.png` when you have one (binary photos are
-> intentionally not committed). The schematic diagrams are committed, sourced from
-> [`docs/images/*.puml`](images/) — edit those and re-render with `plantuml -tpng docs/images/*.puml`.
+![Wiring at a glance](images/wiring.png)
 
 ---
 
