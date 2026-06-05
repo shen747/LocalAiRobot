@@ -67,12 +67,13 @@ class Camera:
         try:
             buf = BytesIO()
             try:
-                from PIL import Image
-                arr = self._picam.capture_array()
-                img = _letterbox_square(Image.fromarray(arr), self.size)
+                # capture_image() returns a correctly-converted PIL.Image -- avoids the
+                # capture_array()+Image.fromarray channel-order trap (the default XBGR8888 main
+                # stream gets misread as RGBA, swapping colours / pinning a constant plane).
+                img = _letterbox_square(self._picam.capture_image("main"), self.size)
                 img.save(buf, format="JPEG", quality=80)
             except Exception:
-                # No Pillow: send the raw still unprocessed (Ollama will resize it itself).
+                # Pillow/letterbox unavailable: send the raw still; Ollama resizes it itself.
                 buf = BytesIO()
                 self._picam.capture_file(buf, format="jpeg")
             data = buf.getvalue()

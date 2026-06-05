@@ -248,6 +248,8 @@ class RobotDriver:
     def close(self):
         with self._lock:
             self._closed = True
+            self._drive = "STOP"      # so any in-flight control tick computes out=0, not a stale throttle
+            self._throttle = 0.0
         if self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._neutral()
@@ -313,21 +315,32 @@ class RobotDriver:
             if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
                 if drive == "FORWARD":
                     d = self.distance_cm()
-                    if 0 <= d < self.obstacle_cm:
+                    # Fail CLOSED: too close OR a failed read (-1.0) blocks FORWARD. (A dead/silent
+                    # sensor that saturates at max range still reads "clear" -- not distinguishable
+                    # in software from a genuinely open path; documented as a limitation.)
+                    if d < self.obstacle_cm:
                         out = 0.0
                         if not self._gate_blocked:
                             self._gate_blocked = True
-                            log.info("GATE FORWARD blocked: front=%.1fcm < obstacle=%.1fcm",
+                            log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error)",
                                      d, self.obstacle_cm)
                         self._trip_obstacle(d)   # sets state STOP + fires callback
                     else:
                         self._gate_blocked = False
                         out = throttle
                 else:
-                    out = -throttle
+                    out = -throttle   # NOTE: REVERSE is UNSENSED (no rear sensor) -- bounded only by
+                                      # the move deadline + throttle cap. Keep reverse moves short.
 
             try:
                 with self._io:
+                    # Re-validate under _lock right before the write: a STOP / close / obstacle-trip
+                    # that landed in the gap since the snapshot above MUST win, so an emergency stop
+                    # can never be overwritten by a stale throttle for one tick. (We take _io then
+                    # _lock; no other path holds _lock while acquiring _io, so there's no deadlock.)
+                    with self._lock:
+                        if self._closed or self._drive == "STOP":
+                            out = 0.0
                     self._write_throttle(out)
                     self._write_steer(steer)
             except Exception:

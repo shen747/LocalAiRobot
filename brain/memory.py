@@ -37,7 +37,7 @@ class Memory:
         self.path = os.path.expanduser(db_path)
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._lock = threading.Lock()
-        self._db = sqlite3.connect(self.path, check_same_thread=False)
+        self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=5.0)
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS observations (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,13 +55,19 @@ class Memory:
                None if visible is None else int(bool(visible)),
                horizontal, distance, confidence, notes or "",
                distances.get("front"), distances.get("left"), distances.get("right"))
-        with self._lock:
-            self._db.execute(
-                """INSERT INTO observations
-                   (ts, source, target, visible, horizontal, distance, confidence, notes,
-                    front_cm, left_cm, right_cm)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
-            self._db.commit()
+        try:
+            with self._lock:
+                self._db.execute(
+                    """INSERT INTO observations
+                       (ts, source, target, visible, horizontal, distance, confidence, notes,
+                        front_cm, left_cm, right_cm)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
+                self._db.commit()
+        except Exception as e:
+            # Memory is non-critical telemetry: a disk-full / I/O error must NEVER crash the
+            # control loop or a running explore/find. Log and carry on.
+            log.warning("memory write failed (%s) -- continuing", e)
+            return
         if target:
             log.info("memory: recorded %s target=%s visible=%s %s/%s",
                      source, target, visible, horizontal, distance)

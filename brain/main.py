@@ -19,6 +19,7 @@
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -123,6 +124,13 @@ SYSTEM_PROMPT = (
 )
 
 
+def _llm_timeout():
+    try:
+        return float(os.environ.get("ROBOT_LLM_TIMEOUT_S", "120") or 120)
+    except ValueError:
+        return 120.0
+
+
 def query_ollama(cfg, user_text, context=""):
     prompt = SYSTEM_PROMPT
     if context:
@@ -136,7 +144,7 @@ def query_ollama(cfg, user_text, context=""):
     }).encode("utf-8")
     req = urllib.request.Request(
         cfg["ollama_url"], data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=_llm_timeout()) as resp:
         raw = resp.read()
     # Ollama wraps the model output in {"response": "<json string>"}.
     envelope = json.loads(raw)
@@ -217,13 +225,44 @@ def main():
             target=speak, args=(cfg, "Obstacle ahead. Stopping."), daemon=True
         ).start()
 
+    def run_behavior(fn, *args):
+        # Run an autonomous behaviour with a graceful abort: while it runs, Ctrl-C sets an abort
+        # flag (honoured at the next look/step boundary) and returns to the prompt instead of
+        # killing the program. Any behaviour-internal error is contained, not fatal, and we always
+        # leave the ESC at neutral.
+        ev = threading.Event()
+        installed, prev = False, None
+
+        def _abort(_signum, _frame):
+            ev.set()
+            print("\n(aborting — returning to prompt)")
+
+        try:
+            prev = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, _abort)
+            installed = True
+        except (ValueError, OSError):
+            pass   # not the main thread -> Ctrl-C falls through to the outer handler (quits)
+        try:
+            fn(*args, aborted=ev.is_set)
+        except Exception as e:
+            print(f"behaviour: {e}", file=sys.stderr)
+        finally:
+            driver.stop()
+            fc.set_expression("idle")
+            if installed:
+                try:
+                    signal.signal(signal.SIGINT, prev)
+                except Exception:
+                    pass
+
     driver.on_obstacle = on_obstacle
 
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
     print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
-    print("Autonomy (look around / find X) only runs if you say an explore phrase. Ctrl-C aborts.")
-    print("Type 'q' then ENTER to quit.")
+    print("Autonomy (look around / find X) only runs if you say an explore phrase.")
+    print("During autonomy, Ctrl-C aborts back to the prompt; at the prompt, 'q' or Ctrl-C quits.")
 
     try:
         while True:
@@ -274,11 +313,11 @@ def main():
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")
                 say(reply)
-                behavior.run_find(cfg, driver, cam, mem, fc, say, str(target))
+                run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, str(target))
             elif action == "EXPLORE":
                 print("action=EXPLORE")
                 say(reply)
-                behavior.run_explore(cfg, driver, cam, mem, fc, say)
+                run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say)
             else:  # DRIVE (and any unknown action falls here as plain teleop)
                 drive = str(resp.get("drive", "STOP")).upper()
                 steer = str(resp.get("steer", "CENTER")).upper()

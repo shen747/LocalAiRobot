@@ -132,6 +132,14 @@ These BCM pins avoid I2C (2/3), SPI0 (7–11) and UART (14/15); alternates if yo
 > add a divider on each `ECHO` only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND
 > (5 V → ~3.3 V). `TRIG` driven by the Pi's 3.3 V output is fine either way.
 
+**Two known sensing limits (by design):**
+- The forward gate **fails closed on a read error** (a sensor exception blocks FORWARD), but a *dead/
+  silent* sensor that saturates at max range reads as "clear" — software can't tell that apart from a
+  genuinely open path. Bench-test that covering the forward sensor stops the car before trusting it.
+- **REVERSE is unsensed** — there is no rear sensor, so reverse moves are bounded only by the throttle
+  cap and the move deadline. Keep `ROBOT_MAX_THROTTLE` low and reverse commands short, or add a rear
+  HC-SR04P later.
+
 ---
 
 ## Camera — Pi Camera V2 NoIR (IMX219)
