@@ -1,0 +1,99 @@
+@startuml basic_control_flow
+' LocalAiRobot — voice + vision control flow (everything on the Pi 5).
+' This source lives next to its render. Regenerate in place (writes basic_control_flow.png here):
+'   plantuml -tpng docs/images/basic_control_flow.puml
+' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
+' Palette via stereotypes (draw.io pastels), hidden with `hide stereotype`:
+'   io #DAE8FC/#6C8EBF = audio-in / compute   model #FFF2CC/#D6B656 = model / PWM
+'   data #D5E8D4/#82B366 = sensors / data      motor #F8CECC/#B85450 = motor / actuator
+'   proc #FFE6CC/#D79B00 = process / control    store #F5F5F5/#666666 = store / bus
+!pragma layout smetana
+hide stereotype
+title LocalAiRobot — voice + vision control, 3-way obstacle gate & expressive face (all on the Pi 5)
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam ArrowColor #555555
+skinparam ArrowFontColor #555555
+skinparam ArrowFontSize 11
+skinparam databaseBackgroundColor #F5F5F5
+skinparam databaseBorderColor #666666
+skinparam rectangle {
+  RoundCorner 12
+  FontSize 12
+  BorderThickness 1
+  BackgroundColor<<io>> #DAE8FC
+  BorderColor<<io>> #6C8EBF
+  BackgroundColor<<model>> #FFF2CC
+  BorderColor<<model>> #D6B656
+  BackgroundColor<<data>> #D5E8D4
+  BorderColor<<data>> #82B366
+  BackgroundColor<<motor>> #F8CECC
+  BorderColor<<motor>> #B85450
+  BackgroundColor<<proc>> #FFE6CC
+  BorderColor<<proc>> #D79B00
+  BackgroundColor<<store>> #F5F5F5
+  BorderColor<<store>> #666666
+}
+left to right direction
+
+' ---------- nodes ----------
+rectangle "Voice command\n'go forward' / 'find the sofa'" as voice <<io>>
+rectangle "USB mic" as mic <<io>>
+rectangle "whisper.cpp\nspeech -> text" as whisper <<model>>
+rectangle "trigger-phrase gate\nEXPLORE/FIND only on explore\nwords, otherwise DRIVE" as gate <<proc>>
+rectangle "gemma3:4b  (Ollama)\ntext + image (multimodal)" as llm <<model>>
+rectangle "intent JSON\n{action, drive, steer,\nspeed, duration_ms, reply}" as intent <<data>>
+database "environment memory\n(SQLite: objects seen,\nbearings, distances)" as mem
+
+rectangle "Pi Camera V2 NoIR\n(IMX219, CSI)" as cam <<data>>
+rectangle "vision look\ngemma3:4b sees the frame ->\n{visible, L/C/R, near/far, conf}" as vision <<model>>
+
+rectangle "behaviour loop  (behavior.py)\nEXPLORE / FIND:\nstop -> look -> gated step" as behav <<proc>>
+rectangle "control loop  (driver.py)\nforward gate cuts FORWARD < 30 cm;\nsteer & reverse pass through" as ctrl <<proc>>
+
+rectangle "HC-SR04P  x3 array\nfront / left / right" as sonar <<data>>
+
+rectangle "PCA9685\nI2C PWM @ 50 Hz" as pca <<io>>
+rectangle "ESC" as esc <<motor>>
+rectangle "drive motor" as motor <<motor>>
+rectangle "steering servo" as servo <<motor>>
+
+rectangle "Piper TTS\nspoken reply" as tts <<proc>>
+rectangle "Face screen (USB-C)\nidle / listening / thinking /\nhappy / confused / alarmed" as face <<io>>
+
+' ---------- voice path ----------
+voice --> mic : speech
+mic --> whisper
+whisper --> gate : transcript
+gate --> llm : guarded command
+mem --> llm : recent context
+llm --> intent
+
+' ---------- action dispatch ----------
+intent --> ctrl : DRIVE / STOP
+intent --> behav : EXPLORE / FIND
+
+' ---------- vision / explore ----------
+cam --> vision : JPEG frame
+behav --> vision : look? (car at neutral)
+vision --> mem : record observation
+behav --> ctrl : gated drive step
+
+' ---------- sensing ----------
+sonar --> ctrl : front gates FORWARD
+sonar --> behav : side-aware steer
+
+' ---------- actuation ----------
+ctrl --> pca : gated PWM
+pca --> esc
+esc --> motor
+pca --> servo
+
+' ---------- feedback to the human ----------
+intent --> tts : reply
+ctrl --> tts : "Obstacle ahead."
+intent --> face : expression
+behav --> face : exploring / happy / confused
+@enduml

@@ -16,16 +16,23 @@
 # self._lock. The control thread is the ONLY place that drives the PWM outputs during
 # normal operation; command()/stop() only mutate state, so two threads never issue
 # overlapping I2C transactions.
+#
+# DRY RUN: set ROBOT_DRY_RUN=1 (or ROBOT_SIMULATE=1) to run with NO hardware -- the
+# ServoKit/DistanceSensor are swapped for fakes and the real adafruit_servokit/gpiozero
+# imports are skipped entirely (so this runs on a laptop or an unwired Pi). Every intended
+# PWM/GPIO action is logged to the "robot.hw" logger, so you can watch the model->hardware
+# mapping on the console before any motor exists. Live mode logs the same lines, so the
+# mapping is auditable there too.
 
+import logging
 import os
 import threading
 import time
 
-from adafruit_servokit import ServoKit
-from gpiozero import DistanceSensor
-
 VALID_DRIVE = {"FORWARD", "REVERSE", "STOP"}
 VALID_STEER = {"LEFT", "CENTER", "RIGHT"}
+
+log = logging.getLogger("robot.hw")
 
 
 def _envf(key, default):
@@ -42,10 +49,61 @@ def _envi(key, default):
         return int(default)
 
 
+def dry_run_enabled():
+    return os.environ.get("ROBOT_DRY_RUN", os.environ.get("ROBOT_SIMULATE", "0")) == "1"
+
+
+# ---------------------------------------------------------------------------
+# Dry-run fakes. These stand in for adafruit_servokit.ServoKit and
+# gpiozero.DistanceSensor so the whole pipeline runs with no I2C/GPIO present.
+# They only need to silently accept the same attribute surface the real classes
+# expose -- the RobotDriver itself does all the logging (see _write_throttle /
+# _write_steer), so the model->hardware mapping reads identically in dry run and
+# live. NOTE: a fake distance is reported in METRES, exactly like gpiozero's
+# DistanceSensor.distance, because distance_cm() multiplies by 100.
+# ---------------------------------------------------------------------------
+class _FakeChannel:
+    def __init__(self):
+        self.throttle = 0.0
+        self.angle = 0.0
+        self.actuation_range = 180
+
+    def set_pulse_width_range(self, min_us, max_us):
+        self._pulse = (min_us, max_us)
+
+
+class FakeServoKit:
+    """Mimics adafruit_servokit.ServoKit's attribute surface; drives nothing."""
+
+    def __init__(self, channels=16):
+        self.continuous_servo = [_FakeChannel() for _ in range(channels)]
+        self.servo = [_FakeChannel() for _ in range(channels)]
+
+
+class FakeDistanceSensor:
+    """Mimics gpiozero.DistanceSensor; .distance is synthetic and in METRES."""
+
+    def __init__(self, max_distance=4.0, cm=200.0):
+        self.max_distance = max_distance
+        self._cm = cm
+
+    @property
+    def distance(self):
+        return min(self._cm / 100.0, self.max_distance)
+
+    def set_cm(self, cm):   # let a REPL/test inject an obstacle live
+        self._cm = float(cm)
+
+    def close(self):
+        pass
+
+
 class RobotDriver:
     """Owns all PWM output and the safety control loop. Thread-safe."""
 
     def __init__(self):
+        self.dry_run = dry_run_enabled()
+
         # --- PCA9685 channels ---
         self.esc_ch = _envi("ROBOT_ESC_CHANNEL", 0)
         self.steer_ch = _envi("ROBOT_STEER_CHANNEL", 1)
@@ -61,26 +119,72 @@ class RobotDriver:
         self.invert = _envi("ROBOT_THROTTLE_INVERT", 0) == 1     # flip if FWD/REV are swapped
         self.arm_secs = _envf("ROBOT_ESC_ARM_SECS", 3.0)
 
-        # --- Forward obstacle gate ---
-        self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)
+        # --- Obstacle sensing: forward FORWARD-cut gate + side-awareness (semi-hex 3-sensor array) ---
+        self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD)
+        self.side_obstacle_cm = _envf("ROBOT_SIDE_OBSTACLE_CM", 25.0)  # explore steering-avoid
         trig = _envi("ROBOT_TRIG_PIN", 23)
         echo = _envi("ROBOT_ECHO_PIN", 24)
+        left_trig = _envi("ROBOT_LEFT_TRIG_PIN", 5)
+        left_echo = _envi("ROBOT_LEFT_ECHO_PIN", 6)
+        right_trig = _envi("ROBOT_RIGHT_TRIG_PIN", 20)
+        right_echo = _envi("ROBOT_RIGHT_ECHO_PIN", 21)
 
         # --- Failsafe: absolute cap on how long one command may keep the motor running ---
         self.max_move_ms = _envi("ROBOT_MAX_MOVE_MS", 5000)
+
+        # --- PWM pulse-width ranges (us): used to drive the kit AND to compute the
+        #     pulse width we log, so the console shows real microseconds either way. ---
+        self._esc_pulse = (1000.0, 2000.0)     # continuous servo: -1..1 -> 1000..2000us (1500 neutral)
+        self._steer_pulse = (500.0, 2500.0)    # servo: 0..180deg -> 500..2500us
+        self._steer_actuation = 180.0
+
+        # --- On-change log state (so the 20 Hz loop doesn't flood the console) ---
+        self._log_throttle = None
+        self._log_steer = None
+        self._gate_blocked = False
 
         # --- Locks: _io serializes every I2C write; _lock guards shared state. ---
         self._io = threading.Lock()
         self._lock = threading.Lock()
 
-        self.kit = ServoKit(channels=channels)
-        # ESC behaves like a continuous-rotation servo: throttle -1..1, 0 == neutral.
-        self.kit.continuous_servo[self.esc_ch].set_pulse_width_range(1000, 2000)
-        self.kit.servo[self.steer_ch].set_pulse_width_range(500, 2500)
-        self.kit.servo[self.steer_ch].actuation_range = 180
+        log.info("*** %s ***", "DRY RUN -- no hardware will be driven"
+                 if self.dry_run else "LIVE HARDWARE")
+        log.info("PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC ch=%d, steer ch=%d | "
+                 "max_throttle=%.2f invert=%d", self.esc_ch, self.steer_ch,
+                 self.max_throttle, int(self.invert))
+        log.info("HC-SR04P x3: front TRIG=GPIO%d/ECHO=GPIO%d  left TRIG=GPIO%d/ECHO=GPIO%d  "
+                 "right TRIG=GPIO%d/ECHO=GPIO%d", trig, echo, left_trig, left_echo, right_trig, right_echo)
+        log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
+                 self.obstacle_cm, self.side_obstacle_cm)
 
-        # A short echo queue keeps the obstacle stop responsive (less smoothing lag).
-        self.sensor = DistanceSensor(echo=echo, trigger=trig, max_distance=4.0, queue_len=3)
+        if self.dry_run:
+            self.kit = FakeServoKit(channels=channels)
+            self._sensors = {
+                "front": FakeDistanceSensor(cm=_envf("ROBOT_FAKE_DISTANCE_CM", 200.0)),
+                "left": FakeDistanceSensor(cm=_envf("ROBOT_FAKE_LEFT_CM", 200.0)),
+                "right": FakeDistanceSensor(cm=_envf("ROBOT_FAKE_RIGHT_CM", 200.0)),
+            }
+        else:
+            # Real-hardware imports live HERE, not at module top: on a laptop
+            # `import board` (pulled in by adafruit_servokit) raises NotImplementedError,
+            # and on a Pi with no PCA9685 `ServoKit(...)` raises ValueError -- guarding the
+            # import (not just the constructor) is what makes a no-hardware dry run possible.
+            from adafruit_servokit import ServoKit
+            from gpiozero import DistanceSensor
+            self.kit = ServoKit(channels=channels)
+            self._sensors = {
+                "front": DistanceSensor(echo=echo, trigger=trig, max_distance=4.0, queue_len=3),
+                "left": DistanceSensor(echo=left_echo, trigger=left_trig, max_distance=4.0, queue_len=3),
+                "right": DistanceSensor(echo=right_echo, trigger=right_trig, max_distance=4.0, queue_len=3),
+            }
+        self.sensor = self._sensors["front"]   # forward gate target + back-compat alias
+
+        # ESC behaves like a continuous-rotation servo: throttle -1..1, 0 == neutral.
+        self.kit.continuous_servo[self.esc_ch].set_pulse_width_range(
+            int(self._esc_pulse[0]), int(self._esc_pulse[1]))
+        self.kit.servo[self.steer_ch].set_pulse_width_range(
+            int(self._steer_pulse[0]), int(self._steer_pulse[1]))
+        self.kit.servo[self.steer_ch].actuation_range = int(self._steer_actuation)
 
         # --- Shared state (guarded by _lock) ---
         self._drive = "STOP"
@@ -106,6 +210,8 @@ class RobotDriver:
         speed = max(0, min(100, int(speed)))
         duration_ms = max(0, min(self.max_move_ms, int(duration_ms)))
         throttle = (speed / 100.0) * self.max_throttle
+        log.info("CMD drive=%s steer=%s speed=%d -> throttle=%.3f dur=%dms",
+                 drive, steer, speed, throttle if drive != "STOP" else 0.0, duration_ms)
         with self._lock:
             self._drive = drive
             self._steer = steer
@@ -119,24 +225,41 @@ class RobotDriver:
             self._deadline = 0.0
         self._neutral()   # don't wait up to one loop tick to cut throttle
 
-    def distance_cm(self):
+    def distance_cm(self, side="front"):
+        sensor = self._sensors.get(side, self.sensor)
         try:
-            return self.sensor.distance * 100.0
+            return sensor.distance * 100.0
         except Exception:
             return -1.0
+
+    def distances(self):
+        """Snapshot of all three beams in cm (-1.0 if a read failed). For navigation/memory."""
+        return {side: self.distance_cm(side) for side in ("front", "left", "right")}
+
+    def side_blocked(self, steer):
+        """True if steering LEFT/RIGHT points at a near wall (explore steering-avoid).
+        A stale/failed read (-1.0) is treated as clear so a dead side sensor can't freeze steering."""
+        side = {"LEFT": "left", "RIGHT": "right"}.get(steer)
+        if side is None:
+            return False
+        d = self.distance_cm(side)
+        return 0 <= d < self.side_obstacle_cm
 
     def close(self):
         with self._lock:
             self._closed = True
+            self._drive = "STOP"      # so any in-flight control tick computes out=0, not a stale throttle
+            self._throttle = 0.0
         if self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._neutral()
         with self._io:
             self._write_steer("CENTER")
-        try:
-            self.sensor.close()
-        except Exception:
-            pass
+        for sensor in self._sensors.values():
+            try:
+                sensor.close()
+            except Exception:
+                pass
 
     # ---------- internals ----------
     def _arm(self):
@@ -150,15 +273,32 @@ class RobotDriver:
             except Exception:
                 pass
 
+    def _esc_pulse_us(self, value):
+        lo, hi = self._esc_pulse
+        return (lo + hi) / 2.0 + value * (hi - lo) / 2.0
+
+    def _steer_pulse_us(self, angle):
+        lo, hi = self._steer_pulse
+        return lo + (angle / self._steer_actuation) * (hi - lo)
+
     def _write_throttle(self, value):    # caller MUST hold self._io
         if self.invert:
             value = -value
         value = max(-1.0, min(1.0, value))
+        if round(value, 3) != self._log_throttle:
+            self._log_throttle = round(value, 3)
+            log.info("I2C->PCA9685 ESC   ch=%d throttle=%+.3f pulse_us=%.0f",
+                     self.esc_ch, value, self._esc_pulse_us(value))
         self.kit.continuous_servo[self.esc_ch].throttle = value
 
     def _write_steer(self, steer):       # caller MUST hold self._io
         angle = {"LEFT": self.steer_left, "RIGHT": self.steer_right}.get(steer, self.steer_center)
-        self.kit.servo[self.steer_ch].angle = max(0.0, min(180.0, angle))
+        angle = max(0.0, min(180.0, angle))
+        if steer != self._log_steer:
+            self._log_steer = steer
+            log.info("I2C->PCA9685 SERVO ch=%d steer=%-6s angle=%.1fdeg pulse_us=%.0f",
+                     self.steer_ch, steer, angle, self._steer_pulse_us(angle))
+        self.kit.servo[self.steer_ch].angle = angle
 
     def _control_loop(self):
         # Runs at ~20 Hz. This loop is the failsafe AND the sole normal-operation writer of
@@ -175,16 +315,32 @@ class RobotDriver:
             if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
                 if drive == "FORWARD":
                     d = self.distance_cm()
-                    if 0 <= d < self.obstacle_cm:
+                    # Fail CLOSED: too close OR a failed read (-1.0) blocks FORWARD. (A dead/silent
+                    # sensor that saturates at max range still reads "clear" -- not distinguishable
+                    # in software from a genuinely open path; documented as a limitation.)
+                    if d < self.obstacle_cm:
                         out = 0.0
+                        if not self._gate_blocked:
+                            self._gate_blocked = True
+                            log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error)",
+                                     d, self.obstacle_cm)
                         self._trip_obstacle(d)   # sets state STOP + fires callback
                     else:
+                        self._gate_blocked = False
                         out = throttle
                 else:
-                    out = -throttle
+                    out = -throttle   # NOTE: REVERSE is UNSENSED (no rear sensor) -- bounded only by
+                                      # the move deadline + throttle cap. Keep reverse moves short.
 
             try:
                 with self._io:
+                    # Re-validate under _lock right before the write: a STOP / close / obstacle-trip
+                    # that landed in the gap since the snapshot above MUST win, so an emergency stop
+                    # can never be overwritten by a stale throttle for one tick. (We take _io then
+                    # _lock; no other path holds _lock while acquiring _io, so there's no deadlock.)
+                    with self._lock:
+                        if self._closed or self._drive == "STOP":
+                            out = 0.0
                     self._write_throttle(out)
                     self._write_steer(steer)
             except Exception:

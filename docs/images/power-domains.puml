@@ -1,0 +1,90 @@
+@startuml power-domains
+' LocalAiRobot — DETAILED power domains + signal wiring, now with camera, face & 3-sensor array.
+' This source lives next to its render. Regenerate in place (writes power-domains.png here):
+'   plantuml -tpng docs/images/power-domains.puml
+' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
+!pragma layout smetana
+hide stereotype
+title LocalAiRobot — detailed power domains (never bridge the batteries) + camera, face & 3-sensor array
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam ArrowColor #555555
+skinparam ArrowFontColor #555555
+skinparam ArrowFontSize 11
+skinparam rectangle {
+  RoundCorner 12
+  FontSize 12
+  BorderThickness 1
+  BackgroundColor<<io>> #DAE8FC
+  BorderColor<<io>> #6C8EBF
+  BackgroundColor<<model>> #FFF2CC
+  BorderColor<<model>> #D6B656
+  BackgroundColor<<data>> #D5E8D4
+  BorderColor<<data>> #82B366
+  BackgroundColor<<motor>> #F8CECC
+  BorderColor<<motor>> #B85450
+  BackgroundColor<<store>> #F5F5F5
+  BorderColor<<store>> #666666
+  BackgroundColor<<motordomain>> #FBEAEA
+  BorderColor<<motordomain>> #B85450
+  BackgroundColor<<braindomain>> #E6EEF8
+  BorderColor<<braindomain>> #6C8EBF
+}
+
+rectangle "Brain power  (UPS HAT  —  27W PSU for bench bring-up)" as brain <<braindomain>> {
+  rectangle "UPS HAT (2x 18650 cells)\nor official 27W PSU (bench)" as ups <<io>>
+  rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
+}
+ups --> pi : 5V to Pi
+
+rectangle "Motor power  (LiPo, high current)" as motor <<motordomain>> {
+  rectangle "2S 7.4V LiPo" as lipo <<motor>>
+  rectangle "ESC\n(battery input + 6V/3A BEC)" as esc <<motor>>
+  rectangle "drive motor" as dmotor <<motor>>
+}
+lipo --> esc : 7.4 V
+esc --> dmotor : motor drive
+
+rectangle "PCA9685\n(I2C PWM bridge, 0x40)" as pca <<model>>
+rectangle "steering servo\n(DS3225, on the 6V BEC rail)" as servo <<data>>
+
+rectangle "HC-SR04P  x3   (3.3V; ECHO Pi-safe, no divider)\nfront TRIG23/ECHO24  •  left TRIG5/ECHO6  •  right TRIG20/ECHO21" as sonar <<data>>
+rectangle "Pi Camera V2 NoIR\n(IMX219, CSI via Pi-5 22->15 adapter)" as cam <<data>>
+rectangle "Face screen\n(USB-C -> /dev/ttyACM0)" as face <<io>>
+
+rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC)" as gnd <<store>>
+
+' ----- logic / signal -----
+pi --> pca : 3.3V logic (VCC) + I2C SDA/SCL
+pi --> sonar : VCC 3.3V + TRIG/ECHO
+pi --> cam : CSI ribbon
+pi --> face : USB-C (serial)
+esc --> pca : ch0 throttle PWM (signal)
+esc --> pca : 6V/3A BEC -> V+ rail\n(servo power; stays in LiPo domain)
+pca --> servo : 6V + PWM (ch1)
+
+' ----- grounds (the only legitimate meeting point of the two domains) -----
+esc ..> gnd : GND
+pi ..> gnd : GND
+pca ..> gnd : GND
+
+note bottom of gnd
+  Two isolated battery domains: **never bridge LiPo + and UPS/PSU +.**
+  They meet ONLY at shared GND and the 3.3V logic / PWM signals.
+  The ESC 6V BEC -> PCA9685 V+ rail is INTERNAL to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
+  Bench bring-up: power the Pi from the official **27W PSU first** (UPS not installed).
+  DS3225 stall ~2.5-3A: the 6V/3A BEC is fine for normal steering; add a separate servo BEC on V+ if it browns out.
+end note
+
+note right of sonar
+  All three HC-SR04P run at **3.3V**, so every ECHO is Pi-safe with **no divider / level shifter**.
+  A bare 5V HC-SR04 would drive ECHO at 5V and need a 1k/2k divider on ECHO only.
+end note
+
+note right of cam
+  The Pi 5 CSI port is the narrow **22-pin / 0.5mm** type; the V2 camera's 15-pin/1mm cable
+  needs the **22->15 adapter FPC cable**. NoIR has no IR-cut filter (reddish by day; needs an IR LED in the dark).
+end note
+@enduml

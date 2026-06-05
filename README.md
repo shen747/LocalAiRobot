@@ -1,18 +1,28 @@
 # LocalAiRobot
 
-> A 1/10 RC crawler you can **talk to** — local LLM, speech-to-text, and text-to-speech running
-> **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline. It drives on voice
-> command, **stops for an obstacle directly ahead**, and talks back.
+> A 1/10 RC crawler you can **talk to** — local LLM, speech-to-text, text-to-speech, **and a
+> camera**, running **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline.
+> It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
+> toward things you name**, shows an **expressive face**, and talks back.
 
-![LocalAiRobot voice teleop control flow: voice command -> USB mic -> whisper.cpp -> gemma3:4b -> JSON command; a control loop with the HC-SR04P forward obstacle gate cuts FORWARD throttle (steering and reverse pass through) and the PCA9685 drives the ESC / drive motor and steering servo, while replies are spoken via Piper TTS](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC / drive motor and steering servo; replies are spoken via Piper TTS and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
-command (**Ollama** `gemma3:4b`), speaks a reply (**Piper**), and drives the car. A **PCA9685** over I2C
-generates the 50 Hz ESC/steering PWM (jitter-free even under LLM load); a forward **HC-SR04P** refuses
-forward motion under a set distance. Steering is **Ackermann** (drive + steer, no strafe/spin). Control
-is **push-to-talk** (press ENTER over SSH).
+intent (**Ollama** `gemma3:4b` — the *same* model also reads camera frames), speaks a reply
+(**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz ESC/steering
+PWM (jitter-free even under LLM load); a **3-sensor HC-SR04P** array (front/left/right) cuts forward
+motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
+no strafe/spin). Control is **push-to-talk** (press ENTER over SSH).
 
-**Is:** voice teleop with a forward safety stop. **Is not:** self-driving, obstacle *avoidance*, or wake-word.
+**Autonomy is opt-in.** Ordinary commands ("go forward", "turn left", "stop") are plain teleop. The
+camera-driven **look-around / find-the-sofa** behaviour only runs when you actually say an explore
+phrase ("look around", "find the …", "go to the …") — a deterministic trigger gate checks the raw
+transcript, so a misheard command can never send the robot wandering.
+
+**Is:** voice teleop + a forward safety stop + opt-in, bounded, vision-guided explore/find with a
+persistent scene memory. **Is not:** self-driving, obstacle *avoidance* / path-planning, SLAM, or
+wake-word. Vision on the Pi 5 CPU is **slow** (tens of seconds to minutes per look), so "find the X"
+is a deliberate stop-look-step loop, not real-time navigation.
 
 > 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC to neutral on STOP / error /
 > obstacle / move-timeout and arms it at neutral on boot — **but if the process is killed, the PCA9685
@@ -23,13 +33,19 @@ is **push-to-talk** (press ENTER over SSH).
 ## Repository layout
 
 ```
-brain/main.py            # orchestrator: listen → think → speak → command the car
-brain/driver.py          # PCA9685 ESC + steering servo, HC-SR04 gate, software failsafe
-brain/requirements.txt   # Pi 5 hardware deps (ServoKit, gpiozero, lgpio)
+brain/main.py            # orchestrator: listen → think → (drive | explore | find) → speak; face events
+brain/driver.py          # PCA9685 ESC + steering servo, 3x HC-SR04P, software failsafe, dry-run fakes
+brain/camera.py          # Pi Camera V2 NoIR capture → preprocessed JPEG (picamera2)
+brain/vision.py          # send a frame to gemma3:4b via Ollama → structured scene JSON
+brain/memory.py          # SQLite environment memory: record sightings, summarise back to the prompt
+brain/behavior.py        # bounded autonomous explore / find-and-drive-to-object loop
+brain/face.py            # expression face: USB-C panel | DSI/HDMI framebuffer | simulated
+brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial)
 config/robot.env         # runtime config (env vars)
-scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + venv)
+scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
 scripts/robot.service    # optional systemd unit
-docs/assembly.md         # wiring + build reference
+docs/assembly.md         # wiring + build reference (start here to build it)
+docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
 
 ---
@@ -43,13 +59,23 @@ Search terms are generic — use your preferred retailer.
 | Part | Search term | Notes |
 |---|---|---|
 | Raspberry Pi 5, 16GB | `Raspberry Pi 5 16GB` | the brain |
-| Active cooler | `Raspberry Pi 5 active cooler` | mandatory under sustained LLM load |
-| UPS HAT | `Raspberry Pi 5 UPS HAT 18650` | on-board Pi power (e.g. GeeekPi Gen 6); confirm it sustains the Pi 5 under load |
+| Active cooler | `Raspberry Pi 5 active cooler` | **mandatory** under sustained LLM/vision load; fit it first |
+| UPS HAT (pogo-pin) | `Raspberry Pi 5 UPS HAT 18650 pogo pin` | prefer the **pogo-pin, bottom-mount** type (e.g. Geekworm X1200/X1202) so it does **not** use the 40-pin header |
 | 2× 18650 cells | `18650 flat-top high-drain 3000mAh` | genuine (Samsung/Sony); if not bundled with the UPS |
-| Official PSU, 27 W | `Raspberry Pi 5 27W USB-C power supply` | bench power while building |
-| microSD (or NVMe) | `high-endurance microSD 64GB` | OS storage (or NVMe SSD + M.2 HAT) |
+| Official PSU, 27 W | `Raspberry Pi 5 27W USB-C power supply` | **bench power while building (use this first, UPS later)** |
+| microSD (or NVMe) | `high-endurance microSD 64GB` | OS storage (NVMe is much faster for model load) |
 | USB microphone | `mini USB microphone` | voice input |
 | USB speaker | `USB sound card speaker Raspberry Pi` | TTS output |
+
+**Vision & display:**
+
+| Part | Search term | Notes |
+|---|---|---|
+| Pi Camera V2 **NoIR** | `Raspberry Pi Camera V2 NoIR IMX219` | visual input for the multimodal LLM |
+| **Pi 5 camera adapter cable** ⚠️ | `Raspberry Pi 5 camera cable 22-pin 0.5mm to 15-pin 1mm` | **MANDATORY** — the Pi 5 CSI port is the narrow 22-way type; the V2's 15-way cable **will not fit** without this |
+| IR illuminator (optional) | `850nm IR LED illuminator board` | NoIR sees nothing in the dark without IR light; skip for lit rooms |
+| 3.5" USB-C face screen | `3.5 inch USB Type-C secondary screen 320x480 IPS` | the TURZX/"NO AIDA64" panel; driven over USB-serial (see [assembly](docs/assembly.md)) |
+| Small DSI/HDMI display (fallback) | `Raspberry Pi DSI 3.5 inch display` | only if the USB-C panel won't enumerate on Linux |
 
 **Vehicle & control electronics:**
 
@@ -64,8 +90,9 @@ Search terms are generic — use your preferred retailer.
 | Charger | `IMAX B6 lipo balance charger` | balance-charges the 2S pack |
 | Plug adapter | `T plug to Tamiya adapter` | only if the ESC plug ≠ battery plug |
 | PWM driver | `PCA9685 16 channel servo driver I2C` | the PWM bridge to ESC + servo |
-| Distance sensor | `HC-SR04P ultrasonic sensor` | the **P** version is 3.3 V — no level shifter |
-| Jumper wires | `dupont jumper wire kit female female` | PCA9685↔Pi and sensor↔Pi |
+| **3× distance sensor** | `HC-SR04P ultrasonic sensor` | **buy three** (front/left/right). The **P** version is 3.3 V — no level shifter |
+| Sensor mount | `HC-SR04 triple sensor bracket` | semi-hex front plate: one ahead, one ~45–60° left, one ~45–60° right (or 3D-print) |
+| Jumper wires | `dupont jumper wire kit female female` | PCA9685↔Pi and 3× sensor↔Pi |
 
 Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
 
@@ -78,79 +105,114 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
 
 Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
-```
- 2S LiPo ─▶ ESC ─▶ drive motor
-              └ ESC signal/BEC plug ─▶ PCA9685 ch0 signal + V+ rail (6V) + GND
- Steering servo ───────────────────▶ PCA9685 ch1 (signal / V+ / GND)
- PCA9685  VCC + SDA + SCL + GND ────▶ Pi 3.3V, GPIO2/SDA, GPIO3/SCL, GND
- HC-SR04P  VCC▶Pi 3.3V   GND▶Pi GND   TRIG▶GPIO23   ECHO▶GPIO24
- Pi 5 ◀── UPS HAT (its own battery)
-```
+![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (which carries a 6V BEC) and the drive motor; the ESC's 3-wire plug goes to PCA9685 ch0 (signal + V+ 6V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Pi Camera V2 NoIR connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
 
 - **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC) or the PWM won't register.
-- PCA9685 **V+ rail = the ESC's 6 V BEC**, *not* the Pi. The HC-SR04**P** runs at **3.3 V**, so ECHO is Pi-safe (no divider).
+- PCA9685 **V+ rail = the ESC's 6 V BEC**, *not* the Pi. All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
+- **Pins:** I2C on GPIO2/3 (PCA9685 @ `0x40`); forward sensor TRIG/ECHO `23/24`, left `5/6`, right `20/21`. Camera is on the CSI ribbon, the face panel on USB — neither touches the GPIO header.
 
 ---
 
 ## Setup
 
 > Assumes the crawler is built and wired per [docs/assembly.md](docs/assembly.md), and **Raspberry Pi OS
-> Lite (64-bit)** is flashed with SSH enabled.
+> Lite (64-bit, Bookworm)** is flashed with SSH enabled. You can do most of this **on the bench before
+> the chassis exists** — see [docs/assembly.md](docs/assembly.md) "Phase 0".
 
 **1. Install (needs internet once).**
 ```bash
 git clone https://github.com/<you>/LocalAiRobot.git ~/LocalAiRobot
 cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
 ```
-Installs Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + voice, enables I2C, adds you to the
-`i2c`/`gpio` groups, and builds a venv in `brain/.venv`.
+Installs Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + voice, **picamera2** (apt) and the
+**USB-C face-panel library**, enables I2C, adds you to the `i2c`/`gpio`/`dialout`/`audio`/`video`
+groups, and builds the venv at `brain/.venv` **with `--system-site-packages`** (required so it can see
+picamera2/libcamera).
 
 **2. Reboot and verify.**
 ```bash
 sudo reboot
-ollama list        # lists gemma3:4b
-i2cdetect -y 1    # PCA9685 shows at 0x40
-arecord -l         # find your mic → plughw:x,y ;  aplay -l → find the USB speaker card
+ollama list                     # lists gemma3:4b   (vision needs Ollama >= 0.6)
+i2cdetect -y 1                  # PCA9685 at 0x40
+rpicam-hello --list-cameras     # the IMX219 NoIR (needs the Pi-5 22→15 adapter cable)
+lsusb | grep -i 1a86            # the USB-C face panel (CH340 serial), if connected
+arecord -l                      # find your mic → plughw:x,y ;  aplay -l → the USB speaker card
 ```
 
 **3. Configure** [`config/robot.env`](config/robot.env): set `YOUR_USER` in the whisper/piper paths,
-`ROBOT_MIC`, and `ROBOT_TRIG_PIN`/`ROBOT_ECHO_PIN`. (If playback is silent, make the USB sound card the
-default ALSA output.) Leave steering/throttle at defaults until calibration.
+`ROBOT_MIC`, and the sensor pins. Camera/face/explore/memory have working defaults. (If playback is
+silent, make the USB sound card the default ALSA output.)
 
-**4. Calibrate on a stand — wheels OFF the ground.** Run the brain (step 5) and:
-- say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT` so the wheels center true and turn fully without the servo buzzing;
-- say *"go forward"* (low speed); if it reverses, set `ROBOT_THROTTLE_INVERT=1`;
-- say *"go forward"* + hand ~20 cm ahead → motor cuts, robot says *"Obstacle ahead. Stopping."*
-
-**5. Talk to it.**
+**4. 🧪 Bench bring-up FIRST (no chassis, no motor) — watch the model→hardware mapping.**
 ```bash
 set -a; source config/robot.env; set +a
+ROBOT_DRY_RUN=1 brain/.venv/bin/python brain/main.py
+```
+In dry-run there is **no hardware**: `driver.py` swaps in fakes and logs exactly what it *would* drive,
+so you can confirm voice → model → GPIO/PWM is correct before anything can move:
+```
+*** DRY RUN -- no hardware will be driven ***
+Heard: "go forward and bear left"
+action=DRIVE drive=FORWARD steer=LEFT speed=40 dur=1500ms reply="Easing forward and left."
+robot.hw INFO I2C->PCA9685 ESC   ch=0 throttle=+0.140 pulse_us=1570
+robot.hw INFO I2C->PCA9685 SERVO ch=1 steer=LEFT   angle=55.0deg pulse_us=1111
+```
+Set `ROBOT_FAKE_DISTANCE_CM=20` to prove the forward gate trips; set `ROBOT_FAKE_VISION=sofa:left:near:0.9`
+and say *"find the sofa"* to dry-run the whole explore loop with no camera.
+
+**5. Calibrate on a stand — wheels OFF the ground** (LIVE now, ESC powered). Run the brain and:
+- say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`;
+- say *"go forward"* (low speed); if it reverses, set `ROBOT_THROTTLE_INVERT=1`;
+- say *"go forward"* + hand ~20 cm ahead of the front sensor → motor cuts, robot says *"Obstacle ahead. Stopping."*
+
+**6. Talk to it / drive it.**
+```bash
 brain/.venv/bin/python brain/main.py
 ```
 ```
 [ENTER]=talk  q=quit > ⏎
-Heard: "go forward and bear left"
-drive=FORWARD steer=LEFT speed=40 dur=2000ms reply="Driving forward, easing left."
+Heard: "find the sofa"
+action=FIND target='sofa'
+robot.behavior INFO FIND 'sofa' SUCCESS at iter 2 (front=38cm)
 ```
-Only put the car on the floor after step 4 passes, at low `ROBOT_MAX_THROTTLE`, kill switch in hand.
+Only put the car on the floor after step 5 passes, at low `ROBOT_MAX_THROTTLE`, kill switch in hand.
 The brain reads stdin (push-to-talk), so run it over SSH; `scripts/robot.service` is restart plumbing only.
 
 ---
 
 ## Voice command model
 
-The LLM returns one JSON object; the Pi validates and clamps it before driving:
+The LLM returns one JSON object; the Pi validates and clamps it before acting:
 
 | Key | Values | Notes |
 |---|---|---|
-| `drive` | `FORWARD` / `REVERSE` / `STOP` | unknown → `STOP` (fail-safe) |
+| `action` | `DRIVE` / `EXPLORE` / `FIND` / `STOP` | default `DRIVE`; unknown → `STOP`. **`EXPLORE`/`FIND` only run if an explore phrase is in the transcript** (else demoted to `DRIVE`) |
+| `target` | object name (e.g. `"sofa"`) | required by `FIND` |
+| `drive` | `FORWARD` / `REVERSE` / `STOP` | used by `DRIVE`; unknown → `STOP` (fail-safe) |
 | `steer` | `LEFT` / `CENTER` / `RIGHT` | unknown → `CENTER`; to turn, the car must be moving |
 | `speed` | `0`–`100` | scaled by `ROBOT_MAX_THROTTLE` |
 | `duration_ms` | `300`–`5000` | run time before the failsafe neutralizes the move |
 | `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 
-**Tuning** (all in `config/robot.env`): `ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`, `ROBOT_RECORD_SECS`,
-`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`, `ROBOT_MAX_MOVE_MS`.
+**Vision & explore.** On *"look around"* the robot stops, captures a frame, asks `gemma3:4b` what's in
+view, records it, and says what it sees. On *"find the sofa"* it runs a **bounded** loop —
+stop → look → step toward the sighting (or arc-scan if not seen) — gated by the forward sensor and
+capped by `ROBOT_EXPLORE_MAX_ITERS`. Vision is slow on the Pi 5 CPU; the car is held at neutral during
+each look. The fixed camera + no-spin steering means "look around" is a coarse arc-scan.
+
+**Memory.** Every sighting is saved to SQLite (`ROBOT_MEMORY_DB`) and a one-line summary of recent
+objects is fed back into the prompt, so the robot keeps context across commands and reboots.
+
+**Face.** A small display shows `idle / listening / thinking / talking / exploring / happy / confused /
+alarmed`. It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simulated-logs) and is
+**fully optional** — a missing panel never blocks driving.
+
+**Tuning** (all in `config/robot.env`): the AI stack (`ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`,
+`ROBOT_RECORD_SECS`); motion (`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`,
+`ROBOT_MAX_MOVE_MS`); sensors (`ROBOT_*_TRIG_PIN`/`_ECHO_PIN`, `ROBOT_SIDE_OBSTACLE_CM`); camera/vision
+(`ROBOT_CAMERA_*`, `ROBOT_VISION_TIMEOUT_S`); face (`ROBOT_FACE_*`); explore/find
+(`ROBOT_EXPLORE_*`, `ROBOT_FIND_CONFIDENCE`, `ROBOT_APPROACH_CM`, `ROBOT_EXPLORE_TRIGGERS`); memory
+(`ROBOT_MEMORY_*`); and the bench dry-run (`ROBOT_DRY_RUN`, `ROBOT_FAKE_*`).
 
 After the one-time downloads, disable Wi-Fi — everything runs on-device.
 
@@ -160,5 +222,7 @@ After the one-time downloads, disable Wi-Fi — everything runs on-device.
 
 MIT — see [LICENSE](LICENSE). Built on [Ollama](https://ollama.com/) +
 [Gemma 3](https://ai.google.dev/gemma), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
-[Piper](https://github.com/rhasspy/piper), [gpiozero](https://gpiozero.readthedocs.io/), and
-[Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit).
+[Piper](https://github.com/rhasspy/piper), [picamera2](https://github.com/raspberrypi/picamera2),
+[gpiozero](https://gpiozero.readthedocs.io/),
+[Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit), and
+[turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python).

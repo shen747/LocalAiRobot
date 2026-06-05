@@ -1,0 +1,70 @@
+@startuml assembly
+' LocalAiRobot — two isolated power domains (high-level), now with camera, face & 3-sensor array.
+' This source lives next to its render. Regenerate in place (writes assembly.png here):
+'   plantuml -tpng docs/images/assembly.puml
+' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
+!pragma layout smetana
+hide stereotype
+title LocalAiRobot — two isolated power domains (bench-test on the 27W PSU first, UPS later)
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam ArrowColor #555555
+skinparam ArrowFontColor #555555
+skinparam ArrowFontSize 11
+skinparam rectangle {
+  RoundCorner 12
+  FontSize 12
+  BorderThickness 1
+  BackgroundColor<<io>> #DAE8FC
+  BorderColor<<io>> #6C8EBF
+  BackgroundColor<<model>> #FFF2CC
+  BorderColor<<model>> #D6B656
+  BackgroundColor<<data>> #D5E8D4
+  BorderColor<<data>> #82B366
+  BackgroundColor<<motor>> #F8CECC
+  BorderColor<<motor>> #B85450
+  BackgroundColor<<store>> #F5F5F5
+  BorderColor<<store>> #666666
+  BackgroundColor<<motordomain>> #FBEAEA
+  BorderColor<<motordomain>> #B85450
+  BackgroundColor<<braindomain>> #E6EEF8
+  BorderColor<<braindomain>> #6C8EBF
+}
+
+rectangle "Motor power  (LiPo)" as motorbox <<motordomain>> {
+  rectangle "2S 7.4V LiPo" as lipo <<motor>>
+  rectangle "ESC\n(battery input + 6V BEC)" as esc <<motor>>
+  rectangle "drive motor" as motor <<motor>>
+}
+lipo -right-> esc : 7.4 V
+esc -right-> motor : motor drive
+
+rectangle "Brain power  (UPS HAT  —  or official 27W PSU for bench bring-up)" as brainbox <<braindomain>> {
+  rectangle "UPS HAT (2x 18650)\nor 27W USB-C PSU (bench)" as ups <<io>>
+  rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
+  rectangle "Pi Camera V2 NoIR\n(CSI ribbon)" as cam <<data>>
+  rectangle "Face screen\n(USB-C / ttyACM0)" as face <<io>>
+  rectangle "HC-SR04P x3\n(3.3V; front/left/right)" as sonar <<data>>
+}
+ups -right-> pi : 5 V
+pi --> cam : CSI
+pi --> face : USB-C
+pi --> sonar : 3.3V + GPIO
+
+rectangle "PCA9685\n(I2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC 6V BEC)" as pca <<model>>
+
+rectangle "common GND bus" as gnd <<store>>
+
+esc ..> gnd : GND
+pi ..> gnd : GND
+pca ..> gnd : GND
+
+note bottom of gnd
+  **Never bridge the two batteries** (LiPo + and UPS/PSU + stay separate).
+  Tie **ALL grounds** together: Pi <-> PCA9685 <-> ESC, or the PWM won't register.
+  Bench-test on the official **27W PSU first** (UPS not installed). **Active Cooler is mandatory.**
+  Camera (CSI), face panel (USB-C) and the 3 HC-SR04P are all Pi-side / brain-domain.
+end note
+@enduml
