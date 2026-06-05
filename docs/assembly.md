@@ -13,12 +13,12 @@ the [README](../README.md). Capture your own photos as you go.
 **Never bridge the two batteries.** But **do** tie all the *grounds* together, or the PWM signals from
 the Pi won't register at the ESC/servo.
 
-![Two isolated power domains: 2S 7.4V LiPo -> ESC -> drive motor (motor power) and UPS HAT -> Raspberry Pi 5 (brain power); the two battery positives are never bridged, but all grounds are tied common across Pi, PCA9685 and ESC](images/assembly.png)
+![Two isolated power domains: a 2S 7.4V LiPo powers the ESC and drive motor (motor domain), while a UPS HAT - or the official 27W PSU for bench bring-up - powers the Raspberry Pi 5 with its mandatory Active Cooler (brain domain); the Pi also drives the Pi Camera V2 NoIR over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors (front/left/right). The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC 6V BEC. The two battery positives are never bridged, but all grounds are tied common across Pi, PCA9685 and ESC](images/assembly.png)
 
 For the full picture — where the two domains *legitimately* meet (shared ground, plus the ESC's **6 V
 BEC** feeding the PCA9685 V+ rail and the steering servo), and where the HC-SR04P sits:
 
-![Detailed power domains: 2S 7.4V LiPo -> ESC -> drive motor, and the ESC 6V/3A BEC -> PCA9685 V+ rail -> DS3225 steering servo (servo power stays inside the LiPo/motor domain); UPS HAT -> Raspberry Pi 5 -> PCA9685 3.3V logic + I2C and the HC-SR04P; every device shares a common ground bus, while the two battery positives are never bridged](images/power-domains.png)
+![Detailed power domains and wiring: 2S 7.4V LiPo -> ESC -> drive motor, with the ESC 6V/3A BEC feeding the PCA9685 V+ rail and the DS3225 steering servo (servo power stays inside the LiPo/motor domain); the UPS HAT - or the 27W PSU on the bench - powers the Raspberry Pi 5 + Active Cooler, which provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P sensors (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Pi Camera V2 NoIR (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground bus, while the two battery positives are never bridged](images/power-domains.png)
 
 - ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC; don't solder if you can pick the right one.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained LLM inference thermal-throttles without it.

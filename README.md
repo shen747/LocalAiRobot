@@ -4,7 +4,7 @@
 > **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline. It drives on voice
 > command, **stops for an obstacle directly ahead**, and talks back.
 
-![LocalAiRobot voice teleop control flow: voice command -> USB mic -> whisper.cpp -> gemma3:4b -> JSON command; a control loop with the HC-SR04P forward obstacle gate cuts FORWARD throttle (steering and reverse pass through) and the PCA9685 drives the ESC / drive motor and steering servo, while replies are spoken via Piper TTS](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC / drive motor and steering servo; replies are spoken via Piper TTS and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 command (**Ollama** `gemma3:4b`), speaks a reply (**Piper**), and drives the car. A **PCA9685** over I2C
@@ -78,14 +78,7 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
 
 Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
-```
- 2S LiPo ─▶ ESC ─▶ drive motor
-              └ ESC signal/BEC plug ─▶ PCA9685 ch0 signal + V+ rail (6V) + GND
- Steering servo ───────────────────▶ PCA9685 ch1 (signal / V+ / GND)
- PCA9685  VCC + SDA + SCL + GND ────▶ Pi 3.3V, GPIO2/SDA, GPIO3/SCL, GND
- HC-SR04P  VCC▶Pi 3.3V   GND▶Pi GND   TRIG▶GPIO23   ECHO▶GPIO24
- Pi 5 ◀── UPS HAT (its own battery)
-```
+![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (which carries a 6V BEC) and the drive motor; the ESC's 3-wire plug goes to PCA9685 ch0 (signal + V+ 6V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; the forward HC-SR04P takes VCC 3.3V + GND + TRIG(GPIO23) + ECHO(GPIO24) from the Pi; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
 
 - **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC) or the PWM won't register.
 - PCA9685 **V+ rail = the ESC's 6 V BEC**, *not* the Pi. The HC-SR04**P** runs at **3.3 V**, so ECHO is Pi-safe (no divider).
