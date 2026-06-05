@@ -2,17 +2,22 @@
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
 # Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:4b (intent JSON) -> Piper (TTS),
-# driving an RC crawler (ESC throttle + steering servo) through brain/driver.py.
+# driving an RC crawler (ESC throttle + steering servo) through brain/driver.py. It can also
+# SEE (Pi Camera V2 NoIR -> the same multimodal gemma3:4b), react with an expressive FACE
+# (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
+# seen (SQLite, fed back into the prompt), and run a bounded autonomous explore/find behaviour.
 #
 # Design carried over from the v1 review:
 #   - No shell: Piper gets the reply text via stdin (an LLM reply can't inject commands).
-#   - Half-duplex audio: a single lock means the mic is never open while the speaker talks
-#     (no self-listening feedback loop) and two aplay processes never fight the device.
+#   - Half-duplex audio: a single lock means the mic is never open while the speaker talks.
 #   - Timeouts on every subprocess + the Ollama HTTP call, so nothing can wedge the robot.
 #   - The Pi whitelists actions and clamps speed/duration; unknown -> STOP (fail-safe).
 #   - Motion is handed to driver.py, whose control thread enforces the software failsafe.
+#   - AUTONOMY IS OPT-IN: EXPLORE/FIND only run if an explore phrase is in the transcript
+#     (the trigger gate), checked on the raw text -- never off an ordinary DRIVE command.
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -20,7 +25,13 @@ import threading
 import time
 import urllib.request
 
+import behavior
+from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
+from face import Face
+from memory import Memory
+
+log = logging.getLogger("robot.main")
 
 
 def env(key, default):
@@ -55,6 +66,21 @@ def is_noise(text):
     return text.strip().lower() in WHISPER_NOISE
 
 
+# --- Autonomy trigger gate: EXPLORE/FIND only fire if the transcript contains one of these. ---
+DEFAULT_EXPLORE_TRIGGERS = ("explore,look around,have a look,take a look,find,look for,"
+                            "search for,where is,go to,go towards,move towards,move toward,head towards")
+
+
+def explore_triggers():
+    raw = env("ROBOT_EXPLORE_TRIGGERS", DEFAULT_EXPLORE_TRIGGERS)
+    return [t.strip().lower() for t in raw.split(",") if t.strip()]
+
+
+def is_explore_command(text):
+    low = text.lower()
+    return any(trig in low for trig in explore_triggers())
+
+
 # audio_lock makes the physical audio path half-duplex: at most one of {record, playback}
 # at a time. Kills the self-listening feedback loop AND concurrent-aplay garbling.
 audio_lock = threading.Lock()
@@ -79,24 +105,32 @@ def listen_and_transcribe(cfg):
 SYSTEM_PROMPT = (
     "You are the brain of a remote-control crawler car with Ackermann steering "
     "(one drive motor plus one steering servo -- it CANNOT strafe or spin in place). "
-    "Convert the user's spoken command into ONE JSON object and nothing else.\n"
+    "It has a forward camera and can look around. Convert the user's spoken command into "
+    "ONE JSON object and nothing else.\n"
     "Keys:\n"
-    '- "drive": EXACTLY one of FORWARD, REVERSE, STOP.\n'
+    '- "action": one of DRIVE, EXPLORE, FIND, STOP. Use DRIVE for ordinary movement '
+    "(go / turn / reverse / stop). Use EXPLORE only if the user asks to look around or explore. "
+    "Use FIND only if the user asks to find, go to, or move towards a named object.\n"
+    '- "target": for FIND, the object to look for (e.g. "sofa"); otherwise omit.\n'
+    '- "drive": EXACTLY one of FORWARD, REVERSE, STOP (used when action is DRIVE).\n'
     '- "steer": EXACTLY one of LEFT, CENTER, RIGHT.\n'
     '- "speed": integer 0-100 (throttle; keep it low unless asked to go fast).\n'
     '- "duration_ms": integer 300-5000 (how long to move; use 0 only for STOP).\n'
     '- "reply": a short spoken response, max 12 words, plain text only.\n'
-    "To turn, set steer LEFT or RIGHT together with drive FORWARD (the car must be "
-    "moving to steer). If the command is unclear or unsafe, use drive STOP, steer "
-    "CENTER, and say why in reply.\n"
-    "User command: "
+    "To turn, set steer LEFT or RIGHT together with drive FORWARD (the car must be moving to "
+    "steer). If the command is unclear or unsafe, use action DRIVE, drive STOP, steer CENTER, "
+    "and say why in reply.\n"
 )
 
 
-def query_ollama(cfg, user_text):
+def query_ollama(cfg, user_text, context=""):
+    prompt = SYSTEM_PROMPT
+    if context:
+        prompt += "Known surroundings: " + context + "\n"
+    prompt += "User command: " + user_text
     payload = json.dumps({
         "model": cfg["model"],
-        "prompt": SYSTEM_PROMPT + user_text,
+        "prompt": prompt,
         "stream": False,
         "format": "json",
     }).encode("utf-8")
@@ -150,11 +184,34 @@ def _as_int(value, default):
 
 
 def main():
+    # Hardware actions (intended PWM/GPIO/I2C) are logged by driver.py on the "robot.hw"
+    # logger -- configure logging FIRST so the startup banner + mapping show on the console.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     cfg = load_config()
     driver = RobotDriver()
+    cam = Camera()
+    mem = Memory()
+    fc = Face()
+
+    def say(text):
+        text = (text or "").strip()
+        if not text:
+            return
+        fc.set_expression("talking")
+        speak(cfg, text)
+        fc.set_expression("idle")
 
     def on_obstacle(distance_cm):
         print(f"Obstacle {distance_cm:.1f} cm ahead -> stopping")
+        fc.set_expression("alarmed")
+        try:
+            mem.record("obstacle", notes=f"{distance_cm:.0f}cm ahead", distances=driver.distances())
+        except Exception:
+            pass
         # Run TTS off the control thread so the safety loop keeps ticking.
         threading.Thread(
             target=speak, args=(cfg, "Obstacle ahead. Stopping."), daemon=True
@@ -162,18 +219,22 @@ def main():
 
     driver.on_obstacle = on_obstacle
 
-    print("Robot Brain online (RC crawler).")
+    mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
+    print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
     print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
+    print("Autonomy (look around / find X) only runs if you say an explore phrase. Ctrl-C aborts.")
     print("Type 'q' then ENTER to quit.")
 
     try:
         while True:
+            fc.set_expression("idle")
             line = input("\n[ENTER]=talk  q=quit > ")
             if line.strip().lower() == "q":
                 driver.stop()
                 print("Bye.")
                 return
 
+            fc.set_expression("listening")
             try:
                 text = listen_and_transcribe(cfg)
             except Exception as e:
@@ -186,37 +247,65 @@ def main():
                 continue
             print(f"Heard: {text!r}")
 
+            fc.set_expression("thinking")
             try:
-                resp = query_ollama(cfg, text)
+                resp = query_ollama(cfg, text, context=mem.context_string())
             except Exception as e:
                 print(f"llm: {e}", file=sys.stderr)
                 driver.stop()  # fail safe
                 continue
 
-            drive = str(resp.get("drive", "STOP")).upper()
-            steer = str(resp.get("steer", "CENTER")).upper()
-            if drive not in VALID_DRIVE:
-                print(f"invalid drive {drive!r} -> STOP")
-                drive = "STOP"
-            if steer not in VALID_STEER:
-                steer = "CENTER"
-            speed = _as_int(resp.get("speed"), 0)
-            dur = _as_int(resp.get("duration_ms"), 0)
-            if drive != "STOP":
-                if speed < 5:      # a model 0/blank shouldn't mean "don't move"
-                    speed = 40
-                if dur < 300:      # clamp tiny/zero durations up to a usable move
-                    dur = 1500
-
+            action = str(resp.get("action", "DRIVE")).upper()
+            target = resp.get("target")
             reply = resp.get("reply", "")
-            print(f"drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
 
-            driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
-            speak(cfg, reply)                          # synchronous; returns after playback
+            # --- Trigger gate: autonomy must be asked for, on the RAW transcript. ---
+            if action in ("EXPLORE", "FIND") and not is_explore_command(text):
+                print(f"(gate: '{action}' not triggered by an explore phrase -> DRIVE)")
+                log.info("trigger gate: demoting %s -> DRIVE (no explore phrase uttered)", action)
+                action = "DRIVE"
+            if action == "FIND" and not target:
+                action = "EXPLORE"   # asked to find but no object named -> just look around
+
+            if action == "STOP":
+                print("action=STOP")
+                driver.stop()
+                say(reply)
+            elif action == "FIND":
+                print(f"action=FIND target={target!r}")
+                say(reply)
+                behavior.run_find(cfg, driver, cam, mem, fc, say, str(target))
+            elif action == "EXPLORE":
+                print("action=EXPLORE")
+                say(reply)
+                behavior.run_explore(cfg, driver, cam, mem, fc, say)
+            else:  # DRIVE (and any unknown action falls here as plain teleop)
+                drive = str(resp.get("drive", "STOP")).upper()
+                steer = str(resp.get("steer", "CENTER")).upper()
+                if drive not in VALID_DRIVE:
+                    print(f"invalid drive {drive!r} -> STOP")
+                    drive = "STOP"
+                if steer not in VALID_STEER:
+                    steer = "CENTER"
+                speed = _as_int(resp.get("speed"), 0)
+                dur = _as_int(resp.get("duration_ms"), 0)
+                if drive != "STOP":
+                    if speed < 5:      # a model 0/blank shouldn't mean "don't move"
+                        speed = 40
+                    if dur < 300:      # clamp tiny/zero durations up to a usable move
+                        dur = 1500
+                print(f"action=DRIVE drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
+                driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
+                say(reply)                                 # synchronous; returns after playback
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
-        driver.close()
+        driver.stop()
+        for closer in (driver.close, cam.close, fc.close, mem.close):
+            try:
+                closer()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

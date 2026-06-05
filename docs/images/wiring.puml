@@ -1,15 +1,15 @@
 @startuml wiring
-' LocalAiRobot — "Wiring at a glance" connection map (current base wiring).
+' LocalAiRobot — "Wiring at a glance" connection map (full design: 3 sensors + camera + face).
 ' This source lives next to its render. Regenerate in place (writes wiring.png here):
 '   plantuml -tpng docs/images/wiring.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
 ' Palette via stereotypes (draw.io pastels), hidden with `hide stereotype`:
 '   io #DAE8FC/#6C8EBF = compute / power-in   model #FFF2CC/#D6B656 = PWM bridge
-'   data #D5E8D4/#82B366 = sensor              motor #F8CECC/#B85450 = motor / actuator
-'   store #F5F5F5/#666666 = note/bus
+'   data #D5E8D4/#82B366 = sensor / camera     motor #F8CECC/#B85450 = motor / actuator
+'   store #F5F5F5/#666666 = note / bus
 !pragma layout smetana
 hide stereotype
-title LocalAiRobot — wiring at a glance (two isolated power domains, common ground)
+title LocalAiRobot — wiring at a glance (3-sensor array + camera + face; two isolated power domains, common ground)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -37,15 +37,21 @@ skinparam rectangle {
 rectangle "2S 7.4V LiPo" as lipo <<motor>>
 rectangle "ESC\n(+ 6V BEC)" as esc <<motor>>
 rectangle "drive motor" as motor <<motor>>
-rectangle "steering servo" as servo <<motor>>
+rectangle "steering servo\n(DS3225)" as servo <<motor>>
 
 ' ---- PWM bridge ----
 rectangle "PCA9685\n(I2C PWM bridge, 0x40)" as pca <<model>>
 
 ' ---- brain / UPS domain ----
-rectangle "Raspberry Pi 5" as pi <<io>>
-rectangle "UPS HAT\n(its own 18650 battery)" as ups <<io>>
-rectangle "HC-SR04P\n(forward distance)" as son <<data>>
+rectangle "Raspberry Pi 5\n(+ Active Cooler)" as pi <<io>>
+rectangle "UPS HAT (its own 18650)\nor 27W PSU on the bench" as ups <<io>>
+
+' ---- sensors / camera / face (all Pi-side, brain domain) ----
+rectangle "HC-SR04P  front" as sonF <<data>>
+rectangle "HC-SR04P  left" as sonL <<data>>
+rectangle "HC-SR04P  right" as sonR <<data>>
+rectangle "Pi Camera V2 NoIR\n(IMX219)" as cam <<data>>
+rectangle "Face screen\n(3.5 inch USB-C)" as face <<io>>
 
 ' ---- connections (labels = what's on the wire) ----
 lipo --> esc : 7.4 V
@@ -53,12 +59,17 @@ esc --> motor : motor drive
 esc --> pca : ch0: signal + V+ rail (6V BEC) + GND
 pca --> servo : ch1: signal / V+ / GND
 pca --> pi : VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND
-son --> pi : VCC 3.3V + GND + TRIG(GPIO23) + ECHO(GPIO24)
+sonF --> pi : 3.3V + GND + TRIG(GPIO23) + ECHO(GPIO24)
+sonL --> pi : 3.3V + GND + TRIG(GPIO5) + ECHO(GPIO6)
+sonR --> pi : 3.3V + GND + TRIG(GPIO20) + ECHO(GPIO21)
+cam --> pi : CSI ribbon (Pi-5 22->15 adapter)
+face --> pi : USB-C -> /dev/ttyACM0
 ups --> pi : 5V (its own battery)
 
 note bottom of pca
-  **Two isolated power domains** (LiPo -> motor/servo, UPS -> Pi): never bridge the battery positives,
+  **Two isolated power domains** (LiPo -> motor/servo, UPS/PSU -> Pi): never bridge the battery positives,
   but tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC) or the PWM won't register.
-  The PCA9685 **V+ rail = the ESC's 6V BEC**, not the Pi. HC-SR04**P** runs at 3.3V, so ECHO is Pi-safe (no divider).
+  The PCA9685 **V+ rail = the ESC's 6V BEC**, not the Pi. All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
+  Camera (CSI), face (USB-C) and the 3 sensors are all Pi-side / brain-domain.
 end note
 @enduml
