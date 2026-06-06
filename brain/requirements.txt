@@ -11,6 +11,14 @@
 adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
 gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
 lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5
-Pillow                            # camera frame letterbox/JPEG + procedural face rendering
+Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
 numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
 pyserial                          # USB-C face panel (turing-smart-screen serial protocol)
+
+# --- Wake word "Richard" (only exercised when ROBOT_WAKEWORD_ENABLE=1; still 100% offline) ---
+# openWakeWord needs an ONNX runtime and a continuous mic stream (sounddevice/PortAudio); the
+# PortAudio system lib is installed by scripts/install_stack.sh (apt portaudio19-dev). When the
+# wake word is off (the default) these are simply unused -- the brain falls back to ENTER PTT.
+openwakeword                      # tiny keyword spotter ("Richard"); models are local, no network
+onnxruntime                       # runs the wake-word + feature models on CPU
+sounddevice                       # continuous 16 kHz mic capture for the wake listener (needs PortAudio)
