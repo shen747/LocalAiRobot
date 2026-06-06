@@ -11,6 +11,18 @@ wire each peripheral with its own check, build the chassis, then calibrate live.
 Phases 1–6 run **on the bench on the 27 W PSU with no chassis and no motor** — nothing can move until
 Phase 7 connects the ESC.
 
+> 🖥️ **Where these commands run.** Unless noted, every shell command in this doc runs in **bash on the
+> Pi, over SSH** — not on your laptop and not in PowerShell. Flash the SD card with SSH enabled (Phase 1),
+> then `ssh YOUR_USER@raspberrypi.local` in and work from there. Multi-line Python shown as
+> `python - <<'PY' … PY` is a heredoc you paste whole — you don't create a `.py` file (see the appendix).
+
+> **What's an ESC?** The **ESC (Electronic Speed Controller)** is the standard RC component wired between
+> the battery and the drive motor: it converts a throttle PWM signal into motor power (and direction).
+> On this build that throttle PWM comes from **PCA9685 channel 0** (Phase 3), *not* from an RC receiver,
+> and the ESC's built-in **6 V BEC** (Battery Eliminator Circuit) back-feeds the PCA9685 `V+` rail to
+> power the DS3225 steering servo. It stays disconnected through Phases 1–6 and is first powered in
+> Phase 8 calibration (where it beeps its arming tones). The kill switch goes on the LiPo→ESC line.
+
 ---
 
 ## Phase 1 — Flash & brain bring-up (bench, no peripherals)
@@ -32,7 +44,18 @@ drives no hardware at all).
 
    Insert the card into the Pi.
 3. **Power from the official 27 W USB-C PSU only — do NOT fit the UPS HAT yet.** The 27 W supply
-   negotiates 5 V/5 A, so there's no low-power warning and no 600 mA peripheral clamp. Boot and SSH in.
+   negotiates 5 V/5 A, so there's no low-power warning and no 600 mA peripheral clamp. Boot it, wait
+   ~60 s for the headless first boot, then **SSH in from your laptop** with the username + hostname you
+   set in the Imager (default hostname `raspberrypi`, so the address is `raspberrypi.local`):
+   ```bash
+   ssh YOUR_USER@raspberrypi.local        # works on macOS / Windows 10+ / most Linux via mDNS;
+                                          # accept the one-time host-key fingerprint prompt
+   # if .local doesn't resolve, look up the Pi's IP in your router's client list and use it directly:
+   ssh YOUR_USER@192.168.1.42
+   ```
+   On Windows the `ssh` client ships with PowerShell/Terminal; if `raspberrypi.local` won't resolve,
+   use the IP (or install Apple Bonjour for mDNS). **Every command from here on — install, config,
+   dry-run, calibration — runs inside this SSH session on the Pi**, in bash (not your laptop's shell).
 4. **Install the stack and reboot:**
    ```bash
    git clone https://github.com/<you>/LocalAiRobot.git ~/LocalAiRobot
@@ -86,7 +109,8 @@ drives no hardware at all).
      usable**, since systemd has no stdin for the ENTER prompt.
    - **Audio cues** — drop short `.wav` files into `sounds/{greeting,ack,thinking,error}_sounds/`. In
      dry-run they only log `SOUND -> …`; live they play via `aplay` on `ROBOT_SOUNDS_DEVICE` (the USB
-     *speaker* card — separate from the mic). Empty folders are silent.
+     *speaker* card — separate from the mic). Empty folders are silent. See
+     [`sounds/README.md`](../sounds/README.md) for the folder layout + WAV format tips.
    - **Model warmup** — `ROBOT_WARMUP=1` primes the model at boot so the first command isn't a cold
      load; `ROBOT_OLLAMA_KEEPALIVE` keeps it resident between commands.
 
@@ -220,6 +244,7 @@ a **USB-serial** device and are driven by the `turing-smart-screen-python` libra
   is a static still; **none** falls back to the built-in procedural face — so with no `faces/` dir the
   face behaves exactly as before. Tune `ROBOT_FACE_FPS` / `ROBOT_FACE_FRAMES_DIR`; the USB-C panel's
   serial link caps the effective frame rate. Inspect frames in dry-run with `ROBOT_FACE_DUMP=<dir>`.
+  Full folder layout + naming rules: [`brain/faces/README.md`](../brain/faces/README.md).
 - Mount it forward-facing as the robot's "face"; dim it with `ROBOT_FACE_BRIGHTNESS` to save power.
 
 **Now run the brain LIVE on the bench (still no chassis/motor).** With the PCA9685 + 3 sensors + camera +
@@ -301,6 +326,17 @@ Build and test on the 27 W PSU first; add the UPS once everything works.
 ## Appendix — Command cheat-sheet & safety
 
 ### Command cheat-sheet
+
+**How to run these.** Every command below runs in a **bash shell on the Pi** (over SSH) — *not* on your
+laptop and *not* in PowerShell. Paste each line at the Pi's `$` prompt; lines starting with `#` are
+comments, so you don't type them.
+
+The last block is a **Python heredoc, not a file you create.** Everything between
+`brain/.venv/bin/python - <<'PY'` and the closing `PY` is piped into Python on **stdin** — the `-` tells
+Python "read the program from stdin." So **select and paste the whole block at once** (from the `set -a`
+line through the final `PY`) and it runs inline; press **Ctrl-C** to stop the sensor loop. You do *not*
+write a `.py` file. (If you'd rather keep it as one, copy just the lines *between* `<<'PY'` and `PY` into
+e.g. `sensors.py` and run `brain/.venv/bin/python sensors.py` — same result.)
 
 ```bash
 # Mic device id  →  put the plughw string in config/robot.env (ROBOT_MIC)

@@ -9,9 +9,10 @@
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 intent (**Ollama** `gemma3:4b` — the *same* model also reads camera frames), speaks a reply
-(**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz ESC/steering
-PWM (jitter-free even under LLM load); a **3-sensor HC-SR04P** array (front/left/right) cuts forward
-motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
+(**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz PWM for the
+**ESC** (Electronic Speed Controller — the throttle/motor driver between battery and motor) and the
+steering servo, jitter-free even under LLM load; a **3-sensor HC-SR04P** array (front/left/right) cuts
+forward motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
 no strafe/spin). Control is **push-to-talk** (press ENTER over SSH), with an **optional "Richard"
 wake word** (openWakeWord, off by default — which also lets it run headless as a service).
 
@@ -46,8 +47,8 @@ brain/sounds.py          # ack / greeting / thinking earcons (aplay, half-duplex
 brain/wakeword.py        # optional "Richard" wake word (openWakeWord); falls back to ENTER push-to-talk
 brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial; + openwakeword)
 config/robot.env         # runtime config (env vars)
-sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent
-brain/faces/             # optional per-state PNG animation frames (none = procedural face)
+sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent — see sounds/README.md
+brain/faces/             # optional per-state PNG animation frames (none = procedural) — see brain/faces/README.md
 scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
 scripts/robot.service    # optional systemd unit
 docs/assembly.md         # wiring + build reference (start here to build it)
@@ -214,7 +215,8 @@ objects is fed back into the prompt, so the robot keeps context across commands 
 alarmed / warmup / capturing`. Each state renders the built-in procedural face **or**, if you drop PNG
 frames in `brain/faces/<state>/NN.png`, an animation (≥2 frames; `talking` is fast with a random-frame
 mouth). It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simulated-logs) and is **fully
-optional** — a missing panel never blocks driving.
+optional** — a missing panel never blocks driving. See
+[`brain/faces/README.md`](brain/faces/README.md) for the per-state frame layout and rules.
 
 **Wake word, audio cues & warmup.** Control is **push-to-talk** (press ENTER over SSH) by default. Set
 `ROBOT_WAKEWORD_ENABLE=1` to add an **optional "Richard" wake word** (openWakeWord): the robot listens
@@ -222,7 +224,7 @@ continuously and wakes on its name, then records a command exactly as ENTER does
 works. This is also what lets the brain run **headless under `scripts/robot.service`** (which has no
 stdin for ENTER). The wake word only *starts* capture; the explore/find autonomy gate is separate and
 still required. Because the model is **slow** on the Pi CPU, the robot plays short **earcons**
-(`sounds/`) — an ack when it hears you, a *thinking* loop while it works, and a boot greeting — and
+([`sounds/`](sounds/README.md)) — an ack when it hears you, a *thinking* loop while it works, and a boot greeting — and
 **warms the model at boot** (`ROBOT_WARMUP`) with `keep-alive` so the first command isn't a multi-minute
 cold load. A single `model_lock` serialises the text-intent and vision calls so they never collide on
 the one Ollama model.
