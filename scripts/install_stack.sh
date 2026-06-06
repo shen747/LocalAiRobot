@@ -15,7 +15,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 echo ">> [1/8] system packages"
 sudo apt update
 sudo apt install -y git build-essential cmake alsa-utils curl \
-                    python3-venv python3-dev i2c-tools
+                    python3-venv python3-dev i2c-tools \
+                    portaudio19-dev libasound2-dev   # PortAudio: continuous mic for the optional wake word
 
 echo ">> [2/8] camera stack (picamera2 + libcamera, from apt -- NOT pip)"
 sudo apt install -y --no-install-recommends python3-picamera2 || \
@@ -64,6 +65,17 @@ fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements.txt
 
+# openWakeWord base feature models (melspectrogram + embedding) for the OPTIONAL "Richard" wake
+# word. Best-effort; only needed if you set ROBOT_WAKEWORD_ENABLE=1. Stays fully local thereafter.
+./.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()" >/dev/null 2>&1 \
+  && echo "   openWakeWord base models ready" \
+  || echo "   (openWakeWord base models not fetched -- only needed if you enable the wake word)"
+
+# Earcon directories for the ack/greeting/thinking cues. Drop your own short .wav files in here;
+# an empty directory is a silent no-op, so the feature is harmless until you add sounds.
+mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/ack_sounds" \
+         "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
+
 echo ">> DONE."
 echo "   1. Edit config/robot.env  (YOUR_USER + mic + steering/throttle/pins)."
 echo "   2. REBOOT once so the I2C enable and the new groups (dialout/video) take effect."
@@ -77,3 +89,6 @@ echo "        lsusb | grep -i 1a86           # the USB-C face panel (CH340 seria
 echo "        arecord -l                     # mic;  aplay -l -> USB speaker card"
 echo "   5. Then run LIVE with the wheels OFF the ground (kill switch in hand):"
 echo "        brain/.venv/bin/python brain/main.py"
+echo "   6. OPTIONAL wake word 'Richard': set ROBOT_WAKEWORD_ENABLE=1 and point ROBOT_WAKEWORD_MODEL"
+echo "      at a model (start with any stock openWakeWord .onnx; train 'Richard' later). Drop earcon"
+echo "      .wav files into sounds/{greeting,ack,thinking,error}_sounds/ for audio feedback."

@@ -43,7 +43,7 @@ def _sleep(secs, aborted):
         time.sleep(0.05)
 
 
-def run_find(cfg, driver, cam, memory, face, say, target, aborted=lambda: False):
+def run_find(cfg, driver, cam, memory, face, say, snd, target, aborted=lambda: False):
     """Explore until `target` is seen and approached, or the iteration cap is hit. Returns found?"""
     max_iters = _envi("ROBOT_EXPLORE_MAX_ITERS", 6)
     step_ms = _envi("ROBOT_EXPLORE_STEP_MS", 900)
@@ -60,7 +60,12 @@ def run_find(cfg, driver, cam, memory, face, say, target, aborted=lambda: False)
             log.info("FIND aborted by operator")
             break
         driver.stop()                                  # neutral -- safe to run slow vision
-        obs = vision.look(cfg, target, cam.capture_jpeg())
+        face.set_expression("capturing")               # "I'm looking" cue during the camera grab
+        frame = cam.capture_jpeg()
+        snd.start_thinking()                            # proof-of-life across the slow look
+        obs = vision.look(cfg, target, frame)
+        snd.stop_thinking()
+        face.set_expression("exploring")
         memory.record_look(obs, driver.distances())
 
         if obs["visible"] and obs["confidence"] >= conf_min:
@@ -94,7 +99,7 @@ def run_find(cfg, driver, cam, memory, face, say, target, aborted=lambda: False)
     return False
 
 
-def run_explore(cfg, driver, cam, memory, face, say, aborted=lambda: False):
+def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False):
     """Look around (coarse arc-scan), record what's seen to memory, and describe it. Returns objects."""
     scans = max(1, _envi("ROBOT_EXPLORE_SCANS", 3))
     scan_ms = _envi("ROBOT_SCAN_STEP_MS", 700)
@@ -107,7 +112,12 @@ def run_explore(cfg, driver, cam, memory, face, say, aborted=lambda: False):
         if aborted():
             break
         driver.stop()                                  # neutral while the camera/LLM works
-        desc = vision.describe(cfg, cam.capture_jpeg())
+        face.set_expression("capturing")
+        frame = cam.capture_jpeg()
+        snd.start_thinking()
+        desc = vision.describe(cfg, frame)
+        snd.stop_thinking()
+        face.set_expression("exploring")
         for o in desc.get("objects", []):
             memory.record("explore", target=o, visible=True, distances=driver.distances())
             if o.lower() not in (s.lower() for s in seen):

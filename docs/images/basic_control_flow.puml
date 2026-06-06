@@ -41,6 +41,8 @@ left to right direction
 ' ---------- nodes ----------
 rectangle "Voice command\n'go forward' / 'find the sofa'" as voice <<io>>
 rectangle "USB mic" as mic <<io>>
+rectangle "wake word (openWakeWord)\nalways-listening: 'Richard'\n(optional; ENABLE=0 -> ENTER)" as wake <<proc>>
+rectangle "ENTER push-to-talk\n(SSH; default trigger)" as ptt <<io>>
 rectangle "whisper.cpp\nspeech -> text" as whisper <<model>>
 rectangle "trigger-phrase gate\nEXPLORE/FIND only on explore\nwords, otherwise DRIVE" as gate <<proc>>
 rectangle "gemma3:4b  (Ollama)\ntext + image (multimodal)" as llm <<model>>
@@ -48,7 +50,7 @@ rectangle "intent JSON\n{action, drive, steer,\nspeed, duration_ms, reply}" as i
 database "environment memory\n(SQLite: objects seen,\nbearings, distances)" as mem
 
 rectangle "Pi Camera V2 NoIR\n(IMX219, CSI)" as cam <<data>>
-rectangle "vision look\ngemma3:4b sees the frame ->\n{visible, L/C/R, near/far, conf}" as vision <<model>>
+rectangle "vision look\ngemma3:4b (or optional Moondream2)\nframe -> {visible, L/C/R, near/far}" as vision <<model>>
 
 rectangle "behaviour loop  (behavior.py)\nEXPLORE / FIND:\nstop -> look -> gated step" as behav <<proc>>
 rectangle "control loop  (driver.py)\nforward gate cuts FORWARD < 30 cm;\nsteer & reverse pass through" as ctrl <<proc>>
@@ -61,11 +63,14 @@ rectangle "drive motor" as motor <<motor>>
 rectangle "steering servo" as servo <<motor>>
 
 rectangle "Piper TTS\nspoken reply" as tts <<proc>>
-rectangle "Face screen (USB-C)\nidle / listening / thinking /\nhappy / confused / alarmed" as face <<io>>
+rectangle "earcons (aplay WAV)\nack / greeting / thinking\n(half-duplex via audio_lock)" as sfx <<io>>
+rectangle "Face screen (USB-C)\nidle / listening / thinking / happy /\nconfused / alarmed / warmup / capturing" as face <<io>>
 
 ' ---------- voice path ----------
 voice --> mic : speech
-mic --> whisper
+mic --> wake : 16 kHz stream
+wake --> whisper : on "Richard" -> record 4s
+ptt --> whisper : ENTER -> record 4s
 whisper --> gate : transcript
 gate --> llm : guarded command
 mem --> llm : recent context
@@ -96,4 +101,15 @@ intent --> tts : reply
 ctrl --> tts : "Obstacle ahead."
 intent --> face : expression
 behav --> face : exploring / happy / confused
+
+' ---------- audio cues (earcons; share TTS's audio_lock) ----------
+wake --> sfx : ack on wake
+llm --> sfx : thinking loop while busy
+ctrl --> sfx : error on obstacle
+
+note bottom of llm
+  warmed at boot (keep-alive);
+  one model_lock serialises
+  text-intent + vision calls
+end note
 @enduml

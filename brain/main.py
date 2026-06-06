@@ -16,7 +16,6 @@
 #   - AUTONOMY IS OPT-IN: EXPLORE/FIND only run if an explore phrase is in the transcript
 #     (the trigger gate), checked on the raw text -- never off an ordinary DRIVE command.
 
-import json
 import logging
 import os
 import signal
@@ -24,13 +23,15 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 
 import behavior
+import inference
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
 from face import Face
 from memory import Memory
+from sounds import Sounds
+from wakeword import WakeWord
 
 log = logging.getLogger("robot.main")
 
@@ -52,6 +53,9 @@ def load_config():
         "mic": env("ROBOT_MIC", "plughw:1,0"),
         "record_secs": env("ROBOT_RECORD_SECS", "4"),
         "tmpdir": env("ROBOT_TMPDIR", "/dev/shm"),
+        # Optional dedicated vision model (e.g. moondream). Empty -> vision shares cfg["model"]
+        # (gemma3:4b), i.e. unchanged behaviour. See vision.py / CODE_AND_SOFTWARE_IMPROVEMENTS.md.
+        "vision_model": env("ROBOT_VISION_MODEL", ""),
     }
 
 
@@ -103,6 +107,21 @@ def listen_and_transcribe(cfg):
     return out.stdout.strip()
 
 
+def wait_for_trigger(cfg, wake):
+    """Block until the operator starts a turn. Returns 'WAKE' | 'PTT' | 'QUIT'.
+
+    With the wake word disabled/unavailable this is byte-for-byte today's ENTER push-to-talk;
+    when enabled, the WakeWord listener also accepts ENTER/q over a TTY and runs headless without
+    one. Either way the wake word ONLY starts capture -- the autonomy trigger gate is separate."""
+    if wake is None or not wake.available:
+        try:
+            line = input("\n[ENTER]=talk  q=quit > ")
+        except EOFError:
+            return "QUIT"
+        return "QUIT" if line.strip().lower() == "q" else "PTT"
+    return wake.wait(audio_lock)
+
+
 SYSTEM_PROMPT = (
     "You are the brain of a remote-control crawler car with Ackermann steering "
     "(one drive motor plus one steering servo -- it CANNOT strafe or spin in place). "
@@ -136,27 +155,14 @@ def query_ollama(cfg, user_text, context=""):
     if context:
         prompt += "Known surroundings: " + context + "\n"
     prompt += "User command: " + user_text
-    payload = json.dumps({
+    # Routed through inference.ollama_generate: one shared model_lock serialises this with the
+    # vision call (so they never hit Ollama concurrently), and keep_alive keeps the model warm.
+    # It unwraps the {"response": ...} envelope and validates a dict; a raise is fail-safe here.
+    return inference.ollama_generate(cfg, {
         "model": cfg["model"],
         "prompt": prompt,
-        "stream": False,
         "format": "json",
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        cfg["ollama_url"], data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=_llm_timeout()) as resp:
-        raw = resp.read()
-    # Ollama wraps the model output in {"response": "<json string>"}.
-    envelope = json.loads(raw)
-    response = envelope.get("response")
-    if not response:
-        raise ValueError(f"ollama returned no response (raw: {raw[:200]!r})")
-    obj = json.loads(response)
-    if not isinstance(obj, dict):
-        # JSON mode guarantees valid JSON, not a JSON *object* -- guard so a list/string
-        # can't crash the loop later at resp.get(...). Callers treat the raise as fail-safe.
-        raise ValueError(f"model did not return a JSON object: {response[:200]!r}")
-    return obj
+    }, _llm_timeout())
 
 
 def speak(cfg, text):
@@ -204,6 +210,8 @@ def main():
     cam = Camera()
     mem = Memory()
     fc = Face()
+    snd = Sounds(audio_lock, cfg)
+    wake = WakeWord(cfg)
 
     def say(text):
         text = (text or "").strip()
@@ -220,6 +228,7 @@ def main():
             mem.record("obstacle", notes=f"{distance_cm:.0f}cm ahead", distances=driver.distances())
         except Exception:
             pass
+        snd.play("error")   # fire-and-forget earcon; never on the synchronous driver.stop() path
         # Run TTS off the control thread so the safety loop keeps ticking.
         threading.Thread(
             target=speak, args=(cfg, "Obstacle ahead. Stopping."), daemon=True
@@ -260,18 +269,31 @@ def main():
 
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
-    print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
+    if wake.available:
+        print("Wake word ON: say 'Richard' to wake me. ENTER still works (over SSH); 'q' quits.")
+    else:
+        print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
     print("Autonomy (look around / find X) only runs if you say an explore phrase.")
     print("During autonomy, Ctrl-C aborts back to the prompt; at the prompt, 'q' or Ctrl-C quits.")
+
+    # Warm the model NOW (best-effort) so the first command isn't a multi-minute cold load, then
+    # an audible greeting confirms the stack is up -- useful when running headless under systemd.
+    if os.environ.get("ROBOT_WARMUP", "1") == "1":
+        fc.set_expression("warmup")
+        ok = inference.warm_up(cfg, _llm_timeout())
+        print(f"Model warmup: {'ready' if ok else 'skipped (will cold-load on first command)'}")
+    snd.play("greeting")
 
     try:
         while True:
             fc.set_expression("idle")
-            line = input("\n[ENTER]=talk  q=quit > ")
-            if line.strip().lower() == "q":
+            trigger = wait_for_trigger(cfg, wake)
+            if trigger == "QUIT":
                 driver.stop()
                 print("Bye.")
                 return
+            if trigger == "WAKE":
+                snd.play("ack")            # wake-ack: "heard my name", before recording starts
 
             fc.set_expression("listening")
             try:
@@ -285,14 +307,19 @@ def main():
                 print("(ignored: empty / noise)")
                 continue
             print(f"Heard: {text!r}")
+            snd.play("ack")                # command-ack: "got it", placed AFTER the noise filter
 
             fc.set_expression("thinking")
+            snd.start_thinking()           # proof-of-life loop while the (slow) model runs
             try:
                 resp = query_ollama(cfg, text, context=mem.context_string())
             except Exception as e:
+                snd.stop_thinking()
+                snd.play("error")
                 print(f"llm: {e}", file=sys.stderr)
                 driver.stop()  # fail safe
                 continue
+            snd.stop_thinking()            # stop BEFORE any say() so it doesn't fight TTS
 
             action = str(resp.get("action", "DRIVE")).upper()
             target = resp.get("target")
@@ -313,11 +340,11 @@ def main():
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")
                 say(reply)
-                run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, str(target))
+                run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, snd, str(target))
             elif action == "EXPLORE":
                 print("action=EXPLORE")
                 say(reply)
-                run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say)
+                run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say, snd)
             else:  # DRIVE (and any unknown action falls here as plain teleop)
                 drive = str(resp.get("drive", "STOP")).upper()
                 steer = str(resp.get("steer", "CENTER")).upper()
@@ -340,7 +367,7 @@ def main():
         print()
     finally:
         driver.stop()
-        for closer in (driver.close, cam.close, fc.close, mem.close):
+        for closer in (driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
             try:
                 closer()
             except Exception:

@@ -1,20 +1,21 @@
-# brain/vision.py -- multimodal "look" via the SAME gemma3:4b (no extra model).
+# brain/vision.py -- multimodal "look" via gemma3:4b (or an optional dedicated VLM, ROBOT_VISION_MODEL).
 #
 # A captured JPEG is sent to Ollama's native /api/generate as a base64 `images` array with a
 # JSON-schema `format`, so the model returns a structured, enum-constrained scene report that
-# maps straight onto steering. Uses urllib (no new dep), like main.py. CPU-only vision on the
-# Pi 5 is SLOW (tens of seconds to minutes/image), so callers must stop the car first and treat
-# this as an occasional discrete "look", never a loop input.
+# maps straight onto steering. The call goes through brain/inference.py (the shared model_lock +
+# keep-alive gateway), so this slow vision call and the text-intent call never hit Ollama at the
+# same time. CPU-only vision on the Pi 5 is SLOW (tens of seconds to minutes/image), so callers
+# must stop the car first and treat this as an occasional discrete "look", never a loop input.
 #
 # Dry run / no camera: if there is no frame, fall back to ROBOT_FAKE_VISION
 # (format "target:horizontal:distance:confidence", e.g. "sofa:left:near:0.9") so the explore
 # loop can be exercised deterministically on an unwired Pi / laptop with no Ollama call.
 
 import base64
-import json
 import logging
 import os
-import urllib.request
+
+import inference
 
 log = logging.getLogger("robot.vision")
 
@@ -52,25 +53,17 @@ def _vision_timeout():
 
 
 def _ollama_image(cfg, prompt, jpeg_bytes, schema):
-    body = json.dumps({
-        "model": cfg["model"],
+    # Route through the shared inference gateway: ONE model_lock serialises this with the text
+    # intent call so two generates never hit Ollama at once (the software twin of the reference's
+    # /dev/hailo0 device-exclusivity crash), and keep_alive keeps the model resident. Uses a
+    # dedicated vision model when ROBOT_VISION_MODEL is set, otherwise the same gemma3:4b as today.
+    return inference.ollama_generate(cfg, {
+        "model": cfg.get("vision_model") or cfg["model"],
         "prompt": prompt,
         "images": [base64.b64encode(jpeg_bytes).decode("ascii")],
-        "stream": False,
         "format": schema,
         "options": {"temperature": 0, "num_predict": 220},
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        cfg["ollama_url"], data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=_vision_timeout()) as resp:
-        envelope = json.loads(resp.read())
-    response = envelope.get("response")
-    if not response:
-        raise ValueError(f"ollama returned no response (raw: {str(envelope)[:160]!r})")
-    obj = json.loads(response)
-    if not isinstance(obj, dict):
-        raise ValueError(f"vision model did not return a JSON object: {response[:160]!r}")
-    return obj
+    }, _vision_timeout())
 
 
 def _parse_fake():

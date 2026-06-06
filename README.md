@@ -5,14 +5,15 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
-![LocalAiRobot voice + vision control flow: a voice command is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC / drive motor and steering servo; replies are spoken via Piper TTS and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed)](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command — started by an optional "Richard" wake word (openWakeWord) or ENTER push-to-talk — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC / drive motor and steering servo; the text-intent and vision calls share one Ollama model behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 intent (**Ollama** `gemma3:4b` — the *same* model also reads camera frames), speaks a reply
 (**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz ESC/steering
 PWM (jitter-free even under LLM load); a **3-sensor HC-SR04P** array (front/left/right) cuts forward
 motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
-no strafe/spin). Control is **push-to-talk** (press ENTER over SSH).
+no strafe/spin). Control is **push-to-talk** (press ENTER over SSH), with an **optional "Richard"
+wake word** (openWakeWord, off by default — which also lets it run headless as a service).
 
 **Autonomy is opt-in.** Ordinary commands ("go forward", "turn left", "stop") are plain teleop. The
 camera-driven **look-around / find-the-sofa** behaviour only runs when you actually say an explore
@@ -20,9 +21,9 @@ phrase ("look around", "find the …", "go to the …") — a deterministic trig
 transcript, so a misheard command can never send the robot wandering.
 
 **Is:** voice teleop + a forward safety stop + opt-in, bounded, vision-guided explore/find with a
-persistent scene memory. **Is not:** self-driving, obstacle *avoidance* / path-planning, SLAM, or
-wake-word. Vision on the Pi 5 CPU is **slow** (tens of seconds to minutes per look), so "find the X"
-is a deliberate stop-look-step loop, not real-time navigation.
+persistent scene memory + an **optional wake word**. **Is not:** self-driving, obstacle *avoidance* /
+path-planning, or SLAM. Vision on the Pi 5 CPU is **slow** (tens of seconds to minutes per look), so
+"find the X" is a deliberate stop-look-step loop, not real-time navigation.
 
 > 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC to neutral on STOP / error /
 > obstacle / move-timeout and arms it at neutral on boot — **but if the process is killed, the PCA9685
@@ -39,9 +40,14 @@ brain/camera.py          # Pi Camera V2 NoIR capture → preprocessed JPEG (pica
 brain/vision.py          # send a frame to gemma3:4b via Ollama → structured scene JSON
 brain/memory.py          # SQLite environment memory: record sightings, summarise back to the prompt
 brain/behavior.py        # bounded autonomous explore / find-and-drive-to-object loop
-brain/face.py            # expression face: USB-C panel | DSI/HDMI framebuffer | simulated
-brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial)
+brain/face.py            # expression face: USB-C panel | DSI/HDMI framebuffer | simulated (+ PNG animation)
+brain/inference.py       # one keep-alive + model_lock gateway to Ollama (text & vision share it; warmup)
+brain/sounds.py          # ack / greeting / thinking earcons (aplay, half-duplex); dry-run logs only
+brain/wakeword.py        # optional "Richard" wake word (openWakeWord); falls back to ENTER push-to-talk
+brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial; + openwakeword)
 config/robot.env         # runtime config (env vars)
+sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent
+brain/faces/             # optional per-state PNG animation frames (none = procedural face)
 scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
 scripts/robot.service    # optional systemd unit
 docs/assembly.md         # wiring + build reference (start here to build it)
@@ -140,8 +146,9 @@ arecord -l                      # find your mic → plughw:x,y ;  aplay -l → t
 ```
 
 **3. Configure** [`config/robot.env`](config/robot.env): set `YOUR_USER` in the whisper/piper paths,
-`ROBOT_MIC`, and the sensor pins. Camera/face/explore/memory have working defaults. (If playback is
-silent, make the USB sound card the default ALSA output.)
+`ROBOT_MIC`, and the sensor pins. Camera/face/explore/memory plus the wake-word/audio-cue/warmup
+knobs have working defaults (the wake word is **off** by default). (If playback is silent, make the
+USB sound card the default ALSA output.)
 
 **4. 🧪 Bench bring-up FIRST (no chassis, no motor) — watch the model→hardware mapping.**
 ```bash
@@ -204,15 +211,31 @@ each look. The fixed camera + no-spin steering means "look around" is a coarse a
 objects is fed back into the prompt, so the robot keeps context across commands and reboots.
 
 **Face.** A small display shows `idle / listening / thinking / talking / exploring / happy / confused /
-alarmed`. It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simulated-logs) and is
-**fully optional** — a missing panel never blocks driving.
+alarmed / warmup / capturing`. Each state renders the built-in procedural face **or**, if you drop PNG
+frames in `brain/faces/<state>/NN.png`, an animation (≥2 frames; `talking` is fast with a random-frame
+mouth). It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simulated-logs) and is **fully
+optional** — a missing panel never blocks driving.
+
+**Wake word, audio cues & warmup.** Control is **push-to-talk** (press ENTER over SSH) by default. Set
+`ROBOT_WAKEWORD_ENABLE=1` to add an **optional "Richard" wake word** (openWakeWord): the robot listens
+continuously and wakes on its name, then records a command exactly as ENTER does — and ENTER still
+works. This is also what lets the brain run **headless under `scripts/robot.service`** (which has no
+stdin for ENTER). The wake word only *starts* capture; the explore/find autonomy gate is separate and
+still required. Because the model is **slow** on the Pi CPU, the robot plays short **earcons**
+(`sounds/`) — an ack when it hears you, a *thinking* loop while it works, and a boot greeting — and
+**warms the model at boot** (`ROBOT_WARMUP`) with `keep-alive` so the first command isn't a multi-minute
+cold load. A single `model_lock` serialises the text-intent and vision calls so they never collide on
+the one Ollama model.
 
 **Tuning** (all in `config/robot.env`): the AI stack (`ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`,
 `ROBOT_RECORD_SECS`); motion (`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`,
 `ROBOT_MAX_MOVE_MS`); sensors (`ROBOT_*_TRIG_PIN`/`_ECHO_PIN`, `ROBOT_SIDE_OBSTACLE_CM`); camera/vision
-(`ROBOT_CAMERA_*`, `ROBOT_VISION_TIMEOUT_S`); face (`ROBOT_FACE_*`); explore/find
-(`ROBOT_EXPLORE_*`, `ROBOT_FIND_CONFIDENCE`, `ROBOT_APPROACH_CM`, `ROBOT_EXPLORE_TRIGGERS`); memory
-(`ROBOT_MEMORY_*`); and the bench dry-run (`ROBOT_DRY_RUN`, `ROBOT_FAKE_*`).
+(`ROBOT_CAMERA_*`, `ROBOT_VISION_TIMEOUT_S`); face (`ROBOT_FACE_*`, `ROBOT_FACE_FRAMES_DIR`,
+`ROBOT_FACE_FPS`); explore/find (`ROBOT_EXPLORE_*`, `ROBOT_FIND_CONFIDENCE`, `ROBOT_APPROACH_CM`,
+`ROBOT_EXPLORE_TRIGGERS`); model orchestration (`ROBOT_WARMUP`, `ROBOT_OLLAMA_KEEPALIVE`,
+`ROBOT_VISION_MODEL`); wake word (`ROBOT_WAKEWORD_*`); audio cues (`ROBOT_SOUNDS_*`,
+`ROBOT_THINKING_*`); memory (`ROBOT_MEMORY_*`); and the bench dry-run (`ROBOT_DRY_RUN`,
+`ROBOT_FAKE_*`).
 
 After the one-time downloads, disable Wi-Fi — everything runs on-device.
 
@@ -224,5 +247,6 @@ MIT — see [LICENSE](LICENSE). Built on [Ollama](https://ollama.com/) +
 [Gemma 3](https://ai.google.dev/gemma), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
 [Piper](https://github.com/rhasspy/piper), [picamera2](https://github.com/raspberrypi/picamera2),
 [gpiozero](https://gpiozero.readthedocs.io/),
-[Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit), and
+[Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit),
+[openWakeWord](https://github.com/dscripka/openWakeWord), and
 [turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python).

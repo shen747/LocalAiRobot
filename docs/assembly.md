@@ -76,6 +76,19 @@ drives no hardware at all).
    vcgencmd get_throttled     # expect 0x0
    watch -n1 vcgencmd measure_temp   # stays < 80 °C with the cooler
    ```
+8. **Optional — wake word, audio cues & model warmup (all default-safe).** By default control is ENTER
+   push-to-talk and these change nothing. To try them on the bench:
+   - **Wake word "Richard"** — `ROBOT_WAKEWORD_ENABLE=1`. In dry-run there is no mic, so type `r` then
+     ENTER to simulate the wake (or set `ROBOT_FAKE_WAKE=1` to auto-fire once). Live, it listens via
+     sounddevice on the default input (`ROBOT_WAKEWORD_DEVICE` to override); point
+     `ROBOT_WAKEWORD_MODEL` at any stock openWakeWord `.onnx` to prove the pipeline, then train a real
+     "Richard" model later. ENTER/`q` still work over SSH. **This is what makes `scripts/robot.service`
+     usable**, since systemd has no stdin for the ENTER prompt.
+   - **Audio cues** — drop short `.wav` files into `sounds/{greeting,ack,thinking,error}_sounds/`. In
+     dry-run they only log `SOUND -> …`; live they play via `aplay` on `ROBOT_SOUNDS_DEVICE` (the USB
+     *speaker* card — separate from the mic). Empty folders are silent.
+   - **Model warmup** — `ROBOT_WARMUP=1` primes the model at boot so the first command isn't a cold
+     load; `ROBOT_OLLAMA_KEEPALIVE` keeps it resident between commands.
 
 With the brain proven, wire the peripherals one at a time (Phases 3–6) — all still on the bench with the
 ESC/motor disconnected. **First read Phase 2** so you don't bridge the power domains.
@@ -201,6 +214,12 @@ a **USB-serial** device and are driven by the `turing-smart-screen-python` libra
 - It's **fully optional and fail-safe.** If the panel doesn't enumerate, set
   `ROBOT_FACE_BACKEND=framebuffer` to use a small **DSI/HDMI** display instead (PIL → `/dev/fb0`, no
   pygame), or `ROBOT_FACE_BACKEND=simulated` to just log expressions. A missing face never blocks driving.
+- **Animated faces (optional):** drop PNG frames in `brain/faces/<state>/NN.png` (states
+  `idle/listening/thinking/talking/exploring/happy/confused/alarmed/warmup/capturing`). A state with
+  **≥2 frames animates** on a background thread (`talking` is fast with a random-frame mouth); 1 frame
+  is a static still; **none** falls back to the built-in procedural face — so with no `faces/` dir the
+  face behaves exactly as before. Tune `ROBOT_FACE_FPS` / `ROBOT_FACE_FRAMES_DIR`; the USB-C panel's
+  serial link caps the effective frame rate. Inspect frames in dry-run with `ROBOT_FACE_DUMP=<dir>`.
 - Mount it forward-facing as the robot's "face"; dim it with `ROBOT_FACE_BRIGHTNESS` to save power.
 
 **Now run the brain LIVE on the bench (still no chassis/motor).** With the PCA9685 + 3 sensors + camera +
