@@ -2,7 +2,7 @@
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
 # Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:4b (intent JSON) -> Piper (TTS),
-# driving an RC crawler (ESC throttle + steering servo) through brain/driver.py. It can also
+# driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> the same multimodal gemma3:4b), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
 # seen (SQLite, fed back into the prompt), and run a bounded autonomous explore/find behaviour.
@@ -238,7 +238,7 @@ def main():
         # Run an autonomous behaviour with a graceful abort: while it runs, Ctrl-C sets an abort
         # flag (honoured at the next look/step boundary) and returns to the prompt instead of
         # killing the program. Any behaviour-internal error is contained, not fatal, and we always
-        # leave the ESC at neutral.
+        # leave the ESC (Electronic Speed Controller) at neutral.
         ev = threading.Event()
         installed, prev = False, None
 

@@ -41,7 +41,7 @@ ups --> pi : 5V to Pi
 
 rectangle "Motor power  (LiPo, high current)" as motor <<motordomain>> {
   rectangle "2S 7.4V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(battery input + 6V/3A BEC)" as esc <<motor>>
+  rectangle "ESC (Electronic Speed Controller)\n(battery input + 6V/3A BEC)" as esc <<motor>>
   rectangle "drive motor" as dmotor <<motor>>
 }
 lipo --> esc : 7.4 V
@@ -54,7 +54,7 @@ rectangle "HC-SR04P  x3   (3.3V; ECHO Pi-safe, no divider)\nfront TRIG23/ECHO24 
 rectangle "Pi Camera V2 NoIR\n(IMX219, CSI via Pi-5 22->15 adapter)" as cam <<data>>
 rectangle "Face screen\n(USB-C -> /dev/ttyACM0)" as face <<io>>
 
-rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC)" as gnd <<store>>
+rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC (Electronic Speed Controller))" as gnd <<store>>
 
 ' ----- logic / signal -----
 pi --> pca : 3.3V logic (VCC) + I2C SDA/SCL
@@ -73,7 +73,7 @@ pca ..> gnd : GND
 note bottom of gnd
   Two isolated battery domains: **never bridge LiPo + and UPS/PSU +.**
   They meet ONLY at shared GND and the 3.3V logic / PWM signals.
-  The ESC 6V BEC -> PCA9685 V+ rail is INTERNAL to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
+  The ESC (Electronic Speed Controller) 6V BEC -> PCA9685 V+ rail is INTERNAL to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
   Bench bring-up: power the Pi from the official **27W PSU first** (UPS not installed).
   DS3225 stall ~2.5-3A: the 6V/3A BEC is fine for normal steering; add a separate servo BEC on V+ if it browns out.
 end note

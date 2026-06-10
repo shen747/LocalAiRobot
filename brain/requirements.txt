@@ -8,7 +8,7 @@
 # picamera2 is also NOT pip-installed: it comes from apt (python3-picamera2) and is visible to
 # this venv because install_stack.sh creates the venv with --system-site-packages.
 
-adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
+adafruit-circuitpython-servokit   # ESC (Electronic Speed Controller) + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
 gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
 lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering

@@ -58,7 +58,7 @@ rectangle "control loop  (driver.py)\nforward gate cuts FORWARD < 30 cm;\nsteer 
 rectangle "HC-SR04P  x3 array\nfront / left / right" as sonar <<data>>
 
 rectangle "PCA9685\nI2C PWM @ 50 Hz" as pca <<io>>
-rectangle "ESC" as esc <<motor>>
+rectangle "ESC (Electronic Speed Controller)" as esc <<motor>>
 rectangle "drive motor" as motor <<motor>>
 rectangle "steering servo" as servo <<motor>>
 

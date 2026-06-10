@@ -35,7 +35,7 @@ skinparam rectangle {
 
 rectangle "Motor power  (LiPo)" as motorbox <<motordomain>> {
   rectangle "2S 7.4V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(battery input + 6V BEC)" as esc <<motor>>
+  rectangle "ESC (Electronic Speed Controller)\n(battery input + 6V BEC)" as esc <<motor>>
   rectangle "drive motor" as motor <<motor>>
 }
 lipo -right-> esc : 7.4 V
@@ -53,7 +53,7 @@ pi --> cam : CSI
 pi --> face : USB-C
 pi --> sonar : 3.3V + GPIO
 
-rectangle "PCA9685\n(I2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC 6V BEC)" as pca <<model>>
+rectangle "PCA9685\n(I2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC (Electronic Speed Controller) 6V BEC)" as pca <<model>>
 
 rectangle "common GND bus" as gnd <<store>>
 
@@ -63,7 +63,7 @@ pca ..> gnd : GND
 
 note bottom of gnd
   **Never bridge the two batteries** (LiPo + and UPS/PSU + stay separate).
-  Tie **ALL grounds** together: Pi <-> PCA9685 <-> ESC, or the PWM won't register.
+  Tie **ALL grounds** together: Pi <-> PCA9685 <-> ESC (Electronic Speed Controller), or the PWM won't register.
   Bench-test on the official **27W PSU first** (UPS not installed). **Active Cooler is mandatory.**
   Camera (CSI), face panel (USB-C) and the 3 HC-SR04P are all Pi-side / brain-domain.
 end note

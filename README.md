@@ -5,12 +5,12 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
-![LocalAiRobot voice + vision control flow: a voice command — started by an optional "Richard" wake word (openWakeWord) or ENTER push-to-talk — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC / drive motor and steering servo; the text-intent and vision calls share one Ollama model behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command — started by an optional "Richard" wake word (openWakeWord) or ENTER push-to-talk — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama model behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 intent (**Ollama** `gemma3:4b` — the *same* model also reads camera frames), speaks a reply
 (**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz PWM for the
-**ESC** (Electronic Speed Controller — the throttle/motor driver between battery and motor) and the
+**ESC (Electronic Speed Controller)** (Electronic Speed Controller — the throttle/motor driver between battery and motor) and the
 steering servo, jitter-free even under LLM load; a **3-sensor HC-SR04P** array (front/left/right) cuts
 forward motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
 no strafe/spin). Control is **push-to-talk** (press ENTER over SSH), with an **optional "Richard"
@@ -26,7 +26,7 @@ persistent scene memory + an **optional wake word**. **Is not:** self-driving, o
 path-planning, or SLAM. Vision on the Pi 5 CPU is **slow** (tens of seconds to minutes per look), so
 "find the X" is a deliberate stop-look-step loop, not real-time navigation.
 
-> 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC to neutral on STOP / error /
+> 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC (Electronic Speed Controller) to neutral on STOP / error /
 > obstacle / move-timeout and arms it at neutral on boot — **but if the process is killed, the PCA9685
 > holds the last pulse.** Keep a **physical kill switch on the motor battery** in reach, and start slow.
 
@@ -36,7 +36,7 @@ path-planning, or SLAM. Vision on the Pi 5 CPU is **slow** (tens of seconds to m
 
 ```
 brain/main.py            # orchestrator: listen → think → (drive | explore | find) → speak; face events
-brain/driver.py          # PCA9685 ESC + steering servo, 3x HC-SR04P, software failsafe, dry-run fakes
+brain/driver.py          # PCA9685 ESC (Electronic Speed Controller) + steering servo, 3x HC-SR04P, software failsafe, dry-run fakes
 brain/camera.py          # Pi Camera V2 NoIR capture → preprocessed JPEG (picamera2)
 brain/vision.py          # send a frame to gemma3:4b via Ollama → structured scene JSON
 brain/memory.py          # SQLite environment memory: record sightings, summarise back to the prompt
@@ -91,17 +91,17 @@ Search terms are generic — use your preferred retailer.
 | Chassis | `1/10 SCX10 frame all-metal chassis 313mm` | roller, wheels included; you assemble it |
 | Motor | `SURPASS 540 brushed motor 35T` | high-turn = torque; **not** a low-turn 13T |
 | Pinion | `32P pinion gear 3.175mm 12T` | **32DP / M0.8**, 12–13T, 3.175 mm bore |
-| ESC | `HobbyWing QuicRun 1060 brushed ESC` | 60 A; its 6 V BEC powers the servo |
+| ESC (Electronic Speed Controller) | `HobbyWing QuicRun 1060 brushed ESC (Electronic Speed Controller)` | 60 A; its 6 V BEC powers the servo |
 | Steering servo | `DSSERVO DS3225 digital servo 180` | 25 kg, **180°** (not 270°) |
-| Battery | `2S 7.4V 5200mAh LiPo Deans` | match the plug to the ESC |
+| Battery | `2S 7.4V 5200mAh LiPo Deans` | match the plug to the ESC (Electronic Speed Controller) |
 | Charger | `IMAX B6 lipo balance charger` | balance-charges the 2S pack |
-| Plug adapter | `T plug to Tamiya adapter` | only if the ESC plug ≠ battery plug |
-| PWM driver | `PCA9685 16 channel servo driver I2C` | the PWM bridge to ESC + servo |
+| Plug adapter | `T plug to Tamiya adapter` | only if the ESC (Electronic Speed Controller) plug ≠ battery plug |
+| PWM driver | `PCA9685 16 channel servo driver I2C` | the PWM bridge to ESC (Electronic Speed Controller) + servo |
 | **3× distance sensor** | `HC-SR04P ultrasonic sensor` | **buy three** (front/left/right). The **P** version is 3.3 V — no level shifter |
 | Sensor mount | `HC-SR04 triple sensor bracket` | semi-hex front plate: one ahead, one ~45–60° left, one ~45–60° right (or 3D-print) |
 | Jumper wires | `dupont jumper wire kit female female` | PCA9685↔Pi and 3× sensor↔Pi |
 
-Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
+Tool: a **soldering iron** (PCA9685 headers, motor/ESC (Electronic Speed Controller) bullets).
 
 > ⚠️ **Confirm with the chassis seller:** which of the two gearboxes you want (asked after you order),
 > and the **spur gear pitch** — it must match the pinion (SCX10 standard is **32P / Mod 0.8**).
@@ -112,10 +112,10 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC bullets).
 
 Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
-![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (which carries a 6V BEC) and the drive motor; the ESC's 3-wire plug goes to PCA9685 ch0 (signal + V+ 6V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Pi Camera V2 NoIR connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
+![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (Electronic Speed Controller) (which carries a 6V BEC) and the drive motor; the ESC (Electronic Speed Controller)'s 3-wire plug goes to PCA9685 ch0 (signal + V+ 6V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Pi Camera V2 NoIR connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
 
-- **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC) or the PWM won't register.
-- PCA9685 **V+ rail = the ESC's 6 V BEC**, *not* the Pi. All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
+- **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller)) or the PWM won't register.
+- PCA9685 **V+ rail = the ESC (Electronic Speed Controller)'s 6 V BEC**, *not* the Pi. All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
 - **Pins:** I2C on GPIO2/3 (PCA9685 @ `0x40`); forward sensor TRIG/ECHO `23/24`, left `5/6`, right `20/21`. Camera is on the CSI ribbon, the face panel on USB — neither touches the GPIO header.
 
 ---
@@ -162,13 +162,13 @@ so you can confirm voice → model → GPIO/PWM is correct before anything can m
 *** DRY RUN -- no hardware will be driven ***
 Heard: "go forward and bear left"
 action=DRIVE drive=FORWARD steer=LEFT speed=40 dur=1500ms reply="Easing forward and left."
-robot.hw INFO I2C->PCA9685 ESC   ch=0 throttle=+0.140 pulse_us=1570
+robot.hw INFO I2C->PCA9685 ESC (Electronic Speed Controller)   ch=0 throttle=+0.140 pulse_us=1570
 robot.hw INFO I2C->PCA9685 SERVO ch=1 steer=LEFT   angle=55.0deg pulse_us=1111
 ```
 Set `ROBOT_FAKE_DISTANCE_CM=20` to prove the forward gate trips; set `ROBOT_FAKE_VISION=sofa:left:near:0.9`
 and say *"find the sofa"* to dry-run the whole explore loop with no camera.
 
-**5. Calibrate on a stand — wheels OFF the ground** (LIVE now, ESC powered). Run the brain and:
+**5. Calibrate on a stand — wheels OFF the ground** (LIVE now, ESC (Electronic Speed Controller) powered). Run the brain and:
 - say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`;
 - say *"go forward"* (low speed); if it reverses, set `ROBOT_THROTTLE_INVERT=1`;
 - say *"go forward"* + hand ~20 cm ahead of the front sensor → motor cuts, robot says *"Obstacle ahead. Stopping."*

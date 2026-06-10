@@ -35,7 +35,7 @@ skinparam rectangle {
 
 ' ---- motor / LiPo domain ----
 rectangle "2S 7.4V LiPo" as lipo <<motor>>
-rectangle "ESC\n(+ 6V BEC)" as esc <<motor>>
+rectangle "ESC (Electronic Speed Controller)\n(+ 6V BEC)" as esc <<motor>>
 rectangle "drive motor" as motor <<motor>>
 rectangle "steering servo\n(DS3225)" as servo <<motor>>
 
@@ -68,8 +68,8 @@ ups --> pi : 5V (its own battery)
 
 note bottom of pca
   **Two isolated power domains** (LiPo -> motor/servo, UPS/PSU -> Pi): never bridge the battery positives,
-  but tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC) or the PWM won't register.
-  The PCA9685 **V+ rail = the ESC's 6V BEC**, not the Pi. All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
+  but tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC (Electronic Speed Controller)) or the PWM won't register.
+  The PCA9685 **V+ rail = the ESC (Electronic Speed Controller)'s 6V BEC**, not the Pi. All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
   Camera (CSI), face (USB-C) and the 3 sensors are all Pi-side / brain-domain.
 end note
 @enduml

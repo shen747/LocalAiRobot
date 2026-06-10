@@ -4,22 +4,22 @@ Build the LocalAiRobot RC crawler **one phase at a time** — flash the brain, b
 wire each peripheral with its own check, build the chassis, then calibrate live. Pairs with the
 [README](../README.md) (parts list + tuning). Capture your own photos as you go.
 
-![Wiring at a glance: a 2S 7.4V LiPo feeds the ESC (with 6V BEC), which drives the motor and sends ch0 signal + V+ rail + GND to the PCA9685 PWM bridge (0x40); the PCA9685 drives the DS3225 steering servo on ch1 and connects to the Raspberry Pi 5 (+ Active Cooler) via 3.3V VCC, SDA (GPIO2), SCL (GPIO3) and GND; three HC-SR04P sensors (front TRIG23/ECHO24, left 5/6, right 20/21), the Pi Camera V2 NoIR over CSI, and the 3.5" USB-C face screen are all Pi-side; the Pi is powered by a UPS HAT or the 27W bench PSU. The two battery positives are never bridged, but all grounds are tied common.](images/wiring.png)
+![Wiring at a glance: a 2S 7.4V LiPo feeds the ESC (Electronic Speed Controller) (with 6V BEC), which drives the motor and sends ch0 signal + V+ rail + GND to the PCA9685 PWM bridge (0x40); the PCA9685 drives the DS3225 steering servo on ch1 and connects to the Raspberry Pi 5 (+ Active Cooler) via 3.3V VCC, SDA (GPIO2), SCL (GPIO3) and GND; three HC-SR04P sensors (front TRIG23/ECHO24, left 5/6, right 20/21), the Pi Camera V2 NoIR over CSI, and the 3.5" USB-C face screen are all Pi-side; the Pi is powered by a UPS HAT or the 27W bench PSU. The two battery positives are never bridged, but all grounds are tied common.](images/wiring.png)
 
 **Phase map:** **1** flash + brain bring-up · **2** power domains · **3** PCA9685 · **4** sensors ·
 **5** camera · **6** face · **7** mechanical build · **8** live calibration · **9** UPS HAT.
 Phases 1–6 run **on the bench on the 27 W PSU with no chassis and no motor** — nothing can move until
-Phase 7 connects the ESC.
+Phase 7 connects the ESC (Electronic Speed Controller).
 
 > 🖥️ **Where these commands run.** Unless noted, every shell command in this doc runs in **bash on the
 > Pi, over SSH** — not on your laptop and not in PowerShell. Flash the SD card with SSH enabled (Phase 1),
 > then `ssh YOUR_USER@raspberrypi.local` in and work from there. Multi-line Python shown as
 > `python - <<'PY' … PY` is a heredoc you paste whole — you don't create a `.py` file (see the appendix).
 
-> **What's an ESC?** The **ESC (Electronic Speed Controller)** is the standard RC component wired between
+> **What's an ESC (Electronic Speed Controller)?** The **ESC (Electronic Speed Controller) (Electronic Speed Controller)** is the standard RC component wired between
 > the battery and the drive motor: it converts a throttle PWM signal into motor power (and direction).
 > On this build that throttle PWM comes from **PCA9685 channel 0** (Phase 3), *not* from an RC receiver,
-> and the ESC's built-in **6 V BEC** (Battery Eliminator Circuit) back-feeds the PCA9685 `V+` rail to
+> and the ESC (Electronic Speed Controller)'s built-in **6 V BEC** (Battery Eliminator Circuit) back-feeds the PCA9685 `V+` rail to
 > power the DS3225 steering servo. It stays disconnected through Phases 1–6 and is first powered in
 > Phase 8 calibration (where it beeps its arming tones). The kill switch goes on the LiPo→ESC line.
 
@@ -110,7 +110,7 @@ drives no hardware at all).
    ```
    *** DRY RUN -- no hardware will be driven ***
    Heard: "go forward and bear left"
-   robot.hw INFO I2C->PCA9685 ESC   ch=0 throttle=+0.140 pulse_us=1570
+   robot.hw INFO I2C->PCA9685 ESC (Electronic Speed Controller)   ch=0 throttle=+0.140 pulse_us=1570
    robot.hw INFO I2C->PCA9685 SERVO ch=1 steer=LEFT   angle=55.0deg pulse_us=1111
    ```
    Want to see the safety features fire? Re-edit `robot.env`, re-run the `source` line, then re-launch:
@@ -137,23 +137,23 @@ drives no hardware at all).
      load; `ROBOT_OLLAMA_KEEPALIVE` keeps it resident between commands.
 
 With the brain proven, wire the peripherals one at a time (Phases 3–6) — all still on the bench with the
-ESC/motor disconnected. **First read Phase 2** so you don't bridge the power domains.
+ESC (Electronic Speed Controller)/motor disconnected. **First read Phase 2** so you don't bridge the power domains.
 
 ---
 
 ## Phase 2 — The two power domains (read before you wire)
 
 **Never bridge the two batteries.** But **do** tie all the *grounds* together, or the PWM signals from
-the Pi won't register at the ESC/servo.
+the Pi won't register at the ESC (Electronic Speed Controller)/servo.
 
-![Two isolated power domains: a 2S 7.4V LiPo powers the ESC and drive motor (motor domain), while a UPS HAT - or the official 27W PSU for bench bring-up - powers the Raspberry Pi 5 with its mandatory Active Cooler (brain domain); the Pi also drives the Pi Camera V2 NoIR over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors (front/left/right). The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC 6V BEC. The two battery positives are never bridged, but all grounds are tied common across Pi, PCA9685 and ESC](images/assembly.png)
+![Two isolated power domains: a 2S 7.4V LiPo powers the ESC (Electronic Speed Controller) and drive motor (motor domain), while a UPS HAT - or the official 27W PSU for bench bring-up - powers the Raspberry Pi 5 with its mandatory Active Cooler (brain domain); the Pi also drives the Pi Camera V2 NoIR over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors (front/left/right). The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC (Electronic Speed Controller) 6V BEC. The two battery positives are never bridged, but all grounds are tied common across Pi, PCA9685 and ESC (Electronic Speed Controller)](images/assembly.png)
 
-For the full picture — where the two domains *legitimately* meet (shared ground, plus the ESC's **6 V
+For the full picture — where the two domains *legitimately* meet (shared ground, plus the ESC (Electronic Speed Controller)'s **6 V
 BEC** feeding the PCA9685 V+ rail and the steering servo), and where the sensors/camera/face sit:
 
-![Detailed power domains and wiring: 2S 7.4V LiPo -> ESC -> drive motor, with the ESC 6V/3A BEC feeding the PCA9685 V+ rail and the DS3225 steering servo (servo power stays inside the LiPo/motor domain); the UPS HAT - or the 27W PSU on the bench - powers the Raspberry Pi 5 + Active Cooler, which provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P sensors (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Pi Camera V2 NoIR (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground bus, while the two battery positives are never bridged](images/power-domains.png)
+![Detailed power domains and wiring: 2S 7.4V LiPo -> ESC (Electronic Speed Controller) -> drive motor, with the ESC (Electronic Speed Controller) 6V/3A BEC feeding the PCA9685 V+ rail and the DS3225 steering servo (servo power stays inside the LiPo/motor domain); the UPS HAT - or the 27W PSU on the bench - powers the Raspberry Pi 5 + Active Cooler, which provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P sensors (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Pi Camera V2 NoIR (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground bus, while the two battery positives are never bridged](images/power-domains.png)
 
-- ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC; don't solder if you can pick the right one.
+- ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC (Electronic Speed Controller); don't solder if you can pick the right one.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained LLM/vision inference thermal-throttles without it.
 - ✅ A **LiPo balance charger** is required for the 2S pack; never charge LiPo on a dumb charger.
 - 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach. With no hardware
@@ -163,7 +163,7 @@ BEC** feeding the PCA9685 V+ rail and the steering servo), and where the sensors
 
 ## Phase 3 — Wire the PWM bridge (PCA9685)
 
-Still on the bench, **ESC/motor not connected.** The Pi 5 cannot cleanly bit-bang servo signals while
+Still on the bench, **ESC (Electronic Speed Controller)/motor not connected.** The Pi 5 cannot cleanly bit-bang servo signals while
 running an LLM, so a PCA9685 generates them over I2C. Wire it like this:
 
 | PCA9685 pin | Connect to | Why |
@@ -171,15 +171,15 @@ running an LLM, so a PCA9685 generates them over I2C. Wire it like this:
 | `VCC` (logic) | Pi **3.3V** | chip logic + I2C level (matches the Pi's 3.3V I2C) |
 | `SDA` | Pi **GPIO2 / SDA** | I2C data |
 | `SCL` | Pi **GPIO3 / SCL** | I2C clock |
-| `GND` | Pi **GND** | common ground (also shared with the ESC) |
-| `V+` (servo rail) | **ESC 6V BEC** (the red wire of the ESC's servo plug) | powers the steering servo — **not** from the Pi |
-| Channel 0 (signal/V+/GND) | **ESC signal plug** | throttle PWM to the ESC (+ BEC feeds V+, + GND) |
+| `GND` | Pi **GND** | common ground (also shared with the ESC (Electronic Speed Controller)) |
+| `V+` (servo rail) | **ESC (Electronic Speed Controller) 6V BEC** (the red wire of the ESC (Electronic Speed Controller)'s servo plug) | powers the steering servo — **not** from the Pi |
+| Channel 0 (signal/V+/GND) | **ESC (Electronic Speed Controller) signal plug** | throttle PWM to the ESC (Electronic Speed Controller) (+ BEC feeds V+, + GND) |
 | Channel 1 (signal/V+/GND) | **steering servo** | steering PWM + 6V power + GND |
 
 Notes:
-- The ESC's 3-wire plug (the one that normally goes to an RC receiver's throttle channel) carries
+- The ESC (Electronic Speed Controller)'s 3-wire plug (the one that normally goes to an RC receiver's throttle channel) carries
   **signal + 6V BEC + GND**. Signal → PCA9685 ch0 signal; BEC red → PCA9685 V+ rail; GND → PCA9685 GND.
-  (You make the ESC connection itself in Phase 7 — for now just wire the Pi↔PCA9685 logic side.)
+  (You make the ESC (Electronic Speed Controller) connection itself in Phase 7 — for now just wire the Pi↔PCA9685 logic side.)
 - Default I2C address is **0x40** (`i2cdetect -y 1`). If you stacked boards/changed solder jumpers,
   set `ROBOT_PCA9685_*`/the driver accordingly. Channels 2–15 stay free.
 - The DS3225 is a hungry servo (stall ~2.5–3A). The QuicRun's 6V/3A BEC is enough for normal steering;
@@ -271,7 +271,7 @@ a **USB-serial** device and are driven by the `turing-smart-screen-python` libra
 - Mount it forward-facing as the robot's "face"; dim it with `ROBOT_FACE_BRIGHTNESS` to save power.
 
 **Now run the brain LIVE on the bench (still no chassis/motor).** With the PCA9685 + 3 sensors + camera +
-face wired and the ESC/motor *not connected*, the same `robot.hw` logs now reflect real I2C/GPIO:
+face wired and the ESC (Electronic Speed Controller)/motor *not connected*, the same `robot.hw` logs now reflect real I2C/GPIO:
 
 ```bash
 i2cdetect -y 1                  # PCA9685 at 0x40
@@ -281,13 +281,13 @@ lsusb | grep -i 1a86            # USB-C face panel
 brain/.venv/bin/python brain/main.py
 ```
 
-Only after this live bench pass do you build the chassis and connect the ESC/motor (Phase 7).
+Only after this live bench pass do you build the chassis and connect the ESC (Electronic Speed Controller)/motor (Phase 7).
 
 ---
 
 ## Phase 7 — Mechanical build (chassis + mount everything)
 
-This is where the **ESC, motor, and LiPo finally get connected** — until now nothing could move.
+This is where the **ESC (Electronic Speed Controller), motor, and LiPo finally get connected** — until now nothing could move.
 
 1. Assemble the 1/10 roller chassis (or start from your built RTR): drivetrain, portal axles, links,
    shocks, 1.9" wheels. Mount the **540 35T motor** into the transmission; mesh the pinion/spur with a
@@ -297,11 +297,11 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
 3. Build the brain stack: Pi 5 + active cooler (+ UPS HAT later — Phase 9). Mount on a
    3D-printed/cut deck on the frame rails (the SCX10 313 mm form factor has many free community trays).
    Keep fan airflow clear.
-4. Mount the **ESC**, **PCA9685**, and **LiPo** on the chassis; route wiring clear of the driveshafts
+4. Mount the **ESC (Electronic Speed Controller)**, **PCA9685**, and **LiPo** on the chassis; route wiring clear of the driveshafts
    and steering links. Keep the mic away from the cooler fan to reduce recorded noise. **Now make the
-   motor-domain connections you deferred in Phase 3:** ESC 3-wire plug → PCA9685 **ch0** (signal / V+ /
-   GND, with the BEC red on the V+ rail), the **steering servo → ch1**, and the **LiPo → ESC through
-   your physical kill switch**. Keep all grounds common (Pi ⟷ PCA9685 ⟷ ESC); never bridge the battery
+   motor-domain connections you deferred in Phase 3:** ESC (Electronic Speed Controller) 3-wire plug → PCA9685 **ch0** (signal / V+ /
+   GND, with the BEC red on the V+ rail), the **steering servo → ch1**, and the **LiPo → ESC (Electronic Speed Controller) through
+   your physical kill switch**. Keep all grounds common (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller)); never bridge the battery
    positives (Phase 2).
 5. Mount the **3-sensor plate** across the front (forward + ~45–60° left/right), clear of the wheels and
    roughly level. Mount the **camera** forward-facing near the sensors, and the **face panel** where you
@@ -311,17 +311,17 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
 
 ## Phase 8 — Live calibration & bring-up (wheels OFF the ground)
 
-Phases 1–6 already verified the brain, the I2C bus, and the three sensors; this phase powers the **ESC
+Phases 1–6 already verified the brain, the I2C bus, and the three sensors; this phase powers the **ESC (Electronic Speed Controller)
 for the first time**, so keep the **wheels OFF the ground until the very end** and a **physical kill
 switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: edit it, re-run
 `set -a; source config/robot.env; set +a`, then relaunch the brain to test — repeat until it's dialled in.
 
-1. **ESC arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
-   ESC should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
+1. **ESC (Electronic Speed Controller) arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
+   ESC (Electronic Speed Controller) should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
 2. **Steering:** run the brain, say *"center" / "left" / "right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`
    so the wheels center true and turn fully without the servo buzzing (binding = back the angle off).
 3. **Throttle direction:** say *"go forward"* slowly. Backwards? Set `ROBOT_THROTTLE_INVERT=1` (or swap
-   the motor wires). Reverse may need the ESC put in a forward/reverse mode (see the ESC manual).
+   the motor wires). Reverse may need the ESC (Electronic Speed Controller) put in a forward/reverse mode (see the ESC (Electronic Speed Controller) manual).
 4. **Obstacle gate:** *"go forward"* + hand ~20 cm ahead of the forward sensor → motor cuts, robot says
    *"Obstacle ahead. Stopping."*
 5. **Camera/explore (optional):** `rpicam-hello` ok, then say *"look around"* — it should describe what
@@ -394,10 +394,40 @@ PY
 
 ### Safety note — software failsafe, not hardware
 
-`driver.py` runs a control thread that forces the ESC to **neutral** on STOP, on error, on a forward
-obstacle, and when a move's `duration_ms` deadline passes; the ESC is armed at neutral on boot. The
+`driver.py` runs a control thread that forces the ESC (Electronic Speed Controller) to **neutral** on STOP, on error, on a forward
+obstacle, and when a move's `duration_ms` deadline passes; the ESC (Electronic Speed Controller) is armed at neutral on boot. The
 explore/find behaviour only ever calls into this same gated path (it never drives PWM directly), and it
 holds the car at neutral during the slow vision step. This replaces the old Pico hardware watchdog **in
 software only** — if the whole Python process is killed, the PCA9685 keeps emitting the last pulse and
 nothing in hardware stops the motor. The **physical kill switch on the LiPo is your real safety net.**
 Keep `ROBOT_MAX_THROTTLE` low and durations short.
+
+---
+
+## Appendix — Resetting the Pi (`cleanup_pi.sh`)
+
+Decided this build isn't for you, or just want your ~3.5 GB back? Your clone already includes
+`scripts/cleanup_pi.sh`, which **undoes `install_stack.sh`** — it removes the downloaded AI stack,
+models, venv and runtime data, returning the Pi toward its pre-install state.
+
+It's built to be safe: it runs in three steps — **(1)** a *dry run* that lists exactly what exists and
+would be removed, **(2)** a `Shall I proceed? [y/N]` prompt, **(3)** deletion **only** if you type
+`y`/`yes`. Run it from inside your clone, as your normal user (not with `sudo`):
+
+```bash
+cd ~/LocalAiRobot
+./scripts/cleanup_pi.sh -n        # DRY RUN: just lists what exists and would go (changes nothing)
+./scripts/cleanup_pi.sh           # dry run -> "Shall I proceed?" -> deletes only if you say yes
+./scripts/cleanup_pi.sh --deep    # ALSO apt-remove the installer's packages + disable I2C
+./scripts/cleanup_pi.sh --repo    # ALSO delete the ~/LocalAiRobot clone itself (runs last)
+sudo reboot                       # finish up: clears /tmp and applies the I2C change
+```
+
+**Removes by default** (only the items that still exist — the dry run shows you first): `~/whisper.cpp`,
+`~/piper`, `~/turing-smart-screen-python`, Ollama + all pulled models, `brain/.venv`, `~/.localairobot`
+(scene memory), `/tmp/test.*`, and a manually-installed `robot.service`.
+
+**Good to know:** `--deep` also apt-removes packages the installer added (cmake, build-essential,
+i2c-tools, …); a few may have shipped with your OS image, so it can take slightly more than the install
+added — skip `--deep` if you just want the disk space back. It leaves `git`/`curl`/`alsa-utils` and your
+group memberships in place. For a guaranteed-pristine machine, re-flashing the SD card is the surest reset.
