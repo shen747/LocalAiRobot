@@ -6,20 +6,23 @@
 #   ./scripts/cleanup_pi.sh            plan, confirm, then remove downloads + Ollama/models + venv + data
 #   ./scripts/cleanup_pi.sh --deep     ALSO apt-remove the installer's packages + disable I2C
 #   ./scripts/cleanup_pi.sh --repo     ALSO delete the ~/LocalAiRobot clone itself (final step)
+#   ./scripts/cleanup_pi.sh --models <name>   remove ONE Ollama model only (to switch the local model)
 #   ./scripts/cleanup_pi.sh -n         DRY RUN only: print the plan and exit (never deletes)
 #   ./scripts/cleanup_pi.sh -y         skip the confirmation prompt (for non-interactive use)
 set -uo pipefail
 
 H="${HOME}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-DEEP=0; REPO_RM=0; YES=0; DRYRUN=0
-for a in "$@"; do case "$a" in
+DEEP=0; REPO_RM=0; YES=0; DRYRUN=0; MODELS_RM=""
+while [ $# -gt 0 ]; do case "$1" in
   --deep)       DEEP=1 ;;
   --repo)       REPO_RM=1 ;;
   -y|--yes)     YES=1 ;;
   -n|--dry-run) DRYRUN=1 ;;
-  *) echo "unknown option: $a (use --deep, --repo, -n, -y)"; exit 2 ;;
-esac; done
+  --models)     shift; MODELS_RM="${1:-}"; [ -n "$MODELS_RM" ] || { echo "--models needs a model name, e.g. --models gemma3:4b"; exit 2; } ;;
+  --models=*)   MODELS_RM="${1#--models=}" ;;
+  *) echo "unknown option: $1 (use --deep, --repo, --models <name>, -n, -y)"; exit 2 ;;
+esac; shift; done
 
 # ---------- safety guards (refuse to delete the wrong thing) ----------
 if [ "${EUID:-$(id -u)}" -eq 0 ]; then
@@ -31,6 +34,26 @@ if [ -z "${REPO:-}" ] || [ ! -d "$REPO/scripts" ] || [ ! -d "$REPO/brain" ]; the
   echo "Refusing to run: \$REPO ('${REPO:-}') is not a LocalAiRobot clone (needs scripts/ and brain/)." >&2
   echo "Run it as  ./scripts/cleanup_pi.sh  from inside your clone." >&2
   exit 1
+fi
+
+# ---------- --models <name>: just remove ONE Ollama model (for switching the local model) ----------
+if [ -n "$MODELS_RM" ]; then
+  command -v ollama >/dev/null 2>&1 || { echo "Ollama isn't installed -- nothing to remove."; exit 0; }
+  echo "=== cleanup_pi.sh --models -- DRY RUN (nothing removed yet) ==="
+  if ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qF -- "$MODELS_RM"; then
+    echo "Would remove ONE Ollama model (Ollama + venv + repo all kept):"
+    echo "   ollama rm $MODELS_RM"
+  else
+    echo "Model '$MODELS_RM' is not in 'ollama list' -- nothing to do."; exit 0
+  fi
+  [ "$DRYRUN" = 1 ] && { echo; echo "Dry run only (-n): no changes made."; exit 0; }
+  if [ "$YES" != 1 ]; then
+    echo; read -r -p "Shall I proceed? [y/N] " ans || true
+    case "${ans:-}" in y|Y|yes|YES) ;; *) echo "Aborted -- nothing was changed."; exit 1 ;; esac
+  fi
+  echo; echo ">> ollama rm $MODELS_RM"; ollama rm "$MODELS_RM"
+  echo "=== DONE.  Switch models: set ROBOT_MODEL / ROBOT_VISION_MODEL in config/robot.env, then 'ollama pull <new>'. ==="
+  exit 0
 fi
 
 # ---------- phase 1: DRY RUN -- detect real state, build the plan ----------

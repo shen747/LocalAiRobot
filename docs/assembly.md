@@ -23,6 +23,20 @@ Phase 7 connects the ESC (Electronic Speed Controller).
 > power the DS3225 steering servo. It stays disconnected through Phases 1–6 and is first powered in
 > Phase 8 calibration (where it beeps its arming tones). The kill switch goes on the LiPo→ESC line.
 
+> 📖 **Jargon, defined once.** This build is hardware-heavy — here are the abbreviations the rest of the
+> doc leans on, so you don't have to look them up:
+> - **GPIO** — General-Purpose Input/Output: the Raspberry Pi's numbered pins (e.g. GPIO23) you wire sensors to.
+> - **I2C** — Inter-Integrated Circuit: a 2-wire bus (SDA + SCL) the Pi uses to talk to the PCA9685 board.
+> - **PWM** — Pulse-Width Modulation: the timed pulse that tells the ESC how fast to spin and the servo where to point.
+> - **PCA9685** — the 16-channel board that generates those PWM pulses for the Pi (the "PWM bridge").
+> - **ESC / BEC** — Electronic Speed Controller, the throttle/motor driver (see above) / its built-in 6 V supply.
+> - **HC-SR04P** — the 3.3 V ultrasonic distance sensor (×3: front, left, right).
+> - **CSI** — Camera Serial Interface: the ribbon-cable port the Pi Camera plugs into.
+> - **HAT / UPS** — Hardware Attached on Top, a board that stacks on the Pi / the Uninterruptible Power Supply one (its own battery).
+> - **SSH** — Secure Shell: how you log into the Pi remotely from your laptop's terminal.
+> - **LiPo** — Lithium-Polymer, the motor battery. **TTS / STT** — text-to-speech (Piper) / speech-to-text (whisper.cpp).
+> - **VLM** — Vision-Language Model: the model (moondream) that reads the camera frames.
+
 ---
 
 ## Phase 1 — Flash & brain bring-up (bench, no peripherals)
@@ -58,7 +72,7 @@ drives no hardware at all).
    dry-run, calibration — runs inside this SSH session on the Pi**, in bash (not your laptop's shell).
 4. **Install the stack and reboot:**
    ```bash
-   git clone https://github.com/<you>/LocalAiRobot.git ~/LocalAiRobot
+   git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # put your GitHub username in place of YOUR_GITHUB_USER
    cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
    sudo reboot
    ```
@@ -86,7 +100,31 @@ drives no hardware at all).
    > ```
    > Skipping this is the #1 "why isn't it working" mistake. (One-liner: `set -a` = auto-export what
    > follows, `source` = run the file here, `set +a` = stop auto-exporting.)
-6. **Prove the mic, then run the brain.** Dry-run still records from the *real* mic, so test audio first.
+6. **Send the local LLM a text prompt and watch it reply** (then check the Pi stays cool). This is the
+   proof the AI brain runs **entirely on the Pi** — Ollama serves the model on `localhost`, no internet:
+   ```bash
+   ollama list                                        # expect gemma3:4b (text) AND moondream (vision)
+   ollama run gemma3:4b "reply with one word: ready"  # send a text prompt -> the model prints a reply
+                                                      #   (first run is a slow cold load; Ctrl-D to exit)
+   ```
+   You should see the model print its answer. **Ask it anything** to be sure it's really thinking:
+   ```bash
+   ollama run gemma3:4b "name three primary colours"  # one-shot: prompt in quotes, reply prints, done
+   ollama run gemma3:4b                               # interactive chat: type, read reply, /bye to quit
+   ```
+   Want proof it's truly offline? Turn Wi-Fi off and ask again — it still answers. Then watch the
+   temperature while the model works (it's CPU-heavy):
+   ```bash
+   vcgencmd get_throttled            # 0x0 = healthy (no under-volt / throttling)
+   watch -n1 vcgencmd measure_temp   # stays < 80 °C with the Active Cooler; Ctrl-C to stop
+   ```
+   `moondream` is the dedicated vision model; missing either model → re-run `./scripts/install_stack.sh`.
+
+   > **Switching the local model later:** set `ROBOT_MODEL` (text) or `ROBOT_VISION_MODEL` (vision) in
+   > `config/robot.env`, pull the replacement with `ollama pull <new>`, re-run the `source` line, then
+   > restart the brain. To reclaim the old model's disk, remove just it:
+   > `./scripts/cleanup_pi.sh --models <old-name>` (dry-run + confirm; Ollama and everything else stay).
+7. **Prove the mic, then run the brain.** Dry-run still records from the *real* mic, so test audio first.
    This records **3 seconds** (`-d 3`) from your mic to a file while drawing a **live level bar**
    (`-V mono`) that jumps as you talk, then plays it back — so you can confirm the mic *visually* even
    with no speaker:
@@ -105,8 +143,8 @@ drives no hardware at all).
    ```bash
    brain/.venv/bin/python brain/main.py
    ```
-   At the `[ENTER]=talk  q=quit >` prompt, press **ENTER**, say *"go forward and bear left"*, and read the
-   log — it prints exactly what it *would* drive, with nothing moving. Press **q** then ENTER to quit.
+   At the prompt, press **ENTER**, say *"go forward and bear left"*, and read the log — it prints exactly
+   what it *would* drive, with nothing moving. Press **q** then ENTER to quit.
    ```
    *** DRY RUN -- no hardware will be driven ***
    Heard: "go forward and bear left"
@@ -116,25 +154,17 @@ drives no hardware at all).
    Want to see the safety features fire? Re-edit `robot.env`, re-run the `source` line, then re-launch:
    - `ROBOT_FAKE_DISTANCE_CM=20` → say "go forward" → the forward obstacle gate trips in the log.
    - `ROBOT_FAKE_VISION=sofa:left:near:0.9` → say "find the sofa" → the whole explore loop runs, no camera.
-7. **Confirm health under load** (run an Ollama prompt in another shell and watch):
-   ```bash
-   vcgencmd get_throttled     # expect 0x0
-   watch -n1 vcgencmd measure_temp   # stays < 80 °C with the cooler
-   ```
-8. **Optional — wake word, audio cues & model warmup (all default-safe).** By default control is ENTER
-   push-to-talk and these change nothing. To try them on the bench:
-   - **Wake word "Richard"** — `ROBOT_WAKEWORD_ENABLE=1`. In dry-run there is no mic, so type `r` then
-     ENTER to simulate the wake (or set `ROBOT_FAKE_WAKE=1` to auto-fire once). Live, it listens via
-     sounddevice on the default input (`ROBOT_WAKEWORD_DEVICE` to override); point
-     `ROBOT_WAKEWORD_MODEL` at any stock openWakeWord `.onnx` to prove the pipeline, then train a real
-     "Richard" model later. ENTER/`q` still work over SSH. **This is what makes `scripts/robot.service`
-     usable**, since systemd has no stdin for the ENTER prompt.
-   - **Audio cues** — drop short `.wav` files into `sounds/{greeting,ack,thinking,error}_sounds/`. In
-     dry-run they only log `SOUND -> …`; live they play via `aplay` on `ROBOT_SOUNDS_DEVICE` (the USB
-     *speaker* card — separate from the mic). Empty folders are silent. See
-     [`sounds/README.md`](../sounds/README.md) for the folder layout + WAV format tips.
-   - **Model warmup** — `ROBOT_WARMUP=1` primes the model at boot so the first command isn't a cold
-     load; `ROBOT_OLLAMA_KEEPALIVE` keeps it resident between commands.
+8. **Test the wake word "Richard" (on by default).** Say **"Richard"** — the robot wakes, then records
+   your next command exactly like ENTER does. **ENTER/`q` still work over SSH** as a fallback, and this
+   wake mode is what lets the brain run headless under `scripts/robot.service` (systemd has no stdin for
+   the ENTER prompt).
+   - It listens via sounddevice on the default input (`ROBOT_WAKEWORD_DEVICE` to choose another).
+     `ROBOT_WAKEWORD_MODEL` points at the wake `.onnx`: use any stock openWakeWord model to prove the
+     pipeline now and train a real "Richard" later. A missing/unloadable model degrades to ENTER push-to-talk.
+   - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
+   - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
+     (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
+     (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
 
 With the brain proven, wire the peripherals one at a time (Phases 3–6) — all still on the bench with the
 ESC (Electronic Speed Controller)/motor disconnected. **First read Phase 2** so you don't bridge the power domains.
@@ -420,6 +450,7 @@ cd ~/LocalAiRobot
 ./scripts/cleanup_pi.sh           # dry run -> "Shall I proceed?" -> deletes only if you say yes
 ./scripts/cleanup_pi.sh --deep    # ALSO apt-remove the installer's packages + disable I2C
 ./scripts/cleanup_pi.sh --repo    # ALSO delete the ~/LocalAiRobot clone itself (runs last)
+./scripts/cleanup_pi.sh --models gemma3:4b   # remove ONE Ollama model only (to switch the local model)
 sudo reboot                       # finish up: clears /tmp and applies the I2C change
 ```
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Installs the fully-offline AI stack + Raspberry Pi 5 hardware deps for the RC crawler (arm64):
-# Ollama + gemma3:4b (multimodal), whisper.cpp, Piper, picamera2, the USB-C face-panel library,
+# Ollama + gemma3:4b (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
 # and the Python venv. Needs internet for THIS step only. Re-runnable.
 set -euo pipefail
 
 MODEL="${ROBOT_MODEL:-gemma3:4b}"
+VISION_MODEL="${ROBOT_VISION_MODEL:-moondream}"
 WHISPER_MODEL="base.en"
 PIPER_REL="2023.11.14-2"      # check https://github.com/rhasspy/piper/releases
 VOICE="en_US-lessac-medium"
@@ -27,9 +28,10 @@ sudo raspi-config nonint do_i2c 0 || echo "   (raspi-config not found -- enable 
 # i2c/gpio = motion + sensors;  dialout = USB-C face panel (/dev/ttyACM0);  audio = mic/speaker;  video = /dev/fb0 fallback
 sudo usermod -aG i2c,gpio,dialout,audio,video "$USER" || true
 
-echo ">> [4/8] Ollama + model"
+echo ">> [4/8] Ollama + models (text intent + vision)"
 command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
 ollama pull "${MODEL}"
+ollama pull "${VISION_MODEL}"            # dedicated vision VLM (ROBOT_VISION_MODEL); default moondream
 echo "   note: gemma3 vision needs Ollama >= 0.6 -- 'ollama --version' is $(ollama --version 2>/dev/null || echo '?')"
 
 echo ">> [5/8] whisper.cpp"
@@ -76,19 +78,25 @@ fi
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
 
-echo ">> DONE."
-echo "   1. Edit config/robot.env  (YOUR_USER + mic + steering/throttle/pins)."
-echo "   2. REBOOT once so the I2C enable and the new groups (dialout/video) take effect."
-echo "   3. BENCH BRING-UP FIRST (no chassis, no wheels), watch the model->hardware logs:"
+echo ">> DONE -- the offline AI stack is installed:"
+echo "   Ollama + the gemma3:4b (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
+echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
+echo
+echo "What to do next  (full, explained walkthrough: docs/assembly.md -> Phase 1, from step 5):"
+echo
+echo "   1. Reboot now, so the settings this installer switched on and your new device permissions"
+echo "      take effect:        sudo reboot"
+echo "      ...then SSH back in and:   cd ~/LocalAiRobot"
+echo
+echo "   2. Tell the robot who you are and which microphone to use:   nano config/robot.env"
+echo "        - set your Linux username in the whisper/piper file paths"
+echo "        - set ROBOT_MIC to your USB microphone (the doc shows how to find it)"
+echo
+echo "   3. Load that config into the shell, then send the AI model a question and watch it reply:"
 echo "        set -a; source config/robot.env; set +a"
+echo "        ollama run gemma3:4b \"reply with one word: ready\""
+echo
+echo "   4. Dry-run the brain -- nothing moves, it just prints what it WOULD do:"
 echo "        ROBOT_DRY_RUN=1 brain/.venv/bin/python brain/main.py"
-echo "   4. Hardware checks before going live:"
-echo "        i2cdetect -y 1                 # PCA9685 at 0x40"
-echo "        rpicam-hello --list-cameras    # the IMX219 NoIR (needs the Pi-5 22->15 cable)"
-echo "        lsusb | grep -i 1a86           # the USB-C face panel (CH340 serial)"
-echo "        arecord -l                     # mic;  aplay -l -> USB speaker card"
-echo "   5. Then run LIVE with the wheels OFF the ground (kill switch in hand):"
-echo "        brain/.venv/bin/python brain/main.py"
-echo "   6. OPTIONAL wake word 'Richard': set ROBOT_WAKEWORD_ENABLE=1 and point ROBOT_WAKEWORD_MODEL"
-echo "      at a model (start with any stock openWakeWord .onnx; train 'Richard' later). Drop earcon"
-echo "      .wav files into sounds/{greeting,ack,thinking,error}_sounds/ for audio feedback."
+echo
+echo "   The 'Richard' wake word is ON by default -- just say 'Richard' (or press ENTER) to talk."

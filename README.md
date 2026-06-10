@@ -8,13 +8,13 @@
 ![LocalAiRobot voice + vision control flow: a voice command — started by an optional "Richard" wake word (openWakeWord) or ENTER push-to-talk — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama model behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
-intent (**Ollama** `gemma3:4b` — the *same* model also reads camera frames), speaks a reply
+intent (**Ollama** `gemma3:4b`; a separate **`moondream`** VLM reads the camera frames), speaks a reply
 (**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz PWM for the
 **ESC (Electronic Speed Controller)** (Electronic Speed Controller — the throttle/motor driver between battery and motor) and the
 steering servo, jitter-free even under LLM load; a **3-sensor HC-SR04P** array (front/left/right) cuts
 forward motion under a set distance and keeps steering off near walls. Steering is **Ackermann** (drive + steer,
-no strafe/spin). Control is **push-to-talk** (press ENTER over SSH), with an **optional "Richard"
-wake word** (openWakeWord, off by default — which also lets it run headless as a service).
+no strafe/spin). Control is the **"Richard" wake word** (openWakeWord, on by default — it also lets the
+robot run headless as a service), with **ENTER push-to-talk** over SSH as a fallback.
 
 **Autonomy is opt-in.** Ordinary commands ("go forward", "turn left", "stop") are plain teleop. The
 camera-driven **look-around / find-the-sofa** behaviour only runs when you actually say an explore
@@ -128,7 +128,7 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md).
 
 **1. Install (needs internet once).**
 ```bash
-git clone https://github.com/<you>/LocalAiRobot.git ~/LocalAiRobot
+git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # put your GitHub username in place of YOUR_GITHUB_USER
 cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
 ```
 Installs Ollama + `gemma3:4b`, whisper.cpp + `base.en`, Piper + voice, **picamera2** (apt) and the
@@ -203,7 +203,7 @@ The LLM returns one JSON object; the Pi validates and clamps it before acting:
 | `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 
 **Vision & explore.** On *"look around"* the robot stops, captures a frame, asks `gemma3:4b` what's in
-view, records it, and says what it sees. On *"find the sofa"* it runs a **bounded** loop —
+view (on the dedicated `moondream` VLM), records it, and says what it sees. On *"find the sofa"* it runs a **bounded** loop —
 stop → look → step toward the sighting (or arc-scan if not seen) — gated by the forward sensor and
 capped by `ROBOT_EXPLORE_MAX_ITERS`. Vision is slow on the Pi 5 CPU; the car is held at neutral during
 each look. The fixed camera + no-spin steering means "look around" is a coarse arc-scan.
@@ -218,16 +218,16 @@ mouth). It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simu
 optional** — a missing panel never blocks driving. See
 [`brain/faces/README.md`](brain/faces/README.md) for the per-state frame layout and rules.
 
-**Wake word, audio cues & warmup.** Control is **push-to-talk** (press ENTER over SSH) by default. Set
-`ROBOT_WAKEWORD_ENABLE=1` to add an **optional "Richard" wake word** (openWakeWord): the robot listens
-continuously and wakes on its name, then records a command exactly as ENTER does — and ENTER still
-works. This is also what lets the brain run **headless under `scripts/robot.service`** (which has no
+**Wake word, audio cues & warmup.** Control is the **"Richard" wake word** (openWakeWord, **on by
+default**): the robot listens continuously and wakes on its name, then records a command exactly as
+ENTER does — and **ENTER push-to-talk still works** over SSH as a fallback (`ROBOT_WAKEWORD_ENABLE=0`
+for ENTER-only). This is also what lets the brain run **headless under `scripts/robot.service`** (which has no
 stdin for ENTER). The wake word only *starts* capture; the explore/find autonomy gate is separate and
 still required. Because the model is **slow** on the Pi CPU, the robot plays short **earcons**
 ([`sounds/`](sounds/README.md)) — an ack when it hears you, a *thinking* loop while it works, and a boot greeting — and
 **warms the model at boot** (`ROBOT_WARMUP`) with `keep-alive` so the first command isn't a multi-minute
-cold load. A single `model_lock` serialises the text-intent and vision calls so they never collide on
-the one Ollama model.
+cold load. A single `model_lock` serialises the text-intent and vision calls so two generations never run at once
+on the Pi's CPU.
 
 **Tuning** (all in `config/robot.env`): the AI stack (`ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`,
 `ROBOT_RECORD_SECS`); motion (`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`,
