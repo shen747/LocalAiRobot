@@ -62,37 +62,59 @@ drives no hardware at all).
    cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
    sudo reboot
    ```
-5. **Plug in the USB mic + speaker, configure `robot.env`, and prove audio works — the dry-run records
-   from the *real* mic.** `ROBOT_DRY_RUN=1` only fakes the **motor/sensor** hardware; the brain still
-   shells out to `arecord` on your mic and `whisper.cpp` on the clip (see `listen_and_transcribe` in
-   `brain/main.py`), so you cannot speak a command until the mic captures cleanly:
+5. **Plug in the USB mic + speaker, then edit `config/robot.env`.** Open it with `nano config/robot.env`
+   and change exactly **three** things (leave everything else alone for now):
+   - **`ROBOT_DRY_RUN=1`** — bench mode: fakes the motor + sensors so nothing needs wiring yet.
+   - **`YOUR_USER`** in the four whisper/piper path lines → your real Linux username. Run `whoami` to see
+     it, then make every `/home/YOUR_USER/...` say `/home/<your name>/...`, or the brain can't find
+     whisper/piper.
+   - **`ROBOT_MIC`** → your USB mic, written as `plughw:CARD,DEVICE`. Run `arecord -l` and find your mic's
+     line, e.g.:
+     ```
+     card 2: Device [USB PnP Sound Device], device 0: USB Audio [USB Audio]
+     ```
+     Read its **card** and **device** numbers (here **2** and **0**) → set the line in the file to
+     **`ROBOT_MIC=plughw:2,0`**. (`plughw` = "plug + hardware": ALSA's wrapper that auto-resamples to the
+     16 kHz the app records at; plain `hw` would be rejected.) Your numbers may differ — use yours.
+
+   Save and exit nano with **Ctrl-O, ENTER, Ctrl-X**.
+
+   > ⚠️ **Saving the file changes nothing by itself.** The brain reads its settings from the *shell*, not
+   > the file — so after **every** edit, and in **every** new SSH session, you must load it into the shell:
+   > ```bash
+   > set -a; source config/robot.env; set +a    # copies all ROBOT_* values into this shell
+   > ```
+   > Skipping this is the #1 "why isn't it working" mistake. (One-liner: `set -a` = auto-export what
+   > follows, `source` = run the file here, `set +a` = stop auto-exporting.)
+6. **Prove the mic, then run the brain.** Dry-run still records from the *real* mic, so test audio first.
+   This records **3 seconds** (`-d 3`) from your mic to a file while drawing a **live level bar**
+   (`-V mono`) that jumps as you talk, then plays it back — so you can confirm the mic *visually* even
+   with no speaker:
    ```bash
-   nano config/robot.env             # set YOUR_USER in the whisper/piper paths + ROBOT_MIC
-   arecord -l                        # USB mic    -> card,device = plughw:CARD,DEV  (put in ROBOT_MIC)
-   aplay -l                          # USB speaker card (TTS playback)
-   # capture sanity check (same 16 kHz mono S16_LE the app uses), then play it back:
-   set -a; source config/robot.env; set +a
-   arecord -D "$ROBOT_MIC" -d 3 -f S16_LE -r 16000 -c 1 /tmp/test.wav && aplay /tmp/test.wav
+   set -a; source config/robot.env; set +a    # load your config (do this every new shell)
+   # -D device · -d 3 = 3 s · -f S16_LE = 16-bit · -r 16000 = 16 kHz · -c 1 = mono · -V mono = live level bar
+   arecord -D "$ROBOT_MIC" -d 3 -f S16_LE -r 16000 -c 1 -V mono /tmp/test.wav && aplay /tmp/test.wav
    ```
-   You should hear your own voice played back. If `arecord` errors or the clip is silent, fix the
-   device / `ROBOT_MIC` before continuing — otherwise the next step just prints `listen: ...` and
-   never hears you.
-6. **Dry-run the brain — no PCA9685, no sensors, no camera, no panel required:**
+   The bar should jump right as you speak (a low % like `06%` = speak louder / closer). The trailing
+   `/tmp/test.wav` is the output file — don't drop it, or `arecord` dumps raw audio to your screen.
+   **No sound on playback?** `aplay` uses the *default* output — list outputs
+   with `aplay -l`, play straight to your real speaker with `aplay -D plughw:CARD,0 /tmp/test.wav`, then
+   make it the default in `~/.asoundrc` (`defaults.pcm.card CARD` + `defaults.ctl.card CARD`); the robot's
+   voice uses this default too. **`arecord` errored or the file is silent?** That's the mic — fix
+   `ROBOT_MIC`. Once you hear yourself back, start the brain:
    ```bash
-   set -a; source config/robot.env; set +a
-   ROBOT_DRY_RUN=1 brain/.venv/bin/python brain/main.py
+   brain/.venv/bin/python brain/main.py
    ```
-   Press ENTER, speak a command, and read the console. `driver.py` logs exactly what it *would* send to
-   the hardware, so you can confirm the model→hardware mapping is correct before anything can move:
+   At the `[ENTER]=talk  q=quit >` prompt, press **ENTER**, say *"go forward and bear left"*, and read the
+   log — it prints exactly what it *would* drive, with nothing moving. Press **q** then ENTER to quit.
    ```
    *** DRY RUN -- no hardware will be driven ***
-   robot.hw INFO PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC ch=0, steer ch=1 | max_throttle=0.35
-   robot.hw INFO HC-SR04P x3: front TRIG=GPIO23/ECHO=GPIO24  left TRIG=GPIO5/ECHO=GPIO6  right TRIG=GPIO20/ECHO=GPIO21
    Heard: "go forward and bear left"
    robot.hw INFO I2C->PCA9685 ESC   ch=0 throttle=+0.140 pulse_us=1570
    robot.hw INFO I2C->PCA9685 SERVO ch=1 steer=LEFT   angle=55.0deg pulse_us=1111
    ```
-   - `ROBOT_FAKE_DISTANCE_CM=20` → say "go forward" → the forward gate trips in the log.
+   Want to see the safety features fire? Re-edit `robot.env`, re-run the `source` line, then re-launch:
+   - `ROBOT_FAKE_DISTANCE_CM=20` → say "go forward" → the forward obstacle gate trips in the log.
    - `ROBOT_FAKE_VISION=sofa:left:near:0.9` → say "find the sofa" → the whole explore loop runs, no camera.
 7. **Confirm health under load** (run an Ollama prompt in another shell and watch):
    ```bash
@@ -232,9 +254,10 @@ a **USB-serial** device and are driven by the `turing-smart-screen-python` libra
 
 - Connect the panel to a Pi USB port with a **data** USB-C cable; it appears as `/dev/ttyACM0`
   (CH340, USB id `1a86:5722`). The installer adds you to the **`dialout`** group — re-login after.
-- Confirm: `lsusb | grep -i 1a86` and `ls /dev/ttyACM*`. Identify the hardware revision by running the
-  library's `simple-program.py` once (`cd ~/turing-smart-screen-python`); set `ROBOT_FACE_REVISION=A`
-  (Turing/UsbPCMonitor 320×480) or `B` (XuanFang) accordingly.
+- Confirm it enumerated: `lsusb | grep -i 1a86` and `ls /dev/ttyACM*` (expect `/dev/ttyACM0`). Run the
+  library's `simple-program.py` once (`cd ~/turing-smart-screen-python`) to see which revision drives your
+  panel cleanly, then put it in `config/robot.env` as `ROBOT_FACE_REVISION=A` (Turing/UsbPCMonitor
+  320×480) or `B` (XuanFang) and re-`source` the file.
 - It's **fully optional and fail-safe.** If the panel doesn't enumerate, set
   `ROBOT_FACE_BACKEND=framebuffer` to use a small **DSI/HDMI** display instead (PIL → `/dev/fb0`, no
   pygame), or `ROBOT_FACE_BACKEND=simulated` to just log expressions. A missing face never blocks driving.
@@ -290,7 +313,8 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
 
 Phases 1–6 already verified the brain, the I2C bus, and the three sensors; this phase powers the **ESC
 for the first time**, so keep the **wheels OFF the ground until the very end** and a **physical kill
-switch in hand**.
+switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: edit it, re-run
+`set -a; source config/robot.env; set +a`, then relaunch the brain to test — repeat until it's dialled in.
 
 1. **ESC arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
    ESC should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
@@ -342,8 +366,8 @@ e.g. `sensors.py` and run `brain/.venv/bin/python sensors.py` — same result.)
 # Mic device id  →  put the plughw string in config/robot.env (ROBOT_MIC)
 arecord -l
 
-# Audio sanity check (same 16 kHz mono S16_LE the app uses)
-arecord -D plughw:1,0 -d 3 -f S16_LE -r 16000 -c 1 /tmp/test.wav && aplay /tmp/test.wav
+# Audio sanity check (same 16 kHz mono S16_LE the app uses); -V mono draws a live level bar as you talk
+arecord -D plughw:2,0 -d 3 -f S16_LE -r 16000 -c 1 -V mono /tmp/test.wav && aplay /tmp/test.wav
 
 # Confirm the bus + peripherals
 i2cdetect -y 1                  # PCA9685 at 0x40 (and 0x36 once the UPS is fitted)
