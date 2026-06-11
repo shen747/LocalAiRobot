@@ -51,9 +51,11 @@ drives no hardware at all).
    effectively mandatory: sustained LLM/vision inference throttles a bare board at 80–85 °C.
 2. **Flash Raspberry Pi OS Lite (64-bit, Bookworm) on another computer.** Use **Raspberry Pi Imager**
    and an **SD card reader**; in the Imager's OS-customisation (⚙️) settings:
-   - **Set the username to the account you'll use for everything — this becomes `YOUR_USER`** throughout
-     this doc, `config/robot.env`, and `scripts/robot.service` (they hardcode `/home/YOUR_USER/...`, so
-     the name **must** match or nothing will find whisper/piper).
+   - **Set the username to the account you'll use for everything — this becomes `YOUR_USER`** in this
+     doc's commands and in `config/robot.env`'s whisper/piper paths. You replace it **only in
+     `config/robot.env`** (step 5) — the brain runs those *exact* paths. `scripts/robot.service` also
+     contains `YOUR_USER`, but **don't edit it**: `./scripts/run_me.sh --install-boot` fills in your
+     username + repo path automatically when you set up boot autostart.
    - **Enable SSH**, and set your **Wi-Fi** SSID/password + locale so the Pi joins the network headless.
 
    Insert the card into the Pi.
