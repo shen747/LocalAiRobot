@@ -1,0 +1,18 @@
+# This project is developed on Windows but RUNS on a Linux Raspberry Pi 5. Force LF line endings on
+# all text so shell scripts never get a CRLF shebang -- a CRLF `#!/usr/bin/env bash` fails on the Pi
+# with "bad interpreter: /usr/bin/env bash^M". Binary assets are left untouched.
+* text=auto eol=lf
+
+# Critical: anything that executes on the Pi MUST be LF.
+*.sh          text eol=lf
+*.py          text eol=lf
+*.service     text eol=lf
+robot.env     text eol=lf
+
+# Binary assets -- never normalise line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.onnx  binary
+*.wav   binary
+*.bin   binary

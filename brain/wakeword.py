@@ -187,7 +187,7 @@ class WakeWord:
             time.sleep(0.3)
             return "WAKE"
         try:
-            line = input(f"\n[dry-run wake] r='{self._label}'  ENTER=talk  q=quit > ")
+            line = input(f"\n[dry-run: no live mic]  type r=simulate wake  ·  ENTER=talk  ·  q=quit > ")
         except EOFError:
             return "QUIT"
         s = line.strip().lower()

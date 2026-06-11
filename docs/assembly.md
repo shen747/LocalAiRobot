@@ -161,18 +161,25 @@ drives no hardware at all).
    Want to see the safety features fire? Re-edit `robot.env`, re-run the `source` line, then re-launch:
    - `ROBOT_FAKE_DISTANCE_CM=20` → say "go forward" → the forward obstacle gate trips in the log.
    - `ROBOT_FAKE_VISION=sofa:left:near:0.9` → say "find the sofa" → the whole explore loop runs, no camera.
-8. **Test the wake word "Richard" (on by default).** Say **"Richard"** — the robot wakes, then records
-   your next command exactly like ENTER does. **ENTER/`q` still work over SSH** as a fallback, and this
-   wake mode is what lets the brain run headless under `scripts/robot.service` (systemd has no stdin for
-   the ENTER prompt).
-   - **Needs a wake model (one-time).** The installer downloads openWakeWord's shared **feature models**
-     (required); if that failed on a flaky network, re-run it:
-     `brain/.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"`. Then point
-     `ROBOT_WAKEWORD_MODEL` at a wake `.onnx` — `find brain/.venv -path "*openwakeword*" -name "*.onnx"`
-     lists the stock ones; use one (e.g. a `hey_jarvis` model) to prove the pipeline **live** now, and
-     train a real "Richard" model later. A missing/unloadable model degrades to ENTER push-to-talk.
-     (The wake word only listens for real in **live** mode; in dry-run you type `r` to simulate it.
-     `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the system default.)
+8. **Wake-word check — read this carefully; the mode matters.** The "Richard" wake word is **on by
+   default**, but *how* you test it depends on dry-run vs live:
+   - **In dry-run (where step 7 left you) the wake word is *simulated* — there is no live mic for it.**
+     The log even says so: `wake word: DRY RUN (no mic). Type 'r' to simulate 'richard'.` So at the
+     `[dry-run: no live mic] type r=simulate wake …` prompt, **type the letter `r` then ENTER** to fire a
+     wake (it acks, then records your spoken *command*). **Speaking "Richard" out loud here does nothing**
+     — if you press ENTER and say "Richard", you've just recorded the word "Richard" as a command, which
+     is why you see `action=SAY`. Typing `r` only proves the wake→record→think→act *plumbing*, not the
+     acoustic detection.
+   - **To actually say "Richard" out loud and have it wake, you need LIVE mode + a real wake model:**
+     1. **Get a wake `.onnx`.** There is **no "Richard" model to download** — it's custom-trained. Until
+        you train one, use a stock keyword model to prove the pipeline:
+        `find brain/.venv -path "*openwakeword*" -name "*.onnx"` lists what the installer fetched
+        (re-fetch if empty: `brain/.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"`).
+     2. In `config/robot.env` set `ROBOT_WAKEWORD_MODEL` to that file's **full path** (e.g. a `hey_jarvis`
+        model) and `ROBOT_DRY_RUN=0`.
+     3. Run **live**: `./scripts/run_me.sh --live`, then say that wake word out loud — you should see
+        `wake: '…' detected`. (A missing/unloadable model just degrades to ENTER push-to-talk;
+        `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the system default.)
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
