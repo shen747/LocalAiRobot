@@ -49,13 +49,14 @@ brain/sounds.py          # ack / greeting / thinking earcons (aplay, half-duplex
 brain/wakeword.py        # optional "Richard" wake word (openWakeWord); falls back to ENTER push-to-talk
 brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial; + openwakeword)
 config/robot.env         # runtime config (env vars)
+config/README.md         # every ROBOT_* setting explained (default + what each does)
 sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent — see sounds/README.md
 brain/faces/             # optional per-state PNG animation frames (none = procedural) — see brain/faces/README.md
 scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
-scripts/run_me.sh        # launch the brain -- dry-run or live per config (--dry/--live to override)
+scripts/run_me.sh        # run the brain: --dry/--live (foreground), --detach (bg), --reload, --install-boot
 scripts/shutdown.sh      # stop the brain gracefully (does NOT power off the Pi)
 scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
-scripts/robot.service    # optional systemd unit (auto-start the brain on boot)
+scripts/robot.service    # systemd unit for boot autostart (install: ./scripts/run_me.sh --install-boot)
 docs/assembly.md         # wiring + build reference (start here to build it)
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
@@ -153,13 +154,12 @@ arecord -l                      # find your mic → plughw:x,y ;  aplay -l → t
 
 **3. Configure** [`config/robot.env`](config/robot.env): set `YOUR_USER` in the whisper/piper paths,
 `ROBOT_MIC`, and the sensor pins. Camera/face/explore/memory plus the wake-word/audio-cue/warmup
-knobs have working defaults (the wake word is **off** by default). (If playback is silent, make the
+knobs have working defaults (the wake word is **on** by default). (If playback is silent, make the
 USB sound card the default ALSA output.)
 
 **4. 🧪 Bench bring-up FIRST (no chassis, no motor) — watch the model→hardware mapping.**
 ```bash
-set -a; source config/robot.env; set +a
-ROBOT_DRY_RUN=1 brain/.venv/bin/python brain/main.py
+./scripts/run_me.sh --dry        # foreground, interactive; nothing drives (it loads robot.env for you)
 ```
 In dry-run there is **no hardware**: `driver.py` swaps in fakes and logs exactly what it *would* drive,
 so you can confirm voice → model → GPIO/PWM is correct before anything can move:
@@ -180,7 +180,7 @@ and say *"find the sofa"* to dry-run the whole explore loop with no camera.
 
 **6. Talk to it / drive it.**
 ```bash
-brain/.venv/bin/python brain/main.py
+./scripts/run_me.sh --live       # foreground, real hardware
 ```
 ```
 [ENTER]=talk  q=quit > ⏎
@@ -189,12 +189,12 @@ action=FIND target='sofa'
 robot.behavior INFO FIND 'sofa' SUCCESS at iter 2 (front=38cm)
 ```
 Only put the car on the floor after step 5 passes, at low `ROBOT_MAX_THROTTLE`, kill switch in hand.
-The brain reads stdin (push-to-talk), so run it over SSH; `scripts/robot.service` is restart plumbing only.
 
 **Day-to-day, one launcher** (it sources `config/robot.env` for you): `./scripts/run_me.sh` runs the brain
-— **dry-run or live per `ROBOT_DRY_RUN`** (`--dry`/`--live` to override; dry is foreground/interactive,
-live is detached and survives SSH logout, listening for "Richard") — and `./scripts/shutdown.sh` stops it
-(not the Pi). See [docs/assembly.md](docs/assembly.md) → "Run it day-to-day".
+in the **foreground** — `--dry` (nothing drives) or `--live` (real hardware), Ctrl-C to stop. For
+untethered running use `--detach` (background; stop with `./scripts/shutdown.sh`) or `--install-boot`
+(auto-start on every boot); `--reload` re-applies an edited `config/robot.env`. See
+[docs/assembly.md](docs/assembly.md) → "Run it day-to-day".
 
 ---
 
@@ -244,15 +244,9 @@ still required. Because the model is **slow** on the Pi CPU, the robot plays sho
 cold load. A single `model_lock` serialises the text-intent and vision calls so two generations never run at once
 on the Pi's CPU.
 
-**Tuning** (all in `config/robot.env`): the AI stack (`ROBOT_MODEL`, `ROBOT_WHISPER_MODEL`,
-`ROBOT_RECORD_SECS`); motion (`ROBOT_MAX_THROTTLE`, `ROBOT_STEER_*`, `ROBOT_OBSTACLE_CM`,
-`ROBOT_MAX_MOVE_MS`); sensors (`ROBOT_*_TRIG_PIN`/`_ECHO_PIN`, `ROBOT_SIDE_OBSTACLE_CM`); camera/vision
-(`ROBOT_CAMERA_*`, `ROBOT_VISION_TIMEOUT_S`); face (`ROBOT_FACE_*`, `ROBOT_FACE_FRAMES_DIR`,
-`ROBOT_FACE_FPS`); explore/find (`ROBOT_EXPLORE_*`, `ROBOT_FIND_CONFIDENCE`, `ROBOT_APPROACH_CM`,
-`ROBOT_EXPLORE_TRIGGERS`); model orchestration (`ROBOT_WARMUP`, `ROBOT_OLLAMA_KEEPALIVE`,
-`ROBOT_VISION_MODEL`); wake word (`ROBOT_WAKEWORD_*`); audio cues (`ROBOT_SOUNDS_*`,
-`ROBOT_THINKING_*`); memory (`ROBOT_MEMORY_*`); and the bench dry-run (`ROBOT_DRY_RUN`,
-`ROBOT_FAKE_*`).
+**Tuning.** Every setting lives in [`config/robot.env`](config/robot.env) — the AI stack, motion,
+sensors, camera/vision, face, explore/find, wake word, audio cues, memory, and the bench dry-run. Each
+key is documented (its default + what it does) in **[`config/README.md`](config/README.md)**.
 
 After the one-time downloads, disable Wi-Fi — everything runs on-device.
 

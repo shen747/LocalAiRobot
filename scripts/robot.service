@@ -1,3 +1,7 @@
+# robot.service -- systemd unit to AUTO-START the brain on boot (headless, no SSH needed).
+# Don't edit YOUR_USER by hand. Install it with:  ./scripts/run_me.sh --install-boot
+#   (that fills in your username + repo path, copies this to /etc/systemd/system/, and enables it.)
+# Remove it with:  ./scripts/run_me.sh --disable-boot
 [Unit]
 Description=Local AI Robot Brain (RC crawler)
 After=ollama.service

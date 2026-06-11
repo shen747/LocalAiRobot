@@ -90,6 +90,21 @@ fi
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
 
+# Auto-load config/robot.env in every NEW interactive shell, so you never have to
+# 'set -a; source config/robot.env; set +a' by hand again. Idempotent (appended once); run_me.sh and
+# shutdown.sh also source it themselves. cleanup_pi.sh leaves ~/.bashrc alone -- remove the block by hand.
+BASHRC="${H}/.bashrc"
+if [ -f "$BASHRC" ] && grep -qF "LocalAiRobot: auto-load robot.env" "$BASHRC"; then
+  echo "   ~/.bashrc already auto-loads config/robot.env"
+else
+  {
+    echo ""
+    echo "# LocalAiRobot: auto-load robot.env into every interactive shell"
+    echo "[ -f \"${REPO}/config/robot.env\" ] && { set -a; . \"${REPO}/config/robot.env\"; set +a; }"
+  } >> "$BASHRC"
+  echo "   added config/robot.env auto-load to ~/.bashrc (new SSH sessions load it automatically)"
+fi
+
 echo ">> DONE -- the offline AI stack is installed:"
 echo "   Ollama + the gemma3:4b (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
 echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
@@ -99,16 +114,17 @@ echo
 echo "   1. Reboot now, so the settings this installer switched on and your new device permissions"
 echo "      take effect:        sudo reboot"
 echo "      ...then SSH back in and:   cd ~/LocalAiRobot"
+echo "      (new SSH sessions now auto-load config/robot.env -- no more 'source' by hand.)"
 echo
 echo "   2. Tell the robot who you are and which microphone to use:   nano config/robot.env"
-echo "        - set your Linux username in the whisper/piper file paths"
+echo "        - set your username in the whisper/piper paths:   sed -i \"s/YOUR_USER/\$(whoami)/g\" config/robot.env"
 echo "        - set ROBOT_MIC to your USB microphone (the doc shows how to find it)"
+echo "        - for the bench, set ROBOT_DRY_RUN=1   (nothing drives)"
 echo
-echo "   3. Load that config into the shell, then send the AI model a question and watch it reply:"
-echo "        set -a; source config/robot.env; set +a"
+echo "   3. Check the AI brain answers, entirely on the Pi (no internet):"
 echo "        ollama run gemma3:4b \"reply with one word: ready\""
 echo
 echo "   4. Dry-run the brain -- nothing moves, it just prints what it WOULD do:"
-echo "        ROBOT_DRY_RUN=1 brain/.venv/bin/python brain/main.py"
+echo "        ./scripts/run_me.sh --dry"
 echo
 echo "   The 'Richard' wake word is ON by default -- just say 'Richard' (or press ENTER) to talk."

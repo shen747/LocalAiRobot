@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# shutdown.sh -- stop the robot brain started by run_me.sh (live mode). Does NOT power off the Pi; SSH stays up.
+# shutdown.sh -- stop a DETACHED brain (started by run_me.sh --detach). Does NOT power off the Pi.
+# (A foreground run_me.sh? just Ctrl-C. The boot service? use: sudo systemctl stop robot.service.)
 # Sends SIGINT first so the brain runs its cleanup (neutralises the ESC + closes the panel/camera),
 # then escalates only if it won't stop. The physical kill switch on the LiPo is the real safety net.
 set -uo pipefail

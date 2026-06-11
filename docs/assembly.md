@@ -99,13 +99,14 @@ drives no hardware at all).
    Set the last two (`ROBOT_DRY_RUN`, `ROBOT_MIC`) with **`nano config/robot.env`**; save and exit with
    **Ctrl-O, ENTER, Ctrl-X**.
 
-   > ⚠️ **Saving the file changes nothing by itself.** The brain reads its settings from the *shell*, not
-   > the file — so after **every** edit, and in **every** new SSH session, you must load it into the shell:
+   > ⚠️ **The brain reads its settings from the shell, not the file.** Good news: the installer added an
+   > auto-load line to `~/.bashrc`, so **every new SSH session loads `config/robot.env` for you**, and
+   > `scripts/run_me.sh`/`shutdown.sh` source it themselves. The one time you must reload by hand is **right
+   > after editing the file in a shell you keep using** (e.g. for the mic test below) — re-source it, or
+   > just open a new SSH session:
    > ```bash
-   > set -a; source config/robot.env; set +a    # copies all ROBOT_* values into this shell
+   > set -a; source config/robot.env; set +a    # re-copy ROBOT_* into THIS shell after an edit
    > ```
-   > Skipping this is the #1 "why isn't it working" mistake. (One-liner: `set -a` = auto-export what
-   > follows, `source` = run the file here, `set +a` = stop auto-exporting.)
 6. **Send the local LLM a text prompt and watch it reply** (then check the Pi stays cool). This is the
    proof the AI brain runs **entirely on the Pi** — Ollama serves the model on `localhost`, no internet:
    ```bash
@@ -145,9 +146,9 @@ drives no hardware at all).
    with `aplay -l`, play straight to your real speaker with `aplay -D plughw:CARD,0 /tmp/test.wav`, then
    make it the default in `~/.asoundrc` (`defaults.pcm.card CARD` + `defaults.ctl.card CARD`); the robot's
    voice uses this default too. **`arecord` errored or the file is silent?** That's the mic — fix
-   `ROBOT_MIC`. Once you hear yourself back, start the brain:
+   `ROBOT_MIC`. Once you hear yourself back, start the brain in dry-run:
    ```bash
-   brain/.venv/bin/python brain/main.py
+   ./scripts/run_me.sh --dry
    ```
    At the prompt, press **ENTER**, say *"go forward and bear left"*, and read the log — it prints exactly
    what it *would* drive, with nothing moving. Press **q** then ENTER to quit.
@@ -325,7 +326,7 @@ i2cdetect -y 1                  # PCA9685 at 0x40
 rpicam-hello --list-cameras     # IMX219 NoIR detected
 lsusb | grep -i 1a86            # USB-C face panel
 # read the 3 sensors live before trusting the gate (snippet in the Command cheat-sheet)
-brain/.venv/bin/python brain/main.py
+./scripts/run_me.sh --live      # foreground, real hardware (ESC/motor still unplugged)
 ```
 
 Only after this live bench pass do you build the chassis and connect the ESC (Electronic Speed Controller)/motor (Phase 7).
@@ -360,10 +361,10 @@ This is where the **ESC (Electronic Speed Controller), motor, and LiPo finally g
 
 Phases 1–6 already verified the brain, the I2C bus, and the three sensors; this phase powers the **ESC (Electronic Speed Controller)
 for the first time**, so keep the **wheels OFF the ground until the very end** and a **physical kill
-switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: edit it, re-run
-`set -a; source config/robot.env; set +a`, then relaunch the brain to test — repeat until it's dialled in.
-If a board isn't found, the brain now **logs which device failed and runs degraded** (motors off) instead
-of crashing — read that line, fix the wiring, and relaunch.
+switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: edit it, then re-run
+`./scripts/run_me.sh --live` (foreground; Ctrl-C to stop between edits — it reloads the config each
+launch) — repeat until it's dialled in. If a board isn't found, the brain now **logs which device failed
+and runs degraded** (motors off) instead of crashing — read that line, fix the wiring, and relaunch.
 
 1. **ESC (Electronic Speed Controller) arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
    ESC (Electronic Speed Controller) should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
@@ -464,27 +465,37 @@ chmod +x scripts/*.sh
 
 | Command | What it does |
 |---|---|
-| `./scripts/run_me.sh` | **The launcher.** Mode comes from `ROBOT_DRY_RUN` in `config/robot.env` — override per run with `--dry` / `--live`. **Dry-run** → runs in the **foreground**, interactive (ENTER = talk, `r` = simulate "Richard", `q` = quit); nothing drives. **Live** → runs **detached** in the background (survives SSH logout), listening for "Richard". |
-| `./scripts/shutdown.sh` | **Stop the brain** (live mode) — SIGINT first, so it neutralises the motor + closes cleanly. Does **not** power off the Pi. |
-| `tail -f ~/.localairobot/robot.log` | Watch the live brain's output (its PID is in `~/.localairobot/robot.pid`). |
+| `./scripts/run_me.sh` | **The launcher.** Mode from `ROBOT_DRY_RUN` in `config/robot.env` (override with `--dry` / `--live`). Runs in the **foreground**, interactive: ENTER = talk, `r` = simulate "Richard", `q` = quit, **Ctrl-C = stop** (neutralises the motor). `--dry` drives nothing; `--live` uses real hardware. Use this for bench + calibration. |
+| `./scripts/run_me.sh --detach` | Run **live in the background** (survives SSH logout), listening for "Richard". For running untethered *without* the boot service. Stop it with `shutdown.sh`. |
+| `./scripts/run_me.sh --reload` | **Re-apply an edited `config/robot.env`** to a running robot — restarts the boot service if installed, else the `--detach` instance. |
+| `./scripts/shutdown.sh` | **Stop** a detached brain (SIGINT first → neutralises the motor). Does **not** power off the Pi. (Foreground run? just Ctrl-C. Boot service? `sudo systemctl stop robot.service`.) |
+| `tail -f ~/.localairobot/robot.log` | Watch a **detached** brain's output (PID in `~/.localairobot/robot.pid`). |
 
-> 🔴 **Before `run_me.sh --live` on real wheels:** have a **working wake word** (Phase 1 step 8) and the
-> **physical kill switch in reach.** Live mode is headless, so with *no* wake model it falls back to
-> recording continuously and could act on ambient sound. Always bench it first with `run_me.sh --dry`.
+> 🔴 **On real wheels:** keep the **physical kill switch in reach** and bench everything with `--dry`
+> first. The headless modes (`--detach` / the boot service) have no terminal, so **without a working
+> wake word they record continuously and could act on ambient sound** (set it up in Phase 1 step 8).
+> Foreground `--live` is safer for first runs — ENTER gates each command.
 
-**Load the config automatically every SSH session** (so `ollama`, `arecord`, etc. all see the `ROBOT_*`
-values without sourcing each time) — add it to `~/.bashrc` once:
+**Auto-loading the config.** `install_stack.sh` already adds a line to `~/.bashrc` so every new SSH
+session loads `config/robot.env` for you (and `run_me.sh`/`shutdown.sh` source it themselves). To re-add
+it by hand if needed:
 
 ```bash
-cat >> ~/.bashrc <<'EOF'
-
-# LocalAiRobot: load robot.env into every interactive shell
-[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAiRobot/config/robot.env"; set +a; }
-EOF
+echo '[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAiRobot/config/robot.env"; set +a; }' >> ~/.bashrc
 ```
 
-(The three scripts above already source it themselves, so they work with or without that line.) To start
-the robot **on boot with no SSH at all**, use the systemd unit `scripts/robot.service` instead.
+**Start the brain automatically on boot (no SSH at all).** When you're ready to run untethered, install
+the systemd service — it auto-starts the brain on every boot and relaunches it if it crashes:
+
+```bash
+./scripts/run_me.sh --install-boot     # fills in your user + repo path, installs + enables robot.service
+sudo systemctl start robot.service     # (optional) start it now without rebooting
+journalctl -u robot.service -f         # watch its log
+./scripts/run_me.sh --disable-boot     # stop auto-starting on boot
+```
+
+Set `ROBOT_DRY_RUN=0` in `config/robot.env` first — a service has no terminal, so the **wake word is the
+only way to talk to it** (set that up in Phase 1 step 8). The same 🔴 safety note applies: kill switch in reach.
 
 ---
 
