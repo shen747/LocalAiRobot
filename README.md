@@ -52,7 +52,10 @@ config/robot.env         # runtime config (env vars)
 sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent — see sounds/README.md
 brain/faces/             # optional per-state PNG animation frames (none = procedural) — see brain/faces/README.md
 scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
-scripts/robot.service    # optional systemd unit
+scripts/run_me.sh        # launch the brain -- dry-run or live per config (--dry/--live to override)
+scripts/shutdown.sh      # stop the brain gracefully (does NOT power off the Pi)
+scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
+scripts/robot.service    # optional systemd unit (auto-start the brain on boot)
 docs/assembly.md         # wiring + build reference (start here to build it)
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
@@ -187,6 +190,11 @@ robot.behavior INFO FIND 'sofa' SUCCESS at iter 2 (front=38cm)
 ```
 Only put the car on the floor after step 5 passes, at low `ROBOT_MAX_THROTTLE`, kill switch in hand.
 The brain reads stdin (push-to-talk), so run it over SSH; `scripts/robot.service` is restart plumbing only.
+
+**Day-to-day, one launcher** (it sources `config/robot.env` for you): `./scripts/run_me.sh` runs the brain
+— **dry-run or live per `ROBOT_DRY_RUN`** (`--dry`/`--live` to override; dry is foreground/interactive,
+live is detached and survives SSH logout, listening for "Richard") — and `./scripts/shutdown.sh` stops it
+(not the Pi). See [docs/assembly.md](docs/assembly.md) → "Run it day-to-day".
 
 ---
 

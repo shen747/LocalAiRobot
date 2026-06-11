@@ -164,9 +164,14 @@ drives no hardware at all).
    your next command exactly like ENTER does. **ENTER/`q` still work over SSH** as a fallback, and this
    wake mode is what lets the brain run headless under `scripts/robot.service` (systemd has no stdin for
    the ENTER prompt).
-   - It listens via sounddevice on the default input (`ROBOT_WAKEWORD_DEVICE` to choose another).
-     `ROBOT_WAKEWORD_MODEL` points at the wake `.onnx`: use any stock openWakeWord model to prove the
-     pipeline now and train a real "Richard" later. A missing/unloadable model degrades to ENTER push-to-talk.
+   - **Needs a wake model (one-time).** The installer downloads openWakeWord's shared **feature models**
+     (required); if that failed on a flaky network, re-run it:
+     `brain/.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"`. Then point
+     `ROBOT_WAKEWORD_MODEL` at a wake `.onnx` — `find brain/.venv -path "*openwakeword*" -name "*.onnx"`
+     lists the stock ones; use one (e.g. a `hey_jarvis` model) to prove the pipeline **live** now, and
+     train a real "Richard" model later. A missing/unloadable model degrades to ENTER push-to-talk.
+     (The wake word only listens for real in **live** mode; in dry-run you type `r` to simulate it.
+     `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the system default.)
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
@@ -448,6 +453,41 @@ Keep `ROBOT_MAX_THROTTLE` low and durations short.
 
 ---
 
+## Appendix — Run it day-to-day (`run_me.sh` / `shutdown.sh`)
+
+Two wrappers in `scripts/` save you the `set -a; source config/robot.env; set +a` dance (they source it
+for you, and silently skip if it's missing). Make them executable once:
+
+```bash
+chmod +x scripts/*.sh
+```
+
+| Command | What it does |
+|---|---|
+| `./scripts/run_me.sh` | **The launcher.** Mode comes from `ROBOT_DRY_RUN` in `config/robot.env` — override per run with `--dry` / `--live`. **Dry-run** → runs in the **foreground**, interactive (ENTER = talk, `r` = simulate "Richard", `q` = quit); nothing drives. **Live** → runs **detached** in the background (survives SSH logout), listening for "Richard". |
+| `./scripts/shutdown.sh` | **Stop the brain** (live mode) — SIGINT first, so it neutralises the motor + closes cleanly. Does **not** power off the Pi. |
+| `tail -f ~/.localairobot/robot.log` | Watch the live brain's output (its PID is in `~/.localairobot/robot.pid`). |
+
+> 🔴 **Before `run_me.sh --live` on real wheels:** have a **working wake word** (Phase 1 step 8) and the
+> **physical kill switch in reach.** Live mode is headless, so with *no* wake model it falls back to
+> recording continuously and could act on ambient sound. Always bench it first with `run_me.sh --dry`.
+
+**Load the config automatically every SSH session** (so `ollama`, `arecord`, etc. all see the `ROBOT_*`
+values without sourcing each time) — add it to `~/.bashrc` once:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+
+# LocalAiRobot: load robot.env into every interactive shell
+[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAiRobot/config/robot.env"; set +a; }
+EOF
+```
+
+(The three scripts above already source it themselves, so they work with or without that line.) To start
+the robot **on boot with no SSH at all**, use the systemd unit `scripts/robot.service` instead.
+
+---
+
 ## Appendix — Resetting the Pi (`cleanup_pi.sh`)
 
 Decided this build isn't for you, or just want your ~3.5 GB back? Your clone already includes
@@ -469,8 +509,9 @@ sudo reboot                       # finish up: clears /tmp and applies the I2C c
 ```
 
 **Removes by default** (only the items that still exist — the dry run shows you first): `~/whisper.cpp`,
-`~/piper`, `~/turing-smart-screen-python`, Ollama + all pulled models, `brain/.venv`, `~/.localairobot`
-(scene memory), `/tmp/test.*`, and a manually-installed `robot.service`.
+`~/piper`, `~/turing-smart-screen-python`, `~/openwakeword`, Ollama + all pulled models, `brain/.venv`
+(which also holds the openWakeWord feature models), `~/.localairobot` (scene memory, taught photos + the
+run log/PID), `/tmp/test.*`, and a manually-installed `robot.service`.
 
 **Good to know:** `--deep` also apt-removes packages the installer added (cmake, build-essential,
 i2c-tools, …); a few may have shipped with your OS image, so it can take slightly more than the install

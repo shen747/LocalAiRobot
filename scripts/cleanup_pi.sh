@@ -63,7 +63,7 @@ APT_PKGS=()    # installer packages currently installed (only with --deep)
 SVC=0; OLLAMA=0; I2C_OFF=0
 sz() { du -sh "$1" 2>/dev/null | cut -f1; }   # best-effort size; '' if unreadable
 
-for p in "$H/whisper.cpp" "$H/piper" "$H/turing-smart-screen-python" \
+for p in "$H/whisper.cpp" "$H/piper" "$H/turing-smart-screen-python" "$H/openwakeword" \
          "$REPO/brain/.venv" "$H/.localairobot" /tmp/test.wav /tmp/test.jpg; do
   if [ -e "$p" ] || [ -L "$p" ]; then
     RM_PATHS+=("$p"); s="$(sz "$p")"; PLAN+=("delete   $p${s:+   ($s)}")

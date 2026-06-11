@@ -67,11 +67,23 @@ fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements.txt
 
-# openWakeWord base feature models (melspectrogram + embedding) for the OPTIONAL "Richard" wake
-# word. Best-effort; only needed if you set ROBOT_WAKEWORD_ENABLE=1. Stays fully local thereafter.
-./.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()" >/dev/null 2>&1 \
-  && echo "   openWakeWord base models ready" \
-  || echo "   (openWakeWord base models not fetched -- only needed if you enable the wake word)"
+# openWakeWord feature models (melspectrogram + embedding) -- REQUIRED, since the "Richard" wake word
+# is ON by default. NOT silenced any more (so a failure is visible), retried for flaky installs, and it
+# tells you how to re-run. They land inside brain/.venv (so cleanup_pi.sh removes them with the venv).
+echo "   fetching openWakeWord wake-word feature models (needs internet)..."
+owok=0
+for owtry in 1 2 3; do
+  if ./.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"; then
+    owok=1; break
+  fi
+  echo "   (attempt $owtry failed -- retrying in 3s)"; sleep 3
+done
+if [ "$owok" = 1 ]; then
+  echo "   openWakeWord feature models ready."
+else
+  echo "   !! NOT fetched -- the wake word falls back to ENTER push-to-talk until you re-run, online:"
+  echo "        brain/.venv/bin/python -c 'import openwakeword; openwakeword.utils.download_models()'"
+fi
 
 # Earcon directories for the ack/greeting/thinking cues. Drop your own short .wav files in here;
 # an empty directory is a silent no-op, so the feature is harmless until you add sounds.
