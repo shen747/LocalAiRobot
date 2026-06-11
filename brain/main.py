@@ -125,21 +125,26 @@ def wait_for_trigger(cfg, wake):
 SYSTEM_PROMPT = (
     "You are the brain of a remote-control crawler car with Ackermann steering "
     "(one drive motor plus one steering servo -- it CANNOT strafe or spin in place). "
-    "It has a forward camera and can look around. Convert the user's spoken command into "
+    "It has a forward camera and can look around. Convert the user's spoken input into "
     "ONE JSON object and nothing else.\n"
     "Keys:\n"
-    '- "action": one of DRIVE, EXPLORE, FIND, STOP. Use DRIVE for ordinary movement '
-    "(go / turn / reverse / stop). Use EXPLORE only if the user asks to look around or explore. "
-    "Use FIND only if the user asks to find, go to, or move towards a named object.\n"
+    '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY.\n'
+    "    DRIVE = ordinary movement (go / turn / reverse / stop).\n"
+    "    EXPLORE = only if the user asks to look around or explore.\n"
+    "    FIND = only if the user asks to find, go to, or move towards a named object.\n"
+    "    STOP = stop moving now.\n"
+    "    SAY = anything that is NOT a movement or look request -- a question, a greeting, "
+    "chit-chat, or something the car cannot physically do. Answer in words; do NOT move.\n"
     '- "target": for FIND, the object to look for (e.g. "sofa"); otherwise omit.\n'
     '- "drive": EXACTLY one of FORWARD, REVERSE, STOP (used when action is DRIVE).\n'
     '- "steer": EXACTLY one of LEFT, CENTER, RIGHT.\n'
     '- "speed": integer 0-100 (throttle; keep it low unless asked to go fast).\n'
     '- "duration_ms": integer 300-5000 (how long to move; use 0 only for STOP).\n'
-    '- "reply": a short spoken response, max 12 words, plain text only.\n'
+    '- "reply": the spoken response. For SAY, a natural, helpful answer (max ~30 words); '
+    "for movement, a brief confirmation (max 12 words). Plain text only.\n"
     "To turn, set steer LEFT or RIGHT together with drive FORWARD (the car must be moving to "
-    "steer). If the command is unclear or unsafe, use action DRIVE, drive STOP, steer CENTER, "
-    "and say why in reply.\n"
+    "steer). Only choose DRIVE / EXPLORE / FIND when the user clearly wants the car to move or "
+    "look; when in doubt, choose SAY and just answer.\n"
 )
 
 
@@ -268,6 +273,8 @@ def main():
     driver.on_obstacle = on_obstacle
 
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
+    if getattr(driver, "hw_failed", False):
+        mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
     if wake.available:
         print("Wake word ON: say 'Richard' to wake me. ENTER still works (over SSH); 'q' quits.")
@@ -335,6 +342,11 @@ def main():
 
             if action == "STOP":
                 print("action=STOP")
+                driver.stop()
+                say(reply)
+            elif action == "SAY":
+                # Not a movement command -- just speak gemma's conversational reply; don't drive.
+                print(f"action=SAY reply={reply!r}")
                 driver.stop()
                 say(reply)
             elif action == "FIND":

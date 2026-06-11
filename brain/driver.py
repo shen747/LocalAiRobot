@@ -157,6 +157,7 @@ class RobotDriver:
         log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
                  self.obstacle_cm, self.side_obstacle_cm)
 
+        self.hw_failed = False   # set True below if a LIVE device init fails and we fall back to a fake
         if self.dry_run:
             self.kit = FakeServoKit(channels=channels)
             self._sensors = {
@@ -169,14 +170,52 @@ class RobotDriver:
             # `import board` (pulled in by adafruit_servokit) raises NotImplementedError,
             # and on a Pi with no PCA9685 `ServoKit(...)` raises ValueError -- guarding the
             # import (not just the constructor) is what makes a no-hardware dry run possible.
-            from adafruit_servokit import ServoKit
-            from gpiozero import DistanceSensor
-            self.kit = ServoKit(channels=channels)
-            self._sensors = {
-                "front": DistanceSensor(echo=echo, trigger=trig, max_distance=4.0, queue_len=3),
-                "left": DistanceSensor(echo=left_echo, trigger=left_trig, max_distance=4.0, queue_len=3),
-                "right": DistanceSensor(echo=right_echo, trigger=right_trig, max_distance=4.0, queue_len=3),
-            }
+            # Each device is built defensively: a hardware failure is LOGGED (naming the device
+            # and how to fix it) and swapped for a fake, so the brain keeps running instead of
+            # crashing with a traceback.
+            try:
+                from adafruit_servokit import ServoKit
+            except Exception as e:
+                ServoKit = None
+                log.error("HARDWARE FAILURE: PCA9685 driver import failed (adafruit_servokit): %s", e)
+            try:
+                from gpiozero import DistanceSensor
+            except Exception as e:
+                DistanceSensor = None
+                log.error("HARDWARE FAILURE: HC-SR04P driver import failed (gpiozero): %s", e)
+
+            # PCA9685 (ESC throttle + steering servo) -- probes I2C 0x40; the usual failure point.
+            try:
+                if ServoKit is None:
+                    raise RuntimeError("adafruit_servokit unavailable")
+                self.kit = ServoKit(channels=channels)
+            except Exception as e:
+                log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40 (SDA GPIO2 / SCL GPIO3): %s", e)
+                log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and `i2cdetect -y 1` "
+                          "(expect 0x40); on the bench run with ROBOT_DRY_RUN=1. Motors are DISABLED.")
+                self.kit = FakeServoKit(channels=channels)
+                self.hw_failed = True
+
+            # Three HC-SR04P distance sensors -- build each on its own so one bad pin doesn't take
+            # out the others. A failed sensor falls back to a fake (reads 'clear'); we log loudly.
+            self._sensors = {}
+            for name, t_pin, e_pin in (
+                ("front", trig, echo), ("left", left_trig, left_echo), ("right", right_trig, right_echo),
+            ):
+                try:
+                    if DistanceSensor is None:
+                        raise RuntimeError("gpiozero unavailable")
+                    self._sensors[name] = DistanceSensor(
+                        echo=e_pin, trigger=t_pin, max_distance=4.0, queue_len=3)
+                except Exception as e:
+                    log.error("HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
+                              "-> faked; its obstacle gate is DISABLED.", name, t_pin, e_pin, e)
+                    self._sensors[name] = FakeDistanceSensor(cm=400.0)
+                    self.hw_failed = True
+
+            if self.hw_failed:
+                log.error("*** RUNNING DEGRADED: some hardware is faked (see HARDWARE FAILURE above) -- "
+                          "motion/sensing may be disabled, but the brain stays up. ***")
         self.sensor = self._sensors["front"]   # forward gate target + back-compat alias
 
         # ESC (Electronic Speed Controller) behaves like a continuous-rotation servo: throttle -1..1, 0 == neutral.

@@ -76,22 +76,28 @@ drives no hardware at all).
    cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
    sudo reboot
    ```
-5. **Plug in the USB mic + speaker, then edit `config/robot.env`.** Open it with `nano config/robot.env`
-   and change exactly **three** things (leave everything else alone for now):
+5. **Plug in the USB mic + speaker, then set up `config/robot.env`** — **three** things (leave everything
+   else alone for now):
+   - **`YOUR_USER`** → your real Linux username, in the four whisper/piper path lines (the brain runs
+     whisper/piper from those *exact* paths). Don't hand-edit four lines — run this one-liner **in the
+     shell**; it swaps in your username (from `whoami`) across the whole file in one go:
+     ```bash
+     sed -i "s/YOUR_USER/$(whoami)/g" config/robot.env
+     ```
+     Check it worked: `grep whisper config/robot.env` should now show `/home/<your name>/whisper.cpp/...`
+     (no literal `YOUR_USER` left).
    - **`ROBOT_DRY_RUN=1`** — bench mode: fakes the motor + sensors so nothing needs wiring yet.
-   - **`YOUR_USER`** in the four whisper/piper path lines → your real Linux username. Run `whoami` to see
-     it, then make every `/home/YOUR_USER/...` say `/home/<your name>/...`, or the brain can't find
-     whisper/piper.
    - **`ROBOT_MIC`** → your USB mic, written as `plughw:CARD,DEVICE`. Run `arecord -l` and find your mic's
      line, e.g.:
      ```
      card 2: Device [USB PnP Sound Device], device 0: USB Audio [USB Audio]
      ```
-     Read its **card** and **device** numbers (here **2** and **0**) → set the line in the file to
+     Read its **card** and **device** numbers (here **2** and **0**) → set the line to
      **`ROBOT_MIC=plughw:2,0`**. (`plughw` = "plug + hardware": ALSA's wrapper that auto-resamples to the
      16 kHz the app records at; plain `hw` would be rejected.) Your numbers may differ — use yours.
 
-   Save and exit nano with **Ctrl-O, ENTER, Ctrl-X**.
+   Set the last two (`ROBOT_DRY_RUN`, `ROBOT_MIC`) with **`nano config/robot.env`**; save and exit with
+   **Ctrl-O, ENTER, Ctrl-X**.
 
    > ⚠️ **Saving the file changes nothing by itself.** The brain reads its settings from the *shell*, not
    > the file — so after **every** edit, and in **every** new SSH session, you must load it into the shell:
