@@ -26,6 +26,7 @@ import time
 
 import behavior
 import inference
+import vision
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
 from face import Face
@@ -86,6 +87,17 @@ def is_explore_command(text):
     return any(trig in low for trig in explore_triggers())
 
 
+# --- REMEMBER gate: only photograph + store when the user actually said a "teach me" phrase, so a
+# misclassified command can't trigger a stray capture + slow VLM describe (mirrors the explore gate). ---
+REMEMBER_TRIGGERS = ("remember", "this is", "these are", "meet ", "name is",
+                     "call this", "call him", "call her", "say hello to")
+
+
+def is_remember_command(text):
+    low = text.lower()
+    return any(t in low for t in REMEMBER_TRIGGERS)
+
+
 # audio_lock makes the physical audio path half-duplex: at most one of {record, playback}
 # at a time. Kills the self-listening feedback loop AND concurrent-aplay garbling.
 audio_lock = threading.Lock()
@@ -128,14 +140,19 @@ SYSTEM_PROMPT = (
     "It has a forward camera and can look around. Convert the user's spoken input into "
     "ONE JSON object and nothing else.\n"
     "Keys:\n"
-    '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY.\n'
+    '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY, REMEMBER.\n'
     "    DRIVE = ordinary movement (go / turn / reverse / stop).\n"
     "    EXPLORE = only if the user asks to look around or explore.\n"
     "    FIND = only if the user asks to find, go to, or move towards a named object.\n"
     "    STOP = stop moving now.\n"
-    "    SAY = anything that is NOT a movement or look request -- a question, a greeting, "
-    "chit-chat, or something the car cannot physically do. Answer in words; do NOT move.\n"
-    '- "target": for FIND, the object to look for (e.g. "sofa"); otherwise omit.\n'
+    "    REMEMBER = the user is naming a person or thing for you to remember (e.g. 'this is my "
+    "wife Shani', 'remember this is the kitchen'). The car will photograph what its camera sees "
+    "and store it. Do NOT move.\n"
+    "    SAY = anything else that is NOT a movement, look, or remember request -- a question, a "
+    "greeting, chit-chat, or something the car cannot physically do. Answer in words; do NOT move.\n"
+    '- "target": for FIND, the object to look for (e.g. "sofa"); for REMEMBER, the NAME to store '
+    '(e.g. "Shani"); otherwise omit.\n'
+    '- "note": for REMEMBER, the relationship or description the user gave (e.g. "my wife"); otherwise omit.\n'
     '- "drive": EXACTLY one of FORWARD, REVERSE, STOP (used when action is DRIVE).\n'
     '- "steer": EXACTLY one of LEFT, CENTER, RIGHT.\n'
     '- "speed": integer 0-100 (throttle; keep it low unless asked to go fast).\n'
@@ -319,7 +336,7 @@ def main():
             fc.set_expression("thinking")
             snd.start_thinking()           # proof-of-life loop while the (slow) model runs
             try:
-                resp = query_ollama(cfg, text, context=mem.context_string())
+                resp = query_ollama(cfg, text, context=mem.prompt_context())
             except Exception as e:
                 snd.stop_thinking()
                 snd.play("error")
@@ -339,6 +356,11 @@ def main():
                 action = "DRIVE"
             if action == "FIND" and not target:
                 action = "EXPLORE"   # asked to find but no object named -> just look around
+            if action == "REMEMBER" and not is_remember_command(text):
+                print("(gate: 'REMEMBER' not triggered by a teach phrase -> SAY)")
+                action = "SAY"       # gemma said REMEMBER but no "this is/remember/..." in the transcript
+            if action == "REMEMBER" and not str(target or "").strip():
+                action = "SAY"       # asked to remember but no name -> just reply, store nothing
 
             if action == "STOP":
                 print("action=STOP")
@@ -349,6 +371,24 @@ def main():
                 print(f"action=SAY reply={reply!r}")
                 driver.stop()
                 say(reply)
+            elif action == "REMEMBER":
+                # Teach the robot a person/thing: photograph what the camera sees, describe it with
+                # the VLM, store name + relationship + photo in SQLite -- then it's prompt context.
+                name = str(target).strip()
+                note = str(resp.get("note") or "").strip()
+                print(f"action=REMEMBER name={name!r} note={note!r}")
+                driver.stop()
+                fc.set_expression("capturing")
+                jpeg = cam.capture_jpeg()
+                desc = ""
+                if jpeg:
+                    fc.set_expression("thinking")
+                    snd.start_thinking()
+                    desc = vision.describe(cfg, jpeg).get("description", "")
+                    snd.stop_thinking()
+                img_path = mem.save_photo(jpeg, name)
+                mem.remember_fact(name, note, desc, img_path)
+                say(reply or f"Okay, I'll remember {name}.")
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")
                 say(reply)

@@ -8,7 +8,7 @@
 ' the left-to-right flow + node COLOUR (io / model / data / proc / motor), NOT by boxed groups.
 !pragma layout smetana
 hide stereotype
-title LocalAiRobot — voice + vision control, 3-way obstacle gate & expressive face (all on the Pi 5)
+title LocalAiRobot — voice + vision control, conversation, taught-memory, 3-way obstacle gate & face (Pi 5)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -47,8 +47,8 @@ rectangle "whisper.cpp\nspeech -> text" as whisper <<model>>
 ' ---------- 2 · THINK (yellow model / green data / grey store) ----------
 rectangle "trigger-phrase gate\nEXPLORE/FIND only on explore\nwords, otherwise DRIVE" as gate <<proc>>
 rectangle "gemma3:4b  (Ollama)\ntext + image (multimodal)" as llm <<model>>
-rectangle "intent JSON\n{action, drive, steer,\nspeed, duration_ms, reply}" as intent <<data>>
-database "environment memory\n(SQLite: objects, bearing, distance)" as mem
+rectangle "intent JSON\naction: DRIVE/EXPLORE/FIND/\nSTOP/SAY/REMEMBER\n+ drive, steer, speed, dur,\ntarget, note, reply" as intent <<data>>
+database "environment memory (SQLite)\nseen objects + people/things\nyou teach it (RAG prompt context)" as mem
 
 ' ---------- 3 · SEE ----------
 rectangle "Pi Camera V2 NoIR\n(IMX219, CSI)" as cam <<data>>
@@ -81,11 +81,12 @@ llm --> intent
 ' ---------- action dispatch ----------
 intent --> ctrl : DRIVE / STOP
 intent --> behav : EXPLORE / FIND
+intent --> cam : REMEMBER (photograph)
 
 ' ---------- vision / explore ----------
 cam --> vision : JPEG frame
 behav --> vision : look? (car at neutral)
-vision --> mem : record observation
+vision --> mem : observation / taught fact
 behav --> ctrl : gated drive step
 
 ' ---------- sensing ----------
@@ -99,7 +100,7 @@ esc --> motor
 pca --> servo
 
 ' ---------- feedback to the human ----------
-intent --> tts : reply
+intent --> tts : reply (SAY = chat reply)
 ctrl --> tts : "Obstacle ahead."
 intent --> face : expression
 behav --> face : exploring / happy / confused

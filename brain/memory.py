@@ -8,6 +8,7 @@
 
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -44,6 +45,12 @@ class Memory:
                    ts REAL, source TEXT, target TEXT, visible INTEGER,
                    horizontal TEXT, distance TEXT, confidence REAL, notes TEXT,
                    front_cm REAL, left_cm REAL, right_cm REAL)""")
+        # User-taught people / things ("this is my wife Shani"): a name + relationship/note, an
+        # optional photo on disk, and a VLM description of that photo. Injected into the prompt.
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS facts (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   ts REAL, name TEXT, fact TEXT, description TEXT, image_path TEXT)""")
         self._db.commit()
         n = self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
         log.info("memory: %s (%d observations)", self.path, n)
@@ -78,6 +85,64 @@ class Memory:
                     horizontal=obs.get("horizontal"), distance=obs.get("distance"),
                     confidence=obs.get("confidence"), notes=obs.get("notes", ""),
                     distances=distances)
+
+    # ---------- user-taught facts (the "remember this person/thing" feature) ----------
+    def remember_fact(self, name, fact="", description="", image_path=None):
+        """Store a person/thing the user named. Non-critical: a write error is logged, not raised."""
+        name = (name or "").strip()
+        if not name:
+            return
+        try:
+            with self._lock:
+                self._db.execute(
+                    "INSERT INTO facts (ts, name, fact, description, image_path) VALUES (?,?,?,?,?)",
+                    (time.time(), name, (fact or "").strip(), (description or "").strip(), image_path))
+                self._db.commit()
+            log.info("memory: remembered '%s'%s%s", name, f" ({fact})" if fact else "",
+                     f" [photo {image_path}]" if image_path else "")
+        except Exception as e:
+            log.warning("memory: remember_fact failed (%s) -- continuing", e)
+
+    def save_photo(self, jpeg_bytes, name):
+        """Save a captured JPEG into a 'photos' dir next to the DB. Returns the path, or None."""
+        if not jpeg_bytes:
+            return None
+        photos = os.path.join(os.path.dirname(self.path) or ".", "photos")
+        slug = re.sub(r"[^a-z0-9]+", "-", (name or "unknown").lower()).strip("-") or "unknown"
+        path = os.path.join(photos, f"{slug}-{int(time.time())}.jpg")
+        try:
+            os.makedirs(photos, exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(jpeg_bytes)
+            return path
+        except Exception as e:
+            log.warning("memory: photo save failed (%s)", e)
+            return None
+
+    def facts_string(self, max_items=12):
+        """One-line summary of taught people/things (newest first, deduped) for the LLM prompt."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT name, fact, description FROM facts ORDER BY ts DESC LIMIT 200").fetchall()
+        seen, parts = set(), []
+        for name, fact, desc in rows:
+            key = (name or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            bit = name
+            if fact:
+                bit += f" ({fact})"
+            if desc:
+                bit += f": {(desc or '')[:120]}"
+            parts.append(bit)
+            if len(parts) >= max_items:
+                break
+        return ("Known people/things: " + "; ".join(parts) + ".") if parts else ""
+
+    def prompt_context(self, max_items=None):
+        """Combined LLM-prompt context: taught people/things + recently seen objects."""
+        return " ".join(p for p in (self.facts_string(), self.context_string(max_items)) if p)
 
     def context_string(self, max_items=None):
         """One-line rolling summary of recent distinct seen objects, for the LLM prompt.

@@ -172,6 +172,12 @@ drives no hardware at all).
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
      (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
 
+> 💬 **It also chats and remembers (works in dry-run too).** Beyond driving: ask a question or say
+> hello → it just **answers in words** and stays put (`SAY`). Say *"this is my wife Shani"* → it
+> **photographs** what the camera sees and stores **name + relationship + a VLM description** in SQLite
+> (`~/.localairobot/`), then feeds known people/things back into the model each turn (a lightweight RAG).
+> You need a working speaker to *hear* the replies; the console prints them either way.
+
 With the brain proven, wire the peripherals one at a time (Phases 3–6) — all still on the bench with the
 ESC (Electronic Speed Controller)/motor disconnected. **First read Phase 2** so you don't bridge the power domains.
 
@@ -351,6 +357,8 @@ Phases 1–6 already verified the brain, the I2C bus, and the three sensors; thi
 for the first time**, so keep the **wheels OFF the ground until the very end** and a **physical kill
 switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: edit it, re-run
 `set -a; source config/robot.env; set +a`, then relaunch the brain to test — repeat until it's dialled in.
+If a board isn't found, the brain now **logs which device failed and runs degraded** (motors off) instead
+of crashing — read that line, fix the wiring, and relaunch.
 
 1. **ESC (Electronic Speed Controller) arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
    ESC (Electronic Speed Controller) should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.

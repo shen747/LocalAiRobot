@@ -21,14 +21,16 @@ camera-driven **look-around / find-the-sofa** behaviour only runs when you actua
 phrase ("look around", "find the …", "go to the …") — a deterministic trigger gate checks the raw
 transcript, so a misheard command can never send the robot wandering.
 
-**Is:** voice teleop + a forward safety stop + opt-in, bounded, vision-guided explore/find with a
-persistent scene memory + an **optional wake word**. **Is not:** self-driving, obstacle *avoidance* /
+**Is:** voice teleop + a forward safety stop + opt-in, bounded, vision-guided explore/find + plain-chat
+replies + a teachable people/things memory + an **optional wake word**. **Is not:** self-driving, obstacle *avoidance* /
 path-planning, or SLAM. Vision on the Pi 5 CPU is **slow** (tens of seconds to minutes per look), so
 "find the X" is a deliberate stop-look-step loop, not real-time navigation.
 
 > 🛟 **Safety — no hardware watchdog.** A software failsafe returns the ESC (Electronic Speed Controller) to neutral on STOP / error /
 > obstacle / move-timeout and arms it at neutral on boot — **but if the process is killed, the PCA9685
 > holds the last pulse.** Keep a **physical kill switch on the motor battery** in reach, and start slow.
+> On startup, a missing PCA9685 or sensor is **logged by name** and the brain runs degraded (motors off)
+> instead of crashing.
 
 ---
 
@@ -194,8 +196,9 @@ The LLM returns one JSON object; the Pi validates and clamps it before acting:
 
 | Key | Values | Notes |
 |---|---|---|
-| `action` | `DRIVE` / `EXPLORE` / `FIND` / `STOP` | default `DRIVE`; unknown → `STOP`. **`EXPLORE`/`FIND` only run if an explore phrase is in the transcript** (else demoted to `DRIVE`) |
-| `target` | object name (e.g. `"sofa"`) | required by `FIND` |
+| `action` | `DRIVE` / `EXPLORE` / `FIND` / `STOP` / `SAY` / `REMEMBER` | default `DRIVE`. **`EXPLORE`/`FIND` only run if an explore phrase is in the transcript** (else → `DRIVE`). `SAY` = answer in words, no motion. `REMEMBER` = photograph + store a named person/thing |
+| `target` | object name (`FIND`) or a person/thing **name** (`REMEMBER`, e.g. `"Shani"`) | required by `FIND` and `REMEMBER` |
+| `note` | relationship / description for `REMEMBER` (e.g. `"my wife"`) | optional |
 | `drive` | `FORWARD` / `REVERSE` / `STOP` | used by `DRIVE`; unknown → `STOP` (fail-safe) |
 | `steer` | `LEFT` / `CENTER` / `RIGHT` | unknown → `CENTER`; to turn, the car must be moving |
 | `speed` | `0`–`100` | scaled by `ROBOT_MAX_THROTTLE` |
@@ -208,8 +211,12 @@ stop → look → step toward the sighting (or arc-scan if not seen) — gated b
 capped by `ROBOT_EXPLORE_MAX_ITERS`. Vision is slow on the Pi 5 CPU; the car is held at neutral during
 each look. The fixed camera + no-spin steering means "look around" is a coarse arc-scan.
 
-**Memory.** Every sighting is saved to SQLite (`ROBOT_MEMORY_DB`) and a one-line summary of recent
-objects is fed back into the prompt, so the robot keeps context across commands and reboots.
+**Memory & teaching it people/things.** Every sighting is saved to SQLite (`ROBOT_MEMORY_DB`). Say
+*"this is my wife Shani"* (a **`REMEMBER`** command) and it photographs what its camera sees, has the
+VLM describe the shot, and stores **name + relationship + description + the JPEG** in a `facts` table.
+Each turn it injects the known people/things *and* recently seen objects into gemma's prompt — a
+lightweight RAG (prompt-injected, no vector DB; fine for a handful of entries) — so context carries
+across commands and reboots. **`SAY`** handles plain chat/questions: it answers in words and stays put.
 
 **Face.** A small display shows `idle / listening / thinking / talking / exploring / happy / confused /
 alarmed / warmup / capturing`. Each state renders the built-in procedural face **or**, if you drop PNG
