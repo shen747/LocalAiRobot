@@ -1,14 +1,17 @@
 @startuml basic_control_flow
-' LocalAiRobot — voice + vision control flow (everything on the Pi 5).
+' LocalAiRobot — how a spoken command becomes action (everything runs on the Pi 5).
 ' This source lives next to its render. Regenerate in place (writes basic_control_flow.png here):
 '   plantuml -tpng docs/images/basic_control_flow.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
-' NOTE: smetana cannot lay out nested containers ("rectangle { ... }") when many edges cross
-' between them -- it throws IllegalStateException in mincross. So the stages below are conveyed by
-' the left-to-right flow + node COLOUR (io / model / data / proc / motor), NOT by boxed groups.
+'
+' Deliberately plain-English labels (no part numbers / bus jargon). Stages read TOP-TO-BOTTOM and are
+' grouped by COLOUR, not by boxes: smetana crashes (IllegalStateException in mincross) on nested
+' "rectangle { }" containers once edges cross between them. Real boxed groups would need Graphviz.
+'   COLOUR KEY:  blue = you / audio in   yellow = the AI   green = data it works with
+'                orange = control logic   red = the motors/wheels
 !pragma layout smetana
 hide stereotype
-title LocalAiRobot — voice + vision control, conversation, taught-memory, 3-way obstacle gate & face (Pi 5)
+title LocalAiRobot — how a spoken command becomes action (all on the Pi 5)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -16,8 +19,8 @@ skinparam defaultFontName Helvetica
 skinparam ArrowColor #555555
 skinparam ArrowFontColor #555555
 skinparam ArrowFontSize 11
-skinparam databaseBackgroundColor #F5F5F5
-skinparam databaseBorderColor #666666
+skinparam databaseBackgroundColor #D5E8D4
+skinparam databaseBorderColor #82B366
 skinparam rectangle {
   RoundCorner 12
   FontSize 12
@@ -32,86 +35,71 @@ skinparam rectangle {
   BorderColor<<motor>> #B85450
   BackgroundColor<<proc>> #FFE6CC
   BorderColor<<proc>> #D79B00
-  BackgroundColor<<store>> #F5F5F5
-  BorderColor<<store>> #666666
+  BackgroundColor<<pad>> #FFFFFF
+  BorderColor<<pad>> #FFFFFF
 }
-left to right direction
+top to bottom direction
 
-' ---------- 1 · LISTEN (blue io / orange proc) ----------
-rectangle "Voice command\n'go forward' / 'find the sofa'" as voice <<io>>
-rectangle "USB mic\n(16 kHz mono)" as mic <<io>>
-rectangle "wake word (openWakeWord)\n'Richard' — optional\n(ENABLE=0 -> ENTER)" as wake <<proc>>
-rectangle "ENTER push-to-talk\n(SSH; default trigger)" as ptt <<io>>
-rectangle "whisper.cpp\nspeech -> text" as whisper <<model>>
+' ---------- 1. LISTEN (blue): the wake word comes first, THEN you speak ----------
+rectangle "Wake word \"Richard\"\n(or press ENTER over SSH)" as wake <<io>>
+rectangle "You speak a command\n(\"go forward\" / \"find the sofa\")" as voice <<io>>
+rectangle "Speech to text" as stt <<model>>
 
-' ---------- 2 · THINK (yellow model / green data / grey store) ----------
-rectangle "trigger-phrase gate\nEXPLORE/FIND only on explore\nwords, otherwise DRIVE" as gate <<proc>>
-rectangle "gemma3:4b  (Ollama)\ntext + image (multimodal)" as llm <<model>>
-rectangle "intent JSON\naction: DRIVE/EXPLORE/FIND/\nSTOP/SAY/REMEMBER\n+ drive, steer, speed, dur,\ntarget, note, reply" as intent <<data>>
-database "environment memory (SQLite)\nseen objects + people/things\nyou teach it (RAG prompt context)" as mem
+' ---------- 2. THINK (yellow = AI, green = data) ----------
+rectangle "AI brain\n(local language model)" as brain <<model>>
+database "Memory\n(people / places / things it has\nseen, or that you taught it)" as mem
+rectangle "Decision\nDrive · Stop · Explore · Find · Chat · Remember" as decision <<data>>
 
-' ---------- 3 · SEE ----------
-rectangle "Pi Camera V2 NoIR\n(IMX219, CSI)" as cam <<data>>
-rectangle "vision look\ngemma3:4b (or optional vision model)\nframe -> {visible, L/C/R, near/far}" as vision <<model>>
+' ---------- 3. SEE (green) ----------
+rectangle "Camera" as cam <<data>>
+rectangle "Vision\n(describes what it sees)" as vision <<model>>
 
-' ---------- 4 · ACT (proc control + motor chain) ----------
-rectangle "behaviour loop  (behavior.py)\nEXPLORE / FIND:\nstop -> look -> gated step" as behav <<proc>>
-rectangle "control loop  (driver.py)\nforward gate cuts FORWARD < 30 cm;\nsteer & reverse pass through" as ctrl <<proc>>
-rectangle "HC-SR04P  x3 array\nfront / left / right" as sonar <<data>>
-rectangle "PCA9685\nI2C PWM @ 50 Hz" as pca <<io>>
-rectangle "ESC" as esc <<motor>>
-rectangle "drive motor" as motor <<motor>>
-rectangle "steering servo" as servo <<motor>>
+' ---------- 4. ACT (orange = control, red = motors) ----------
+rectangle "Explore / find loop\n(stop · look · small step)" as explore <<proc>>
+rectangle "Ultrasonic sensors\n(front / left / right)" as sensors <<data>>
+rectangle "Motion control\n(stops if something is < 30 cm ahead)" as motion <<proc>>
+rectangle "Servo Driver" as servodrv <<io>>
+rectangle "Electronic Speed Controller" as esc <<motor>>
+rectangle "Drive motor" as dmotor <<motor>>
+rectangle "Steering servo" as servo <<motor>>
 
-' ---------- 5 · RESPOND ----------
-rectangle "Piper TTS\nspoken reply" as tts <<proc>>
-rectangle "earcons (aplay WAV)\nack / greeting / thinking\n(half-duplex via audio_lock)" as sfx <<io>>
-rectangle "Face screen (USB-C)\nidle/listening/thinking/happy/\nconfused/alarmed/warmup/capturing" as face <<io>>
+' ---------- 5. RESPOND (blue / orange) ----------
+rectangle "Speaks the reply" as tts <<proc>>
+rectangle "Face screen\n(shows emotions)" as face <<io>>
 
-' ---------- voice path ----------
-voice --> mic : speech
-mic --> wake : 16 kHz stream
-wake --> whisper : on 'Richard', record 4s
-ptt --> whisper : ENTER, record 4s
-whisper --> gate : transcript
-gate --> llm : guarded command
-mem --> llm : recent context
-llm --> intent
+' ---------- the main path: wake word -> you talk -> it understands -> it decides ----------
+wake --> voice : wakes up, starts recording
+voice --> stt : records a few seconds
+stt --> brain : your words
+mem --> brain : what it already knows
+brain --> decision
 
-' ---------- action dispatch ----------
-intent --> ctrl : DRIVE / STOP
-intent --> behav : EXPLORE / FIND
-intent --> cam : REMEMBER (photograph)
+' ---------- what the decision leads to ----------
+decision --> motion : Drive / Stop
+decision --> explore : Explore / Find
+decision --> cam : Remember (take a photo)
+decision --> tts : Chat reply (Say)
+decision --> face : show an emotion
 
-' ---------- vision / explore ----------
-cam --> vision : JPEG frame
-behav --> vision : look? (car at neutral)
-vision --> mem : observation / taught fact
-behav --> ctrl : gated drive step
+' ---------- seeing + remembering ----------
+cam --> vision
+vision --> mem : what it saw / who you named
+explore --> cam : look around
+explore --> motion : small, gated steps
 
-' ---------- sensing ----------
-sonar --> ctrl : front gates FORWARD
-sonar --> behav : side-aware steer
+' ---------- driving the wheels ----------
+sensors --> motion : something ahead -> stop
+motion --> tts : "Obstacle ahead."
+motion --> servodrv : steering + throttle
+servodrv --> esc : throttle
+esc --> dmotor
+servodrv --> servo : steering angle
 
-' ---------- actuation ----------
-ctrl --> pca : gated PWM
-pca --> esc
-esc --> motor
-pca --> servo
+' blank, invisible box (white-on-white) to leave breathing room below the last box (Drive motor)
+rectangle " \n \n " as pad <<pad>>
+dmotor -[hidden]-> pad
 
-' ---------- feedback to the human ----------
-intent --> tts : reply (SAY = chat reply)
-ctrl --> tts : "Obstacle ahead."
-intent --> face : expression
-behav --> face : exploring / happy / confused
-
-' ---------- audio cues (earcons; share TTS's audio_lock) ----------
-wake --> sfx : ack on wake
-llm --> sfx : thinking loop while busy
-ctrl --> sfx : error on obstacle
-
-note bottom of llm
-  warmed at boot (keep-alive); one model_lock
-  serialises text-intent + vision calls
+note bottom of brain
+  Runs entirely on the Pi -- no internet.
 end note
 @enduml
