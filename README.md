@@ -54,7 +54,7 @@ sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); e
 brain/faces/             # optional per-state PNG animation frames (none = procedural) — see brain/faces/README.md
 scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
 scripts/run_me.sh        # run the brain: --dry/--live (foreground), --detach (bg), --reload, --install-boot
-scripts/shutdown.sh      # stop the brain gracefully (does NOT power off the Pi)
+scripts/shutdown.sh      # stop the brain gracefully; --poweroff also halts the Pi
 scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
 scripts/robot.service    # systemd unit for boot autostart (install: ./scripts/run_me.sh --install-boot)
 docs/assembly.md         # wiring + build reference (start here to build it)

@@ -477,7 +477,7 @@ chmod +x scripts/*.sh
 | `./scripts/run_me.sh` | **The launcher.** Mode from `ROBOT_DRY_RUN` in `config/robot.env` (override with `--dry` / `--live`). Runs in the **foreground**, interactive: ENTER = talk, `r` = simulate "Richard", `q` = quit, **Ctrl-C = stop** (neutralises the motor). `--dry` drives nothing; `--live` uses real hardware. Use this for bench + calibration. |
 | `./scripts/run_me.sh --detach` | Run **live in the background** (survives SSH logout), listening for "Richard". For running untethered *without* the boot service. Stop it with `shutdown.sh`. |
 | `./scripts/run_me.sh --reload` | **Re-apply an edited `config/robot.env`** to a running robot — restarts the boot service if installed, else the `--detach` instance. |
-| `./scripts/shutdown.sh` | **Stop** a detached brain (SIGINT first → neutralises the motor). Does **not** power off the Pi. (Foreground run? just Ctrl-C. Boot service? `sudo systemctl stop robot.service`.) |
+| `./scripts/shutdown.sh` | **Stop** a detached brain (SIGINT first → neutralises the motor). The Pi stays on; add **`--poweroff`** to also halt the Pi (your SSH session drops). (Foreground run? just Ctrl-C. Boot service? `sudo systemctl stop robot.service`.) |
 | `tail -f ~/.localairobot/robot.log` | Watch a **detached** brain's output (PID in `~/.localairobot/robot.pid`). |
 
 > 🔴 **On real wheels:** keep the **physical kill switch in reach** and bench everything with `--dry`

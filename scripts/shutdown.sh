@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# shutdown.sh -- stop a DETACHED brain (started by run_me.sh --detach). Does NOT power off the Pi.
+# shutdown.sh -- stop a DETACHED brain (started by run_me.sh --detach). By default the Pi STAYS ON;
+# add --poweroff to also halt the Pi afterwards (your SSH session drops with it).
 # (A foreground run_me.sh? just Ctrl-C. The boot service? use: sudo systemctl stop robot.service.)
 # Sends SIGINT first so the brain runs its cleanup (neutralises the ESC + closes the panel/camera),
 # then escalates only if it won't stop. The physical kill switch on the LiPo is the real safety net.
 set -uo pipefail
 DIR="$HOME/.localairobot"; PIDFILE="$DIR/robot.pid"
+
+POWEROFF=0
+case "${1:-}" in
+  --poweroff|-p) POWEROFF=1 ;;
+  "")            ;;
+  *) echo "usage: $(basename "$0") [--poweroff]   (--poweroff: stop the brain, then halt the Pi)"; exit 2 ;;
+esac
 
 stop_pid() {
   pid="$1"; i=0
@@ -49,4 +57,12 @@ if pgrep -f "brain/main.py" >/dev/null 2>&1; then
   fi
 fi
 pkill -x arecord 2>/dev/null || true   # a mid-flight 4s command recording, if any
-echo "Robot stopped. The Pi is still on (your SSH session is unaffected)."
+echo "Robot stopped."
+if [ "$POWEROFF" = 1 ]; then
+  # Stop the boot service too (if installed) so systemd doesn't relaunch the brain mid-halt.
+  sudo systemctl stop robot.service 2>/dev/null || true
+  echo "Powering off the Pi -- this SSH session will disconnect. Bye."
+  sudo poweroff
+else
+  echo "The Pi is still on (your SSH session is unaffected)."
+fi

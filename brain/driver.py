@@ -295,6 +295,15 @@ class RobotDriver:
         with self._io:
             self._write_steer("CENTER")
         for sensor in self._sensors.values():
+            # gpiozero races its own close(): the background "fill" thread can still be mid-read
+            # when close() tears the trigger pin down -> AttributeError tracebacks on exit. Stop
+            # that thread FIRST (internal but stable attr; the dry-run fakes simply lack it).
+            try:
+                q = getattr(sensor, "_queue", None)
+                if q is not None:
+                    q.stop()
+            except Exception:
+                pass
             try:
                 sensor.close()
             except Exception:
