@@ -19,6 +19,8 @@ pyserial                          # USB-C face panel (turing-smart-screen serial
 # openWakeWord needs an ONNX runtime and a continuous mic stream (sounddevice/PortAudio); the
 # PortAudio system lib is installed by scripts/install_stack.sh (apt portaudio19-dev). When the
 # wake word is off (the default) these are simply unused -- the brain falls back to ENTER PTT.
-openwakeword                      # tiny keyword spotter ("Richard"); models are local, no network
+openwakeword==0.4.0               # PINNED: 0.5+ require tflite-runtime, which has no Python 3.13 /
+                                  # aarch64 wheel, so pip backtracks unpredictably. 0.4.0 installs with
+                                  # onnxruntime and BUNDLES its models in the wheel (no separate download).
 onnxruntime                       # runs the wake-word + feature models on CPU
 sounddevice                       # continuous 16 kHz mic capture for the wake listener (needs PortAudio)

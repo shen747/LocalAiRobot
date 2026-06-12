@@ -106,18 +106,33 @@ class WakeWord:
             log.warning("wake word model not found: %s -- ENTER push-to-talk "
                         "(set ROBOT_WAKEWORD_MODEL or train a 'Richard' model)", model)
             return
-        try:
+        # We install onnxruntime (NOT tflite-runtime -- it has no Python 3.13 / aarch64 wheel), and the
+        # wake model is .onnx, so ask openWakeWord for the ONNX framework explicitly. Otherwise 0.4.x
+        # defaults to tflite and fails to load on this stack. Try newest->oldest call signatures.
+        attempts = (
+            {"wakeword_models": [model], "inference_framework": "onnx"},
+            {"wakeword_model_paths": [model], "inference_framework": "onnx"},
+            {"wakeword_models": [model]},
+            {"wakeword_model_paths": [model]},
+        )
+        last_err = None
+        for kw in attempts:
             try:
-                self._model = Model(wakeword_models=[model])      # current openWakeWord API
-            except TypeError:
-                self._model = Model(wakeword_model_paths=[model])  # older API
+                self._model = Model(**kw)
+                break
+            except TypeError as e:
+                last_err = e            # wrong signature for this version -> try the next shape
+                continue
+            except Exception as e:
+                last_err = e            # right signature, but the load itself failed -> stop trying
+                break
+        if self._model is not None:
             self.available = True
             log.info("wake word: loaded %s (threshold=%.2f, trigger_level=%d, cooldown=%.1fs, device=%s)",
                      model, self.threshold, self.trigger_level, self.cooldown_s,
                      self._device if self._device is not None else "default")
-        except Exception as e:
-            log.warning("wake word model load failed (%s) -- ENTER push-to-talk", e)
-            self._model = None
+        else:
+            log.warning("wake word model load failed (%s) -- ENTER push-to-talk", last_err)
             self.available = False
 
     def wait(self, audio_lock):

@@ -67,23 +67,25 @@ fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements.txt
 
-# openWakeWord feature models (melspectrogram + embedding) -- REQUIRED, since the "Richard" wake word
-# is ON by default. NOT silenced any more (so a failure is visible), retried for flaky installs, and it
-# tells you how to re-run. They land inside brain/.venv (so cleanup_pi.sh removes them with the venv).
-echo "   fetching openWakeWord wake-word feature models (needs internet)..."
-owok=0
-for owtry in 1 2 3; do
-  if ./.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"; then
-    owok=1; break
-  fi
-  echo "   (attempt $owtry failed -- retrying in 3s)"; sleep 3
-done
-if [ "$owok" = 1 ]; then
-  echo "   openWakeWord feature models ready."
-else
-  echo "   !! NOT fetched -- the wake word falls back to ENTER push-to-talk until you re-run, online:"
-  echo "        brain/.venv/bin/python -c 'import openwakeword; openwakeword.utils.download_models()'"
-fi
+# openWakeWord wake-word models. Behaviour differs by version: 0.5+ DOWNLOAD the feature models via
+# utils.download_models(); 0.4.x (what installs on Python 3.13 / aarch64) BUNDLES them in the wheel.
+# So this is version-tolerant: download if we can, else confirm the bundled models exist. Non-fatal --
+# the wake word just degrades to ENTER push-to-talk if anything here is missing.
+echo "   checking openWakeWord wake-word models..."
+./.venv/bin/python - <<'PY' || echo "   (model check failed -- wake word degrades to ENTER; see docs/assembly.md step 8)"
+import glob, os, openwakeword
+ver = getattr(openwakeword, "__version__", "?")
+dl = getattr(getattr(openwakeword, "utils", None), "download_models", None)
+if callable(dl):
+    dl()                                   # 0.5+: fetch the feature models (needs internet)
+    print(f"   openWakeWord {ver}: feature models downloaded.")
+else:
+    res = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
+    n_onnx = len(glob.glob(os.path.join(res, "*.onnx")))
+    n_tfl = len(glob.glob(os.path.join(res, "*.tflite")))
+    print(f"   openWakeWord {ver}: {n_onnx} .onnx + {n_tfl} .tflite models bundled in the wheel.")
+    assert n_onnx or n_tfl, f"no bundled models found under {res}"
+PY
 
 # Earcon directories for the ack/greeting/thinking cues. Drop your own short .wav files in here;
 # an empty directory is a silent no-op, so the feature is harmless until you add sounds.
