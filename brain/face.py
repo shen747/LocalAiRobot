@@ -284,8 +284,14 @@ class Face:
 
     @staticmethod
     def _try(make):
+        # Catch SystemExit too: the turing panel library calls sys.exit() when it can't auto-find
+        # the panel's COM port. SystemExit is NOT an Exception subclass, so without this clause an
+        # unplugged screen kills the whole brain at startup.
         try:
             return make()
+        except SystemExit as e:
+            log.warning("face backend init failed (library called sys.exit(%s)) -- trying next", e.code)
+            return None
         except Exception as e:
             log.warning("face backend init failed (%s) -- trying next", e)
             return None
