@@ -84,6 +84,7 @@ class WakeWord:
             os.environ.get("ROBOT_WAKEWORD_MODEL", "~/openwakeword/richard.onnx"))
         self._model_path = model
         self._label = os.path.splitext(os.path.basename(model))[0] or "wake word"
+        self.label = self._label.replace("_", " ")   # what to SAY (main.py banner); from the model file
         dev = os.environ.get("ROBOT_WAKEWORD_DEVICE", "").strip()
         self._device = int(dev) if dev.isdigit() else (dev or None)
 
@@ -158,12 +159,17 @@ class WakeWord:
         watch_stdin = sys.stdin.isatty()         # headless (systemd) has no TTY -> wake-only
         hits = 0
         result = None
+        # PortAudio/ALSA does NOT auto-resample like arecord's plughw: many mics (and the ALSA
+        # 'default' device) can't open 16 kHz and fail with paInvalidSampleRate -9997. So capture
+        # at a rate the device CAN open and resample each chunk down to the model's 16 kHz.
+        rate = self._capture_rate(sd)
+        chunk = _CHUNK if rate == _SAMPLE_RATE else int(round(rate * _CHUNK / _SAMPLE_RATE))
         try:
             # Hold audio_lock for the whole listen: the wake mic must not be live while Piper or
             # an earcon plays. Nothing else wants the lock at the top of a turn, so this is free.
             with audio_lock:
-                with sd.InputStream(samplerate=_SAMPLE_RATE, channels=1, dtype="int16",
-                                    blocksize=_CHUNK, device=self._device) as stream:
+                with sd.InputStream(samplerate=rate, channels=1, dtype="int16",
+                                    blocksize=chunk, device=self._device) as stream:
                     log.info("wake: listening for '%s' (ENTER=talk, q=quit)"
                              if watch_stdin else "wake: listening for '%s' (headless)", self._label)
                     while True:
@@ -182,10 +188,12 @@ class WakeWord:
                                     continue
                                 result = "QUIT" if line.strip().lower() == "q" else "PTT"
                                 break
-                        data, _ = stream.read(_CHUNK)
+                        data, _ = stream.read(chunk)
                         audio = np.frombuffer(data, dtype=np.int16)
                         if audio.ndim > 1:
                             audio = audio.flatten()
+                        if rate != _SAMPLE_RATE:
+                            audio = self._to_16k(np, audio, rate)
                         if int(np.max(np.abs(audio))) < _SILENCE_FLOOR:   # CPU guard: skip silence
                             hits = 0
                             continue
@@ -204,6 +212,35 @@ class WakeWord:
             return self._ptt_fallback(watch_stdin)
         time.sleep(0.2)   # let PortAudio/ALSA release the mic before arecord grabs it
         return result
+
+    def _capture_rate(self, sd):
+        """Pick a sample rate the input device can actually OPEN: 16 kHz if possible, else the
+        device's own default, else the common 48/44.1 kHz. Anything != 16 kHz is resampled."""
+        candidates = [_SAMPLE_RATE]
+        try:
+            candidates.append(int(sd.query_devices(self._device, "input")["default_samplerate"]))
+        except Exception:
+            pass
+        candidates += [48000, 44100]
+        for rate in dict.fromkeys(candidates):   # dedupe, keep order
+            try:
+                sd.check_input_settings(device=self._device, samplerate=rate,
+                                        channels=1, dtype="int16")
+                if rate != _SAMPLE_RATE:
+                    log.info("wake: mic can't open 16 kHz -- capturing at %d Hz and resampling", rate)
+                return rate
+            except Exception:
+                continue
+        return _SAMPLE_RATE   # nothing validated -> let InputStream surface the real error
+
+    @staticmethod
+    def _to_16k(np, audio, rate):
+        """Resample one int16 chunk from `rate` to 16 kHz (scipy ships with openwakeword)."""
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(_SAMPLE_RATE, rate)
+        res = resample_poly(audio.astype(np.float32), _SAMPLE_RATE // g, rate // g)
+        return np.clip(res, -32768, 32767).astype(np.int16)
 
     def _fake_wait(self):
         if self._fake_auto and not self._fired:

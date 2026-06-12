@@ -294,7 +294,10 @@ def main():
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
     if wake.available:
-        print("Wake word ON: say 'Richard' to wake me. ENTER still works (over SSH); 'q' quits.")
+        # The wake word is whatever model is loaded (e.g. a stock 'hey jarvis' until you train
+        # a 'Richard' model) -- print the real one so the banner never lies about what to say.
+        print(f"Wake word ON: say '{getattr(wake, 'label', 'Richard')}' to wake me. "
+              "ENTER still works (over SSH); 'q' quits.")
     else:
         print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
     print("Autonomy (look around / find X) only runs if you say an explore phrase.")
