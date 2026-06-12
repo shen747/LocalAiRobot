@@ -76,7 +76,12 @@ fi
 
 if command -v ollama >/dev/null 2>&1 || [ -e /usr/local/bin/ollama ]; then
   OLLAMA=1
-  PLAN+=("remove   Ollama: service + binary + 'ollama' user + models (/usr/share/ollama, ~/.ollama, ~3 GB)")
+  PLAN+=("remove   Ollama: service + binary + libs + 'ollama' user + models (/usr/local/lib/ollama, /usr/share/ollama, ~/.ollama, ~3 GB)")
+fi
+
+BASHRC_LINE=0
+if [ -f "$H/.bashrc" ] && grep -q "LocalAiRobot/config/robot.env" "$H/.bashrc"; then
+  BASHRC_LINE=1; PLAN+=("reset    remove the config/robot.env auto-load line(s) from ~/.bashrc")
 fi
 
 if [ "$DEEP" = 1 ]; then
@@ -139,6 +144,7 @@ if [ "$OLLAMA" = 1 ]; then
   OLLAMA_BIN="$(command -v ollama 2>/dev/null || true)"
   [ -n "$OLLAMA_BIN" ] && sudo rm -f "$OLLAMA_BIN"
   sudo rm -f /usr/local/bin/ollama
+  sudo rm -rf /usr/local/lib/ollama    # runtime libs (modern installer puts them here)
   sudo rm -rf /usr/share/ollama
   rm -rf "$H/.ollama"
   sudo userdel ollama 2>/dev/null || true
@@ -155,6 +161,14 @@ fi
 if [ "$I2C_OFF" = 1 ]; then
   echo ">> disable I2C"
   sudo raspi-config nonint do_i2c 1 2>/dev/null || echo "   (raspi-config missing -- remove dtparam=i2c_arm=on by hand)"
+fi
+
+if [ "$BASHRC_LINE" = 1 ]; then
+  echo ">> remove the robot.env auto-load from ~/.bashrc"
+  # Drops the installer's marker comment AND any line sourcing LocalAiRobot/config/robot.env
+  # (covers the hand-added one-liner from the docs too).
+  sed -i -e '/# LocalAiRobot: auto-load robot.env/d' \
+         -e '/LocalAiRobot\/config\/robot\.env/d' "$H/.bashrc"
 fi
 
 echo

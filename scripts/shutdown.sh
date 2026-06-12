@@ -22,15 +22,31 @@ stop_pid() {
 }
 
 if [ -f "$PIDFILE" ]; then
-  stop_pid "$(cat "$PIDFILE" 2>/dev/null || echo 0)"
+  pid="$(cat "$PIDFILE" 2>/dev/null || echo 0)"
+  # Only signal the PID if it is still OUR brain -- PIDs get recycled (the PID file survives a
+  # reboot), and we must never SIGINT/SIGKILL some unrelated process that inherited the number.
+  if kill -0 "$pid" 2>/dev/null && grep -aq "brain/main.py" "/proc/$pid/cmdline" 2>/dev/null; then
+    stop_pid "$pid"
+  else
+    echo "PID file is stale (PID $pid is not the robot brain) -- ignoring it."
+  fi
   rm -f "$PIDFILE"
 else
   echo "No PID file ($PIDFILE) -- looking for a stray brain process instead..."
 fi
 
-# belt-and-suspenders: catch any brain/main.py the PID file missed, plus a mid-flight recording.
-pkill -INT -f "brain/main.py" 2>/dev/null || true
-sleep 0.5
-pkill -9 -f "brain/main.py" 2>/dev/null || true
-pkill -x arecord 2>/dev/null || true
+# belt-and-suspenders: catch any brain/main.py the PID file missed. SIGINT first, then WAIT --
+# a clean shutdown needs a few seconds (control-thread join + ESC neutral + device closes), and
+# a premature SIGKILL would abort that cleanup, leaving the ESC on its last pulse.
+if pgrep -f "brain/main.py" >/dev/null 2>&1; then
+  pkill -INT -f "brain/main.py" 2>/dev/null || true
+  i=0
+  while [ $i -lt 10 ] && pgrep -f "brain/main.py" >/dev/null 2>&1; do sleep 0.5; i=$((i + 1)); done
+  if pgrep -f "brain/main.py" >/dev/null 2>&1; then
+    echo "   stray brain still running after 5s -- force-killing (SIGKILL)."
+    echo "   The ESC may hold its last pulse: hit the physical kill switch if anything moves."
+    pkill -9 -f "brain/main.py" 2>/dev/null || true
+  fi
+fi
+pkill -x arecord 2>/dev/null || true   # a mid-flight 4s command recording, if any
 echo "Robot stopped. The Pi is still on (your SSH session is unaffected)."

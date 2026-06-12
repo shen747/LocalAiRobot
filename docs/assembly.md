@@ -481,9 +481,10 @@ chmod +x scripts/*.sh
 | `tail -f ~/.localairobot/robot.log` | Watch a **detached** brain's output (PID in `~/.localairobot/robot.pid`). |
 
 > 🔴 **On real wheels:** keep the **physical kill switch in reach** and bench everything with `--dry`
-> first. The headless modes (`--detach` / the boot service) have no terminal, so **without a working
-> wake word they record continuously and could act on ambient sound** (set it up in Phase 1 step 8).
-> Foreground `--live` is safer for first runs — ENTER gates each command.
+> first. The headless modes (`--detach` / the boot service) have no terminal, so the **wake word is
+> the only way to trigger them** — with no working wake model the brain simply exits at startup
+> (set the wake word up in Phase 1 step 8). Foreground `--live` is safer for first runs — ENTER
+> gates each command.
 
 **Auto-loading the config.** `install_stack.sh` already adds a line to `~/.bashrc` so every new SSH
 session loads `config/robot.env` for you (and `run_me.sh`/`shutdown.sh` source it themselves). To re-add
@@ -504,7 +505,8 @@ journalctl -u robot.service -f         # watch its log
 ```
 
 Set `ROBOT_DRY_RUN=0` in `config/robot.env` first — a service has no terminal, so the **wake word is the
-only way to talk to it** (set that up in Phase 1 step 8). The same 🔴 safety note applies: kill switch in reach.
+only way to talk to it**; without a working wake model the service starts, finds no way to be triggered,
+and exits (set the wake word up in Phase 1 step 8). The same 🔴 safety note applies: kill switch in reach.
 
 ---
 
@@ -529,9 +531,10 @@ sudo reboot                       # finish up: clears /tmp and applies the I2C c
 ```
 
 **Removes by default** (only the items that still exist — the dry run shows you first): `~/whisper.cpp`,
-`~/piper`, `~/turing-smart-screen-python`, `~/openwakeword`, Ollama + all pulled models, `brain/.venv`
-(which also holds the openWakeWord feature models), `~/.localairobot` (scene memory, taught photos + the
-run log/PID), `/tmp/test.*`, and a manually-installed `robot.service`.
+`~/piper`, `~/turing-smart-screen-python`, `~/openwakeword`, Ollama + all pulled models (binary, libs and
+model store), `brain/.venv` (which also holds the openWakeWord models), `~/.localairobot` (scene memory,
+taught photos + the run log/PID), `/tmp/test.*`, an installed `robot.service`, and the `config/robot.env`
+auto-load line the installer added to `~/.bashrc`.
 
 **Good to know:** `--deep` also apt-removes packages the installer added (cmake, build-essential,
 i2c-tools, …); a few may have shipped with your OS image, so it can take slightly more than the install

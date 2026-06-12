@@ -10,9 +10,11 @@ Wants=ollama.service
 [Service]
 Type=simple
 User=YOUR_USER
-EnvironmentFile=/home/YOUR_USER/LocalAiRobot/config/robot.env
 WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
-ExecStart=/home/YOUR_USER/LocalAiRobot/brain/.venv/bin/python /home/YOUR_USER/LocalAiRobot/brain/main.py
+# Load config/robot.env through bash, exactly like run_me.sh / a manual shell run. Do NOT switch
+# this to systemd's EnvironmentFile= -- that parser keeps trailing "# comments" as part of each
+# value, silently corrupting most settings in robot.env (numbers fall back to code defaults).
+ExecStart=/bin/bash -c 'if [ -f /home/YOUR_USER/LocalAiRobot/config/robot.env ]; then set -a; . /home/YOUR_USER/LocalAiRobot/config/robot.env; set +a; fi; exec /home/YOUR_USER/LocalAiRobot/brain/.venv/bin/python /home/YOUR_USER/LocalAiRobot/brain/main.py'
 Restart=on-failure
 RestartSec=3
 

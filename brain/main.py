@@ -3,7 +3,7 @@
 #
 # Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:4b (intent JSON) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
-# SEE (Pi Camera V2 NoIR -> the same multimodal gemma3:4b), react with an expressive FACE
+# SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
 # seen (SQLite, fed back into the prompt), and run a bounded autonomous explore/find behaviour.
 #

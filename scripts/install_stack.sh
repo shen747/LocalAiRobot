@@ -94,7 +94,7 @@ mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/ack_sounds" \
 
 # Auto-load config/robot.env in every NEW interactive shell, so you never have to
 # 'set -a; source config/robot.env; set +a' by hand again. Idempotent (appended once); run_me.sh and
-# shutdown.sh also source it themselves. cleanup_pi.sh leaves ~/.bashrc alone -- remove the block by hand.
+# shutdown.sh also source it themselves. cleanup_pi.sh removes this block again on a reset.
 BASHRC="${H}/.bashrc"
 if [ -f "$BASHRC" ] && grep -qF "LocalAiRobot: auto-load robot.env" "$BASHRC"; then
   echo "   ~/.bashrc already auto-loads config/robot.env"

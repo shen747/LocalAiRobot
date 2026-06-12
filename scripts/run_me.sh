@@ -59,7 +59,17 @@ case "${1:-}" in
   *) echo "usage: $(basename "$0") [--dry|--live|--detach|--reload|--install-boot|--disable-boot]"; exit 2 ;;
 esac
 
-# --reload: restart whatever is running so it re-reads the (just-edited) config/robot.env.
+# A robot.pid is only trusted if its PID is still OUR brain: PIDs get recycled (especially after a
+# reboot, since ~/.localairobot/robot.pid survives one), and `kill -0` alone can't tell a stale
+# entry from a live brain.
+pid_is_brain() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && \
+    grep -aq "brain/main.py" "/proc/$pid/cmdline" 2>/dev/null
+}
+
+# --reload: restart whatever is RUNNING so it re-reads the (just-edited) config/robot.env.
+# Nothing running -> refuse (a "reload" must never cold-start a live robot by surprise).
 if [ "$reload" = 1 ]; then
   if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet robot.service; then
     echo ">> Reloading via systemd (restart re-reads config/robot.env)..."
@@ -67,9 +77,15 @@ if [ "$reload" = 1 ]; then
     echo "   restarted. Watch:  journalctl -u robot.service -f"
     exit 0
   fi
-  echo ">> Reloading: stopping the running brain, then relaunching it detached with the new config..."
-  "$REPO/scripts/shutdown.sh" || true
-  override=0; detach=1
+  if pid_is_brain "$(cat "$HOME/.localairobot/robot.pid" 2>/dev/null)"; then
+    echo ">> Reloading: stopping the detached brain, then relaunching it with the new config..."
+    "$REPO/scripts/shutdown.sh" || true
+    override=0; detach=1
+  else
+    echo "Nothing to reload: no boot service active and no detached brain running."
+    echo "Start one explicitly:  ./scripts/run_me.sh --live   (or --detach)"
+    exit 1
+  fi
 fi
 
 DRY="${override:-${ROBOT_DRY_RUN:-0}}"
@@ -91,13 +107,17 @@ fi
 # LIVE, detached (--detach) -> background, survives SSH logout. Stop with scripts/shutdown.sh.
 DIR="$HOME/.localairobot"; mkdir -p "$DIR"
 PIDFILE="$DIR/robot.pid"; LOG="$DIR/robot.log"
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+if pid_is_brain "$(cat "$PIDFILE" 2>/dev/null)"; then
   echo "Robot is already running (PID $(cat "$PIDFILE")). Stop it first:  ./scripts/shutdown.sh"
   exit 1
 fi
+rm -f "$PIDFILE"   # stale leftover (e.g. from before a reboot) -- safe to clear
 echo ">> Bringing the robot to LIFE, detached (survives SSH logout). Logs -> $LOG"
 echo "   Say \"Richard\" to wake it.  Stop with ./scripts/shutdown.sh (does NOT power off the Pi)."
-ROBOT_DRY_RUN=0 nohup "$PY" "$MAIN" >"$LOG" 2>&1 &
+echo "   (Needs a working wake word -- detached has no keyboard, so with no wake model it just exits.)"
+# stdin MUST be /dev/null: left attached to the SSH terminal it would hit EOF on logout and the
+# brain would misread that as endless ENTER presses (a hot record/transcribe loop on ambient noise).
+ROBOT_DRY_RUN=0 nohup "$PY" "$MAIN" </dev/null >"$LOG" 2>&1 &
 echo $! > "$PIDFILE"
 sleep 1
 if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then

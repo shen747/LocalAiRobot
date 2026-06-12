@@ -4,9 +4,10 @@
 #
 # Say "Richard" and the robot wakes -> main.py plays an ack earcon, sets the face to listening,
 # then runs the EXISTING 4s arecord + whisper command capture. This REPLACES, but does not
-# remove, the SSH ENTER push-to-talk: ROBOT_WAKEWORD_ENABLE defaults to 0 (byte-for-byte today's
-# behaviour), and even when enabled ENTER/q still work over a TTY. Crucially it also lets the
-# robot run HEADLESS under scripts/robot.service, where there is no stdin for ENTER at all.
+# remove, the SSH ENTER push-to-talk: the CODE default is ROBOT_WAKEWORD_ENABLE=0 (plain ENTER),
+# though the shipped config/robot.env turns it ON. Even when enabled, ENTER/q still work over a
+# TTY. Crucially it also lets the robot run HEADLESS under scripts/robot.service / run_me.sh
+# --detach, where there is no usable stdin for ENTER at all.
 #
 # The wake word ONLY starts capture. It is NOT the autonomy gate -- EXPLORE/FIND are still
 # demoted to DRIVE unless the raw transcript contains an explore phrase (main.is_explore_command).
@@ -27,10 +28,11 @@
 #   - Dry run: a fake detector lets the whole woken turn be bench-tested with NO mic
 #     (type 'r' to simulate "Richard", or set ROBOT_FAKE_WAKE=1 to auto-fire once).
 #
-# NOTE: openWakeWord's Model() needs its feature models (melspectrogram/embedding) downloaded
-# once -- install_stack.sh does this. The "Richard" model itself is a small keyword classifier
-# you train separately (NOT TTS voice cloning); until then, point ROBOT_WAKEWORD_MODEL at any
-# stock openWakeWord model to prove the pipeline. See CODE_AND_SOFTWARE_IMPROVEMENTS.md.
+# NOTE: openWakeWord needs its feature models (melspectrogram/embedding). The pinned 0.4.0 wheel
+# BUNDLES them (and stock wake words) inside the package; 0.5+ would download them instead --
+# install_stack.sh handles either. The "Richard" model itself is a small keyword classifier you
+# train separately (NOT TTS voice cloning); until then, point ROBOT_WAKEWORD_MODEL at a bundled
+# stock model (find brain/.venv -path "*openwakeword*" -name "*.onnx") to prove the pipeline.
 
 import logging
 import os
@@ -170,6 +172,14 @@ class WakeWord:
                             r, _, _ = select.select([sys.stdin], [], [], 0)
                             if r:
                                 line = sys.stdin.readline()
+                                if line == "":
+                                    # EOF: the terminal went away (SSH logout under a detached
+                                    # run). select() would report readable forever -- if we
+                                    # treated it as ENTER we'd hot-loop recording ambient noise.
+                                    # Stop watching stdin; stay wake-word-only.
+                                    log.info("wake: stdin closed -- continuing wake-word-only")
+                                    watch_stdin = False
+                                    continue
                                 result = "QUIT" if line.strip().lower() == "q" else "PTT"
                                 break
                         data, _ = stream.read(_CHUNK)
@@ -202,7 +212,7 @@ class WakeWord:
             time.sleep(0.3)
             return "WAKE"
         try:
-            line = input(f"\n[dry-run: no live mic]  type r=simulate wake  ·  ENTER=talk  ·  q=quit > ")
+            line = input("\n[dry-run: no live mic]  type r=simulate wake  ·  ENTER=talk  ·  q=quit > ")
         except EOFError:
             return "QUIT"
         s = line.strip().lower()
