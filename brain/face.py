@@ -169,7 +169,20 @@ class _TuringBackend:
             from library.lcd.lcd_comm_rev_a import LcdCommRevA as Lcd
         # Native portrait orientation (width <= height); render to that.
         self.width, self.height = min(w, h), max(w, h)
-        self._lcd = Lcd(com_port=(port or "AUTO"), display_width=self.width, display_height=self.height)
+        # The turing library's openSerial() does `try: sys.exit(0) except: os._exit(0)` when it can't
+        # auto-find the panel's COM port. os._exit() is UNCATCHABLE -- it hard-kills the whole brain
+        # (our _try's `except SystemExit` never sees it). So when the port is AUTO, detect the panel
+        # OURSELVES first and raise a NORMAL exception (which _try catches -> falls back to
+        # framebuffer/simulated) instead of letting the library reach that os._exit().
+        com = (port or "AUTO").strip()
+        if com.upper() == "AUTO":
+            detect = getattr(Lcd, "auto_detect_com_port", None)
+            found = detect() if callable(detect) else None
+            if not found:
+                raise RuntimeError("no turing panel detected on any serial port "
+                                   "(plug it in + set ROBOT_FACE_PORT, or ROBOT_FACE_BACKEND=simulated)")
+            com = found
+        self._lcd = Lcd(com_port=com, display_width=self.width, display_height=self.height)
         self._lcd.Reset()
         self._lcd.InitializeComm()
         try:
@@ -284,9 +297,10 @@ class Face:
 
     @staticmethod
     def _try(make):
-        # Catch SystemExit too: the turing panel library calls sys.exit() when it can't auto-find
-        # the panel's COM port. SystemExit is NOT an Exception subclass, so without this clause an
-        # unplugged screen kills the whole brain at startup.
+        # Backstop: catch SystemExit as well as Exception so a backend that exits can't take the brain
+        # with it. NOTE the turing library escalates an unfound COM port to os._exit() (UNCATCHABLE) --
+        # that specific case is pre-empted by detecting the panel in _TuringBackend before the library's
+        # openSerial() runs, so we never reach its exit path. This clause covers the catchable variants.
         try:
             return make()
         except SystemExit as e:
