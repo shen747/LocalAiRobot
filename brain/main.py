@@ -421,8 +421,18 @@ def main():
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
-        driver.stop()
-        for closer in (driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
+        # A SECOND Ctrl-C (or a SIGTERM) must NOT abort this cleanup -- it neutralises the ESC and
+        # closes the devices, so a double-tap can't be allowed to leave the motor live. Ignore those
+        # signals for the duration; every step below is bounded (gpiozero's thread joins time out),
+        # so making cleanup uninterruptible can't hang. (Without this, a 2nd Ctrl-C raises
+        # KeyboardInterrupt -- a BaseException the per-closer `except Exception` does NOT catch.)
+        import signal
+        for _sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(_sig, signal.SIG_IGN)
+            except Exception:
+                pass
+        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
             try:
                 closer()
             except Exception:

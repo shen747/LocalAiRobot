@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# shutdown.sh -- stop a DETACHED brain (started by run_me.sh --detach). By default the Pi STAYS ON;
-# add --poweroff to also halt the Pi afterwards (your SSH session drops with it).
-# (A foreground run_me.sh? just Ctrl-C. The boot service? use: sudo systemctl stop robot.service.)
-# Sends SIGINT first so the brain runs its cleanup (neutralises the ESC + closes the panel/camera),
-# then escalates only if it won't stop. The physical kill switch on the LiPo is the real safety net.
+# shutdown.sh -- stop the robot brain CLEANLY, however it was launched (a --detach run, a foreground
+# orphan, the boot service, or a stray). SIGINT first so the brain neutralises the ESC + closes the
+# panel/camera; escalate to SIGKILL only if it won't go. By default the Pi STAYS ON; add --poweroff to
+# also halt it (your SSH session drops with it). The physical kill switch on the LiPo is the real safety net.
+#   (Attached to a foreground run_me.sh? plain Ctrl-C is enough -- and a 2nd Ctrl-C is now safe too.)
 set -uo pipefail
-DIR="$HOME/.localairobot"; PIDFILE="$DIR/robot.pid"
+
+# Match ONLY the brain's python process -- never an editor/grep that merely mentions the path
+# (e.g. `nano brain/main.py`). We trust the cmdline, not a PID number (those get recycled).
+PAT='python.*brain/main\.py'
+PIDFILE="$HOME/.localairobot/robot.pid"
 
 POWEROFF=0
 case "${1:-}" in
@@ -14,53 +18,38 @@ case "${1:-}" in
   *) echo "usage: $(basename "$0") [--poweroff]   (--poweroff: stop the brain, then halt the Pi)"; exit 2 ;;
 esac
 
-stop_pid() {
-  pid="$1"; i=0
-  kill -0 "$pid" 2>/dev/null || return 0
-  echo "Stopping robot (PID $pid) with SIGINT (lets it neutralise the motor + close cleanly)..."
-  kill -INT "$pid" 2>/dev/null || true
-  while [ $i -lt 10 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
-  kill -0 "$pid" 2>/dev/null || { echo "   stopped cleanly."; return 0; }
-  echo "   still running -- a second SIGINT..."
-  kill -INT "$pid" 2>/dev/null || true
-  i=0; while [ $i -lt 6 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
-  kill -0 "$pid" 2>/dev/null || { echo "   stopped."; return 0; }
-  echo "   force-killing (SIGKILL). The ESC may hold its last pulse -- hit the physical kill switch if it moves."
-  kill -9 "$pid" 2>/dev/null || true
-}
+running()   { pgrep -f "$PAT" >/dev/null 2>&1; }
+wait_exit() { local n=$1; while [ "$n" -gt 0 ] && running; do sleep 0.5; n=$((n - 1)); done; }  # waits N/2 s
 
-if [ -f "$PIDFILE" ]; then
-  pid="$(cat "$PIDFILE" 2>/dev/null || echo 0)"
-  # Only signal the PID if it is still OUR brain -- PIDs get recycled (the PID file survives a
-  # reboot), and we must never SIGINT/SIGKILL some unrelated process that inherited the number.
-  if kill -0 "$pid" 2>/dev/null && grep -aq "brain/main.py" "/proc/$pid/cmdline" 2>/dev/null; then
-    stop_pid "$pid"
-  else
-    echo "PID file is stale (PID $pid is not the robot brain) -- ignoring it."
-  fi
-  rm -f "$PIDFILE"
+rm -f "$PIDFILE"   # stale detached-run marker, if any -- the cmdline match is what we actually trust
+
+# If the boot service owns the brain, stop it the systemd way FIRST -- otherwise systemd just
+# relaunches whatever we kill below (Restart=on-failure).
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet robot.service 2>/dev/null; then
+  echo "robot.service is active -- stopping it via systemd (it would relaunch a killed brain)..."
+  sudo systemctl stop robot.service 2>/dev/null || true
+  wait_exit 10
+fi
+
+if ! running; then
+  echo "No robot brain running."
 else
-  echo "No PID file ($PIDFILE) -- looking for a stray brain process instead..."
+  echo "Stopping the robot brain with SIGINT (it neutralises the ESC + closes devices)..."
+  pkill -INT -f "$PAT" 2>/dev/null || true
+  wait_exit 10                                    # a clean exit needs a few seconds
+  if running; then
+    echo "   didn't stop in 5s -- force-killing (SIGKILL). The ESC may hold its last pulse:"
+    echo "   hit the physical kill switch if anything moves."
+    pkill -KILL -f "$PAT" 2>/dev/null || true
+    wait_exit 4
+  fi
+  running && echo "   WARNING: a brain process is STILL alive." || echo "   stopped."
 fi
 
-# belt-and-suspenders: catch any brain/main.py the PID file missed. SIGINT first, then WAIT --
-# a clean shutdown needs a few seconds (control-thread join + ESC neutral + device closes), and
-# a premature SIGKILL would abort that cleanup, leaving the ESC on its last pulse.
-if pgrep -f "brain/main.py" >/dev/null 2>&1; then
-  pkill -INT -f "brain/main.py" 2>/dev/null || true
-  i=0
-  while [ $i -lt 10 ] && pgrep -f "brain/main.py" >/dev/null 2>&1; do sleep 0.5; i=$((i + 1)); done
-  if pgrep -f "brain/main.py" >/dev/null 2>&1; then
-    echo "   stray brain still running after 5s -- force-killing (SIGKILL)."
-    echo "   The ESC may hold its last pulse: hit the physical kill switch if anything moves."
-    pkill -9 -f "brain/main.py" 2>/dev/null || true
-  fi
-fi
 pkill -x arecord 2>/dev/null || true   # a mid-flight 4s command recording, if any
 echo "Robot stopped."
+
 if [ "$POWEROFF" = 1 ]; then
-  # Stop the boot service too (if installed) so systemd doesn't relaunch the brain mid-halt.
-  sudo systemctl stop robot.service 2>/dev/null || true
   echo "Powering off the Pi -- this SSH session will disconnect. Bye."
   sudo poweroff
 else
