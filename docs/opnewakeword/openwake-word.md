@@ -290,7 +290,8 @@ peak, max 32767). Edit `config/robot.env` or run `amixer`, then re-run `--live`:
   (e.g. card 2), then:
   ```bash
   amixer -c 2 sset 'Auto Gain Control' off    # if present -- stops AGC pumping the level into clipping
-  amixer -c 2 sset Mic 75%                     # then nudge: DOWN if 'loudest' nears 32767, UP if < ~4000
+  amixer -c 2 sset Mic 60%                     # then nudge: DOWN if 'loudest' nears 32767, UP if < ~4000
+  sudo alsactl store                           # PERSIST the level across reboots (ALSA resets it otherwise)
   ```
   *(Real example: at 100% the mic clipped — `loudest=31897`, `best score=0.00`; at ~70–75% it landed
   `loudest≈12000` and detected at `score=0.68`.)*

@@ -1,17 +1,21 @@
 # `models/` — wake-word models
 
-This folder holds the openWakeWord **`.onnx`** wake-word model(s) the robot listens for. The default,
-**`hey_richard.onnx`**, is wired in [`config/robot.env`](../config/robot.env) as `ROBOT_WAKEWORD_MODEL`,
-so a fresh clone wakes to **"hey Richard"** out of the box — no training and no copying needed.
+This folder holds the openWakeWord **`.onnx`** wake-word model(s) the robot listens for, pointed at by
+`ROBOT_WAKEWORD_MODEL` in [`config/robot.env`](../config/robot.env). Two ship:
 
-- **The path is absolute** in the config (`~/LocalAiRobot/models/hey_richard.onnx`) on purpose: it then
+- **`hey_jarvis.onnx`** — a stock openWakeWord model, **the wired default**: reliable out of the box, so a
+  fresh clone wakes to *"hey jarvis"* with no training.
+- **`hey_richard.onnx`** — a **custom** model for the robot's own name. Synthetic-voice training makes it
+  less reliable than the stock one, so it's bundled to **retrain stronger** and switch to when ready.
+
+Notes:
+- **The path is absolute** in the config (e.g. `~/LocalAiRobot/models/hey_jarvis.onnx`) on purpose: it
   resolves the same under `scripts/run_me.sh` (CWD = repo root), the boot service (CWD = `brain/`), and a
   manual run. If you cloned the repo somewhere other than `~/LocalAiRobot`, update that one line.
-- **A model is ~200 KB** — small enough to live in git. [`.gitattributes`](../.gitattributes) marks
-  `*.onnx binary`, so it's never line-ending-mangled.
-- **Make or swap your own** ("hey Richard" → any phrase you choose, voice-independent): follow
-  [docs/opnewakeword/openwake-word.md](../docs/opnewakeword/openwake-word.md). Drop the new `.onnx` here,
-  then either overwrite `hey_richard.onnx` to keep it the default, or point `ROBOT_WAKEWORD_MODEL` at the
-  new filename. Commit it and the Pi gets it on `git pull`.
-- **Stock models work too** — copy any openWakeWord `.onnx` (e.g. `hey_jarvis`) here and re-point the
-  config. List what the installer fetched: `find brain/.venv -path "*openwakeword*" -name "*.onnx"`.
+- **These are small** (~200 KB–1.3 MB) — fine for git. [`.gitattributes`](../.gitattributes) marks
+  `*.onnx binary`, and `.gitignore` has a `!models/*.onnx` exception (every other `.onnx` stays ignored).
+- **Make or swap your own** (any phrase you choose, voice-independent): follow
+  [docs/opnewakeword/openwake-word.md](../docs/opnewakeword/openwake-word.md). Drop the new `.onnx` here and
+  point `ROBOT_WAKEWORD_MODEL` at it. Commit it and the Pi gets it on `git pull`.
+- **More stock models**: list what the installer fetched with
+  `find brain/.venv -path "*openwakeword*" -name "*.onnx"`, or grab one from openWakeWord's GitHub releases.

@@ -25,7 +25,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MODEL` | `gemma3:1b` | Ollama **text/intent** model that turns a transcript into the command JSON (text-only; vision is a separate `ROBOT_VISION_MODEL`). |
+| `ROBOT_MODEL` | `gemma3:4b` | Ollama **text/intent** model that turns a transcript into the command JSON. Vision is a separate `ROBOT_VISION_MODEL`. |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
@@ -148,8 +148,8 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word; `0` = ENTER push-to-talk only. |
-| `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_richard.onnx` | Path to the wake `.onnx`. The default **ships in the repo** (`models/`), so live wake works on a fresh clone. Missing/unloadable → degrades to ENTER. Train or swap your own: [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
-| `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. |
+| `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_jarvis.onnx` | Path to the wake `.onnx`. Ships wired to the stock **hey_jarvis** (reliable out of the box); a custom **hey_richard** also ships in `models/` (retrain it stronger to switch). Missing/unloadable → degrades to ENTER. [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
+| `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. Stock models score high (use `0.5`); a weak custom model may need `0.3`–`0.15` (watch the `best score` log line). |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |
 | `ROBOT_WAKEWORD_DEVICE` | *(empty)* | PortAudio input device index/name; empty = system default input. |
