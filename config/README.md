@@ -25,7 +25,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MODEL` | `gemma3:4b` | Ollama **text/intent** model that turns a transcript into the command JSON. |
+| `ROBOT_MODEL` | `gemma3:1b` | Ollama **text/intent** model that turns a transcript into the command JSON (text-only; vision is a separate `ROBOT_VISION_MODEL`). |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
-# Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:4b (intent JSON) -> Piper (TTS),
+# Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:1b (intent JSON) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
@@ -46,7 +46,7 @@ def load_config():
     home = os.path.expanduser("~")
     return {
         "ollama_url": env("ROBOT_OLLAMA_URL", "http://localhost:11434/api/generate"),
-        "model": env("ROBOT_MODEL", "gemma3:4b"),
+        "model": env("ROBOT_MODEL", "gemma3:1b"),
         "whisper_bin": env("ROBOT_WHISPER_BIN", os.path.join(home, "whisper.cpp/build/bin/whisper-cli")),
         "whisper_model": env("ROBOT_WHISPER_MODEL", os.path.join(home, "whisper.cpp/models/ggml-base.en.bin")),
         "piper_bin": env("ROBOT_PIPER_BIN", os.path.join(home, "piper/piper/piper")),
@@ -54,8 +54,8 @@ def load_config():
         "mic": env("ROBOT_MIC", "plughw:1,0"),
         "record_secs": env("ROBOT_RECORD_SECS", "4"),
         "tmpdir": env("ROBOT_TMPDIR", "/dev/shm"),
-        # Optional dedicated vision model (e.g. moondream). Empty -> vision shares cfg["model"]
-        # (gemma3:4b), i.e. unchanged behaviour. See vision.py / CODE_AND_SOFTWARE_IMPROVEMENTS.md.
+        # Dedicated vision model (e.g. moondream). cfg["model"] is now the text-only gemma3:1b, so
+        # vision needs its OWN VLM here -- empty would send frames to a model that can't see. See vision.py.
         "vision_model": env("ROBOT_VISION_MODEL", ""),
     }
 

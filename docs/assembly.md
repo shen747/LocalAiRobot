@@ -112,14 +112,14 @@ drives no hardware at all).
 6. **Send the local LLM a text prompt and watch it reply** (then check the Pi stays cool). This is the
    proof the AI brain runs **entirely on the Pi** — Ollama serves the model on `localhost`, no internet:
    ```bash
-   ollama list                                        # expect gemma3:4b (text) AND moondream (vision)
-   ollama run gemma3:4b "reply with one word: ready"  # send a text prompt -> the model prints a reply
+   ollama list                                        # expect gemma3:1b (text) AND moondream (vision)
+   ollama run gemma3:1b "reply with one word: ready"  # send a text prompt -> the model prints a reply
                                                       #   (first run is a slow cold load; Ctrl-D to exit)
    ```
    You should see the model print its answer. **Ask it anything** to be sure it's really thinking:
    ```bash
-   ollama run gemma3:4b "name three primary colours"  # one-shot: prompt in quotes, reply prints, done
-   ollama run gemma3:4b                               # interactive chat: type, read reply, /bye to quit
+   ollama run gemma3:1b "name three primary colours"  # one-shot: prompt in quotes, reply prints, done
+   ollama run gemma3:1b                               # interactive chat: type, read reply, /bye to quit
    ```
    Want proof it's truly offline? Turn Wi-Fi off and ask again — it still answers. Then watch the
    temperature while the model works (it's CPU-heavy):
@@ -187,6 +187,10 @@ drives no hardware at all).
      it explains the tools it uses (openWakeWord, the Jupyter notebook app, what "cells" are and how to run
      them) from scratch. Then drop the new `.onnx` in `models/` and point `ROBOT_WAKEWORD_MODEL` at it (or
      overwrite `hey_richard.onnx` to keep it the default).
+   - Won't wake, or wakes inconsistently? Usually it's **mic capture gain** (too quiet → low scores; or so
+     high it **clips** → scores collapse to ~0) or the threshold. The brain logs `best score`/`loudest`
+     every ~15 s to tune by — set the gain with `amixer -c <card> sset Mic 75%` (aim `loudest` mid-scale,
+     not near 32767). Full procedure: the **[wake-word guide's tuning list](opnewakeword/openwake-word.md)**.
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on

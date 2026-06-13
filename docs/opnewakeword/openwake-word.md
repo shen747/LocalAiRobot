@@ -278,11 +278,30 @@ It lands on the default path, so there's no config to edit — on the Pi just `.
 
 **Test it.** Say **"hey Richard"** → you should see `wake: 'hey_richard' detected (score=…)` in the log.
 
-**If it misbehaves** (edit `config/robot.env`, then re-run `--live`):
-- Doesn't hear you → lower `ROBOT_WAKEWORD_THRESHOLD` (e.g. `0.4`, or `0.3` for a low-recall baseline), or speak closer.
-- Fires at random speech → raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to `2`.
-- Wrong microphone → set `ROBOT_WAKEWORD_DEVICE` to your mic's index, found with
+**If it misbehaves — tuning the wake word.** While it listens, the robot logs a tuning read-out every
+~15 s (and the score on every hit): `wake: still listening -- best score=0.41, loudest=12730 (...)`.
+Tune by those two numbers — **`best score`** (vs your threshold) and **`loudest`** (the captured audio
+peak, max 32767). Edit `config/robot.env` or run `amixer`, then re-run `--live`:
+
+- **Mic capture gain — the biggest real-world lever, and the most surprising.** A cheap USB mic is often
+  too quiet (low scores) *or*, cranked to max, **clips** — and clipped/distorted audio makes the score
+  **collapse to ~0**, which looks exactly like "the model is broken." Aim for `loudest` peaking
+  **mid-scale (~8,000–22,000)** when you speak — never near 32767. Find the mic's card with `arecord -l`
+  (e.g. card 2), then:
+  ```bash
+  amixer -c 2 sset 'Auto Gain Control' off    # if present -- stops AGC pumping the level into clipping
+  amixer -c 2 sset Mic 75%                     # then nudge: DOWN if 'loudest' nears 32767, UP if < ~4000
+  ```
+  *(Real example: at 100% the mic clipped — `loudest=31897`, `best score=0.00`; at ~70–75% it landed
+  `loudest≈12000` and detected at `score=0.68`.)*
+- **Doesn't wake, and `best score` sits just under your threshold** → lower `ROBOT_WAKEWORD_THRESHOLD`
+  (e.g. `0.3`, then `0.2`). *But if the misses show `best score=0.00` (not ~0.18), the **audio** is the
+  problem — fix the gain above; a lower threshold won't help a sound the model never heard.*
+- **Fires at random speech** → raise `ROBOT_WAKEWORD_THRESHOLD`, or `ROBOT_WAKEWORD_TRIGGER_LEVEL` to `2`.
+- **Wrong / silent microphone** → set `ROBOT_WAKEWORD_DEVICE` to your mic's index from
   `brain/.venv/bin/python -c "import sounddevice as sd; print(sd.query_devices())"`.
+- **Say it cleanly** — ~15–20 cm, normal volume, and give a half-second *after* `listening` prints (the
+  model needs to fill its audio buffer first; saying it the instant listening starts often misses).
 
 **Swapping models later:** drop another `.onnx` in `models/` and re-point that one `ROBOT_WAKEWORD_MODEL`
 line (several can live there side by side); overwrite `hey_richard.onnx` to change the default. The robot
