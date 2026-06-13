@@ -165,14 +165,27 @@ class WakeWord:
         # at a rate the device CAN open and resample each chunk down to the model's 16 kHz.
         rate = self._capture_rate(sd)
         chunk = _CHUNK if rate == _SAMPLE_RATE else int(round(rate * _CHUNK / _SAMPLE_RATE))
+        # Per-listen tuning telemetry: track the best (highest) score and loudest chunk seen, and
+        # surface them periodically. A user whose mic/voice/model is marginal can read these straight
+        # from the robot log to pick a threshold (or spot a too-quiet mic) -- no separate test script.
+        best_score = 0.0
+        best_amp = 0
+        next_report = time.time() + 15.0
         try:
             # Hold audio_lock for the whole listen: the wake mic must not be live while Piper or
             # an earcon plays. Nothing else wants the lock at the top of a turn, so this is free.
             with audio_lock:
                 with sd.InputStream(samplerate=rate, channels=1, dtype="int16",
                                     blocksize=chunk, device=self._device) as stream:
-                    log.info("wake: listening for '%s' (ENTER=talk, q=quit)"
-                             if watch_stdin else "wake: listening for '%s' (headless)", self._label)
+                    # Log the resolved audio path: mics vary wildly, and "capture 44100->16000Hz
+                    # resampled" vs the threshold/silence_floor is the first thing to check when a
+                    # wake word won't fire on someone else's hardware.
+                    log.info("wake: listening for '%s' on device=%s (capture %dHz%s, chunk=%d, "
+                             "threshold=%.2f, silence_floor=%d)%s", self._label,
+                             self._device if self._device is not None else "default", rate,
+                             f"->{_SAMPLE_RATE}Hz resampled" if rate != _SAMPLE_RATE else "",
+                             chunk, self.threshold, _SILENCE_FLOOR,
+                             "" if watch_stdin else " [headless]")
                     while True:
                         if watch_stdin:
                             import select
@@ -195,19 +208,35 @@ class WakeWord:
                             audio = audio.flatten()
                         if rate != _SAMPLE_RATE:
                             audio = self._to_16k(np, audio, rate)
-                        if int(np.max(np.abs(audio))) < _SILENCE_FLOOR:   # CPU guard: skip silence
+                        amp = int(np.max(np.abs(audio)))
+                        if amp > best_amp:
+                            best_amp = amp
+                        if amp < _SILENCE_FLOOR:                 # CPU guard: skip silence
                             hits = 0
-                            continue
-                        scores = self._model.predict(audio)
-                        score = max(scores.values()) if scores else 0.0
-                        if score >= self.threshold:
-                            hits += 1
-                            if hits >= self.trigger_level:
-                                log.info("wake: '%s' detected (score=%.2f)", self._label, score)
-                                result = "WAKE"
-                                break
                         else:
-                            hits = 0
+                            scores = self._model.predict(audio)
+                            score = max(scores.values()) if scores else 0.0
+                            if score > best_score:
+                                best_score = score
+                            if score >= self.threshold:
+                                hits += 1
+                                if hits >= self.trigger_level:
+                                    log.info("wake: '%s' detected (score=%.2f)", self._label, score)
+                                    result = "WAKE"
+                                    break
+                            else:
+                                hits = 0
+                        # Periodic tuning read-out -- only for windows where someone actually spoke
+                        # (so a silent room doesn't spam the log); resets each window.
+                        if time.time() >= next_report:
+                            if best_amp >= _SILENCE_FLOOR:
+                                log.info("wake: still listening -- best score=%.2f, loudest=%d over the "
+                                         "last ~15s (threshold=%.2f). Lower ROBOT_WAKEWORD_THRESHOLD to "
+                                         "wake more easily; raise it if it false-fires.",
+                                         best_score, best_amp, self.threshold)
+                            best_score = 0.0
+                            best_amp = 0
+                            next_report = time.time() + 15.0
         except Exception as e:
             log.warning("wake listen failed (%s) -- falling back to ENTER push-to-talk", e)
             return self._ptt_fallback(watch_stdin)
