@@ -130,6 +130,9 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | `ROBOT_MEMORY_DB` | `~/.localairobot/memory.db` | SQLite file holding sightings + taught people/things (survives reboots). |
 | `ROBOT_MEMORY_MAX_CONTEXT` | `8` | Recent distinct objects summarised back into the prompt each turn. |
 
+Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/rag.sh` (taught facts),
+`--seen` (sightings), `--all`, `--forget <name>`, `--clear-facts`, or `--query "<SQL>"` for anything else.
+
 ## Model orchestration
 
 | Key | Default | What it does |
