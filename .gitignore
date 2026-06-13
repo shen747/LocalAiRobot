@@ -7,6 +7,10 @@ __pycache__/
 # Runtime audio scratch (normally written to /dev/shm, but guard anyway)
 *.wav
 
+# Runtime logs -- e.g. log.log from redirecting a run's console output to a file. (The detached-run
+# log lives in ~/.localairobot/robot.log, outside the repo.)
+*.log
+
 # Model weights: too large to commit; fetched by scripts/install_stack.sh
 *.bin
 *.onnx
