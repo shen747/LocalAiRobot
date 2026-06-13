@@ -182,6 +182,12 @@ drives no hardware at all).
      3. Run **live**: `./scripts/run_me.sh --live`, then say that wake word out loud — you should see
         `wake: '…' detected`. (A missing/unloadable model just degrades to ENTER push-to-talk;
         `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the system default.)
+   - **Want your own wake word to activate the robot** (e.g. a real *"Richard"* instead of a stock
+     phrase)? That's a separate, one-time job done on a **PC or Google Colab — not the Pi** — that
+     produces a small `.onnx` you copy over. Follow the beginner-friendly guide
+     **[Training your own wake word](opnewakeword/openwake-word.md)** — it explains the tools it uses
+     (the openWakeWord library, the Jupyter notebook app, what "cells" are and how to run them) from
+     scratch, so no prior experience is needed.
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
