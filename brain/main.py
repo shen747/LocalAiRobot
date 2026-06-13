@@ -431,7 +431,9 @@ def main():
         # signals for the duration; every step below is bounded (gpiozero's thread joins time out),
         # so making cleanup uninterruptible can't hang. (Without this, a 2nd Ctrl-C raises
         # KeyboardInterrupt -- a BaseException the per-closer `except Exception` does NOT catch.)
-        import signal
+        # Uses the MODULE-level `import signal` (top of file). Do NOT `import signal` here: that would
+        # make `signal` a local of main(), shadowing the global and breaking the nested run_behavior's
+        # closure reference to it ("NameError: free variable 'signal' ... not associated with a value").
         for _sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 signal.signal(_sig, signal.SIG_IGN)
