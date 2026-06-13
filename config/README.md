@@ -25,7 +25,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MODEL` | `gemma3:4b` | Ollama **text/intent** model that turns a transcript into the command JSON. Vision is a separate `ROBOT_VISION_MODEL`. |
+| `ROBOT_MODEL` | `gemma4:e2b-it-qat` | Ollama **text/intent** model (4-bit QAT — fast on the Pi) that turns a transcript into the command JSON. Vision is a separate `ROBOT_VISION_MODEL`. |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
@@ -139,6 +139,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 |---|---|---|
 | `ROBOT_WARMUP` | `1` | Prime the model at boot so the **first** command isn't a slow cold load. |
 | `ROBOT_OLLAMA_KEEPALIVE` | `30m` | Keep the model resident between commands: `30m`, `-1` = forever, `''` = Ollama default (~5 m). |
+| `ROBOT_NUM_CTX` | `4096` | Caps Ollama's context window (KV cache). Gemma 4 defaults to **128 K** — far more than short commands need; smaller = faster + less RAM on the Pi. `0` = Ollama default. |
 
 ## Dedicated vision model
 
@@ -150,7 +151,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word; `0` = ENTER push-to-talk only. |
+| `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word (required in live). `0` disables it — then **live has no trigger** and the brain exits; ENTER works only in `--dry`. |
 | `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_jarvis.onnx` | Path to the wake `.onnx`. Ships wired to the stock **hey_jarvis** (reliable out of the box); a custom **hey_richard** also ships in `models/` (retrain it stronger to switch). Missing/unloadable → degrades to ENTER. [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
 | `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. Stock models score high (use `0.5`); a weak custom model may need `0.3`–`0.15` (watch the `best score` log line). |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |

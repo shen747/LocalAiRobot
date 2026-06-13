@@ -56,7 +56,7 @@ def _ollama_image(cfg, prompt, jpeg_bytes, schema):
     # Route through the shared inference gateway: ONE model_lock serialises this with the text
     # intent call so two generates never hit Ollama at once (the software twin of the reference's
     # /dev/hailo0 device-exclusivity crash), and keep_alive keeps the model resident. Uses a
-    # dedicated vision model when ROBOT_VISION_MODEL is set, otherwise the same gemma3:4b as today.
+    # dedicated vision model when ROBOT_VISION_MODEL is set, otherwise falls back to ROBOT_MODEL.
     return inference.ollama_generate(cfg, {
         "model": cfg.get("vision_model") or cfg["model"],
         "prompt": prompt,

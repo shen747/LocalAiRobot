@@ -112,14 +112,14 @@ drives no hardware at all).
 6. **Send the local LLM a text prompt and watch it reply** (then check the Pi stays cool). This is the
    proof the AI brain runs **entirely on the Pi** — Ollama serves the model on `localhost`, no internet:
    ```bash
-   ollama list                                        # expect gemma3:4b (text) AND moondream (vision)
-   ollama run gemma3:4b "reply with one word: ready"  # send a text prompt -> the model prints a reply
+   ollama list                                        # expect gemma4:e2b-it-qat (text) AND moondream (vision)
+   ollama run gemma4:e2b-it-qat "reply with one word: ready"  # send a text prompt -> the model prints a reply
                                                       #   (first run is a slow cold load; Ctrl-D to exit)
    ```
    You should see the model print its answer. **Ask it anything** to be sure it's really thinking:
    ```bash
-   ollama run gemma3:4b "name three primary colours"  # one-shot: prompt in quotes, reply prints, done
-   ollama run gemma3:4b                               # interactive chat: type, read reply, /bye to quit
+   ollama run gemma4:e2b-it-qat "name three primary colours" # one-shot: prompt in quotes, reply prints, done
+   ollama run gemma4:e2b-it-qat                              # interactive chat: type, read reply, /bye to quit
    ```
    Want proof it's truly offline? Turn Wi-Fi off and ask again — it still answers. Then watch the
    temperature while the model works (it's CPU-heavy):
@@ -175,13 +175,13 @@ drives no hardware at all).
      — if you press ENTER and say "Richard", you've just recorded the word "Richard" as a command, which
      is why you see `action=SAY`. Typing `r` only proves the wake→record→think→act *plumbing*, not the
      acoustic detection.
-   - **To actually say "hey jarvis" out loud and have it wake, run LIVE:** set `ROBOT_DRY_RUN=0`,
+   - **To actually say "hey Richard" out loud and have it wake, run LIVE:** set `ROBOT_DRY_RUN=0`,
      re-source (`set -a; source config/robot.env; set +a`), then `./scripts/run_me.sh --live` and say
-     **"hey jarvis"** — you should see `wake: 'hey_jarvis' detected (score=…)`. The model is already wired,
-     so there's nothing to point at. *(Unreliable? It's almost always **mic gain** (too quiet, or so loud
-     it clips) or the threshold — the brain logs a `best score`/`loudest` line every ~15 s to tune by;
-     full procedure in the [wake-word guide](opnewakeword/openwake-word.md). A missing/unloadable model
-     degrades to ENTER push-to-talk; `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the default.)*
+     **"hey Richard"** — you should see `wake: 'hey_richard' detected`. The model is already wired, so
+     there's nothing to point at. *(Prefer a different stock phrase first? Point `ROBOT_WAKEWORD_MODEL` at
+     any `.onnx` from `find brain/.venv -path "*openwakeword*" -name "*.onnx"`, e.g. a `hey_jarvis` model.
+     A missing/unloadable model means live has no trigger (the brain exits -- use --dry); `ROBOT_WAKEWORD_DEVICE` picks the
+     input if it's not the system default.)*
    - **Want a *different* or fully custom wake word** (a phrase you choose, in your own model)? That's a
      separate, one-time job done on a **PC or Google Colab — not the Pi** — that produces a small `.onnx`.
      Follow the beginner-friendly guide **[Training your own wake word](opnewakeword/openwake-word.md)** —

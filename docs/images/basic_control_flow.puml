@@ -41,7 +41,7 @@ skinparam rectangle {
 top to bottom direction
 
 ' ---------- 1. LISTEN (blue): the wake word comes first, THEN you speak ----------
-rectangle "Wake word \"Richard\"\n(or press ENTER over SSH)" as wake <<io>>
+rectangle "Wake word\n(\"hey jarvis\"; ENTER in --dry)" as wake <<io>>
 rectangle "You speak a command\n(\"go forward\" / \"find the sofa\")" as voice <<io>>
 rectangle "Speech to text" as stt <<model>>
 

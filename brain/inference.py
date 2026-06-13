@@ -2,7 +2,7 @@
 #
 # WHY THIS EXISTS: text-intent (main.query_ollama) and vision (vision._ollama_image) both POST
 # to the SAME Ollama server and historically the SAME model (gemma3:4b). They were serialised
-# only by accident -- the single-threaded push-to-talk loop happened never to overlap two calls.
+# only by accident -- the single-threaded command loop happened never to overlap two calls.
 # Add any second caller (an always-listening wake thread, a debug curl, a future async path) and
 # a slow vision call (tens of seconds to minutes) would queue the text request until it times out
 # and fail-safes to STOP. That is the software twin of the "warming the VLM grabs /dev/hailo0 and
@@ -51,6 +51,17 @@ def _keep_alive():
         return v               # '30m' / '1h' / '90s' -> duration string
 
 
+def _num_ctx():
+    """ROBOT_NUM_CTX caps Ollama's context window (KV cache). Gemma 4 defaults to 128K -- far more
+    than the robot's short prompts need, and a big KV cache is slow + RAM-hungry on the Pi. ~4096 is
+    plenty for the intent prompt AND a moondream image. 0 / '' / unset -> Ollama's default."""
+    try:
+        n = int(os.environ.get("ROBOT_NUM_CTX", "4096") or 0)
+    except ValueError:
+        return 0
+    return n if n > 0 else 0
+
+
 def _post(cfg, payload, timeout):
     """POST one /api/generate request under model_lock and return the parsed envelope dict.
     keep_alive is injected here so every path benefits. The lock spans only the HTTP call --
@@ -60,6 +71,11 @@ def _post(cfg, payload, timeout):
     ka = _keep_alive()
     if ka is not None:
         body["keep_alive"] = ka
+    nc = _num_ctx()
+    if nc:
+        opts = dict(body.get("options") or {})
+        opts.setdefault("num_ctx", nc)     # cap the KV cache; a caller's explicit num_ctx still wins
+        body["options"] = opts
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         cfg["ollama_url"], data=data, headers={"Content-Type": "application/json"})

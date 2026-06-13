@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
-# Push-to-talk -> whisper.cpp (STT) -> Ollama gemma3:4b (intent JSON) -> Piper (TTS),
+# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e2b-it-qat (intent JSON) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
@@ -46,7 +46,7 @@ def load_config():
     home = os.path.expanduser("~")
     return {
         "ollama_url": env("ROBOT_OLLAMA_URL", "http://localhost:11434/api/generate"),
-        "model": env("ROBOT_MODEL", "gemma3:4b"),
+        "model": env("ROBOT_MODEL", "gemma4:e2b-it-qat"),
         "whisper_bin": env("ROBOT_WHISPER_BIN", os.path.join(home, "whisper.cpp/build/bin/whisper-cli")),
         "whisper_model": env("ROBOT_WHISPER_MODEL", os.path.join(home, "whisper.cpp/models/ggml-base.en.bin")),
         "piper_bin": env("ROBOT_PIPER_BIN", os.path.join(home, "piper/piper/piper")),
@@ -55,7 +55,7 @@ def load_config():
         "record_secs": env("ROBOT_RECORD_SECS", "4"),
         "tmpdir": env("ROBOT_TMPDIR", "/dev/shm"),
         # Optional dedicated vision model (e.g. moondream). Empty -> vision shares cfg["model"]
-        # (gemma3:4b, multimodal), i.e. slower but works. See vision.py.
+        # (slower, and only if that model can see). Keep moondream set. See vision.py.
         "vision_model": env("ROBOT_VISION_MODEL", ""),
     }
 
@@ -120,17 +120,11 @@ def listen_and_transcribe(cfg):
 
 
 def wait_for_trigger(cfg, wake):
-    """Block until the operator starts a turn. Returns 'WAKE' | 'PTT' | 'QUIT'.
+    """Block until the operator starts a turn. Returns 'WAKE' | 'TALK' | 'QUIT'.
 
-    With the wake word disabled/unavailable this is byte-for-byte today's ENTER push-to-talk;
-    when enabled, the WakeWord listener also accepts ENTER/q over a TTY and runs headless without
-    one. Either way the wake word ONLY starts capture -- the autonomy trigger gate is separate."""
-    if wake is None or not wake.available:
-        try:
-            line = input("\n[ENTER]=talk  q=quit > ")
-        except EOFError:
-            return "QUIT"
-        return "QUIT" if line.strip().lower() == "q" else "PTT"
+    LIVE triggers ONLY on the wake word (+ 'q' to quit over SSH; headless needs no stdin). In --dry,
+    ENTER starts a turn and 'r' simulates a wake, for bench testing with no mic. The trigger ONLY
+    starts capture -- the EXPLORE/FIND autonomy gate is separate."""
     return wake.wait(audio_lock)
 
 
@@ -289,17 +283,28 @@ def main():
 
     driver.on_obstacle = on_obstacle
 
+    # LIVE needs a working wake word -- ENTER push-to-talk was removed from live (it survives only in
+    # --dry). With no usable trigger, refuse to start rather than sit there dead.
+    if not wake.dry_run and not wake.available:
+        print("Live mode has no trigger: the wake word didn't load and ENTER push-to-talk is --dry "
+              "only. Fix ROBOT_WAKEWORD_ENABLE/ROBOT_WAKEWORD_MODEL, or run with --dry.", file=sys.stderr)
+        for c in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
+            try:
+                c()
+            except Exception:
+                pass
+        return
+
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
     if getattr(driver, "hw_failed", False):
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
-    if wake.available:
-        # The wake word is whatever model is loaded (e.g. a stock 'hey jarvis' until you train
-        # a 'Richard' model) -- print the real one so the banner never lies about what to say.
-        print(f"Wake word ON: say '{getattr(wake, 'label', 'Richard')}' to wake me. "
-              "ENTER still works (over SSH); 'q' quits.")
+    if wake.dry_run:
+        print("Dry-run: press ENTER to talk, 'r' to simulate the wake word, 'q' to quit.")
     else:
-        print("Push-to-talk: press ENTER, speak after the prompt, then wait.")
+        # The wake word is whatever model is loaded (e.g. the stock 'hey jarvis') -- print the real
+        # label so the banner never lies about what to say.
+        print(f"Wake word ON: say '{getattr(wake, 'label', 'the wake word')}' to wake me. 'q' quits (over SSH).")
     print("Autonomy (look around / find X) only runs if you say an explore phrase.")
     print("During autonomy, Ctrl-C aborts back to the prompt; at the prompt, 'q' or Ctrl-C quits.")
 

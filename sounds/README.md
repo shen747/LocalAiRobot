@@ -25,6 +25,30 @@ the mic), per-category `ROBOT_SOUNDS_{GREETING,ACK,THINKING,ERROR}`, `ROBOT_THIN
 Format tip: use a sample rate the USB speaker supports natively (44100 or 48000 Hz) so `aplay`
 never has to resample. Keep `ack` clips well under a second; `thinking` clips short and loopable.
 
+## Generating the earcons (concise)
+
+Target format: **16-bit PCM mono WAV**, ideally 44100 Hz. `ack` < 1 s; `thinking` 1–3 s and loopable.
+
+1. **Spoken cues with Piper** (already installed at `~/piper/piper/piper`) — pipe text to a WAV:
+   ```bash
+   P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
+   echo "Got it"         | $P -f sounds/ack_sounds/got_it.wav
+   echo "Systems online" | $P -f sounds/greeting_sounds/online.wav
+   echo "Working on it"  | $P -f sounds/thinking_sounds/working.wav
+   echo "Uh oh"          | $P -f sounds/error_sounds/uh_oh.wav
+   ```
+   (Piper outputs 22050 Hz mono — fine, but run step 3 to match your speaker if `aplay` complains.)
+2. **Beeps/tones with sox** (`sudo apt install sox`):
+   ```bash
+   sox -n sounds/ack_sounds/blip.wav       synth 0.12 sine 880 fade 0 0.12 0.02   # short ack blip
+   sox -n sounds/thinking_sounds/think.wav synth 1.0  sine 440 gain -8            # loopable hum
+   ```
+3. **Normalize** any file to 16-bit mono 44100: `sox in.wav -r 44100 -c 1 -b 16 out.wav`
+4. **Test:** `aplay sounds/ack_sounds/blip.wav`, or `./scripts/run_me.sh --dry` (logs `SOUND -> <cue>`
+   instead of playing).
+
+A random file is picked from each folder, so drop in a few variants per category for variety.
+
 > These cues play through `aplay` under the same half-duplex `audio_lock` as Piper TTS, so a cue
 > can never garble speech or be recorded into a command. In dry-run (`ROBOT_DRY_RUN=1`) nothing is
 > played — each cue logs `SOUND -> <cue>` on the `robot.sound` logger instead.

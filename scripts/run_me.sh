@@ -94,13 +94,13 @@ MAIN="$REPO/brain/main.py"
 
 # DRY RUN -> foreground, interactive.
 if [ "$DRY" = 1 ]; then
-  echo ">> DRY RUN -- no hardware will be driven.   ENTER=talk · 'r'=simulate \"Richard\" · q=quit"
+  echo ">> DRY RUN -- no hardware will be driven.   ENTER=talk · 'r'=simulate wake · q=quit"
   exec env ROBOT_DRY_RUN=1 "$PY" "$MAIN"
 fi
 
 # LIVE, foreground (default) -> attached + interactive; Ctrl-C neutralises the motor on the way out.
 if [ "$detach" = 0 ]; then
-  echo ">> LIVE (foreground) -- REAL hardware.  ENTER=talk · 'r'=wake · q=quit · Ctrl-C=stop."
+  echo ">> LIVE (foreground) -- REAL hardware.  Say the wake word to talk · q=quit · Ctrl-C=stop."
   exec env ROBOT_DRY_RUN=0 "$PY" "$MAIN"
 fi
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Installs the fully-offline AI stack + Raspberry Pi 5 hardware deps for the RC crawler (arm64):
-# Ollama + gemma3:4b (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
+# Ollama + gemma4:e2b-it-qat (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
 # and the Python venv. Needs internet for THIS step only. Re-runnable.
 set -euo pipefail
 
-MODEL="${ROBOT_MODEL:-gemma3:4b}"
+MODEL="${ROBOT_MODEL:-gemma4:e2b-it-qat}"
 VISION_MODEL="${ROBOT_VISION_MODEL:-moondream}"
 WHISPER_MODEL="base.en"
 PIPER_REL="2023.11.14-2"      # check https://github.com/rhasspy/piper/releases
@@ -71,7 +71,7 @@ fi
 # openWakeWord wake-word models. Behaviour differs by version: 0.5+ DOWNLOAD the feature models via
 # utils.download_models(); 0.4.x (what installs on Python 3.13 / aarch64) BUNDLES them in the wheel.
 # So this is version-tolerant: download if we can, else confirm the bundled models exist. Non-fatal --
-# the wake word just degrades to ENTER push-to-talk if anything here is missing.
+# the wake word just won't load -- LIVE then has no trigger (ENTER works only in --dry).
 echo "   checking openWakeWord wake-word models..."
 ./.venv/bin/python - <<'PY' || echo "   (model check failed -- wake word degrades to ENTER; see docs/assembly.md step 8)"
 import glob, os, openwakeword
@@ -109,7 +109,7 @@ else
 fi
 
 echo ">> DONE -- the offline AI stack is installed:"
-echo "   Ollama + the gemma3:4b (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
+echo "   Ollama + the gemma4:e2b-it-qat (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
 echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
 echo
 echo "What to do next  (full, explained walkthrough: docs/assembly.md -> Phase 1, from step 5):"
@@ -125,12 +125,12 @@ echo "        - set ROBOT_MIC to your USB microphone (the doc shows how to find 
 echo "        - for the bench, set ROBOT_DRY_RUN=1   (nothing drives)"
 echo
 echo "   3. Check the AI brain answers, entirely on the Pi (no internet):"
-echo "        ollama run gemma3:4b \"reply with one word: ready\""
+echo "        ollama run gemma4:e2b-it-qat \"reply with one word: ready\""
 echo
 echo "   4. Dry-run the brain -- nothing moves, it just prints what it WOULD do:"
 echo "        ./scripts/run_me.sh --dry"
 echo
-echo "   The wake word is ON by default -- just say 'hey jarvis' (or press ENTER) to talk."
+echo "   The wake word is ON by default -- in live, say 'hey jarvis' to talk (ENTER works in --dry)."
 echo
 echo "   Inspect the robot's memory (taught people/things, recent sightings) any time:"
 echo "        ./scripts/rag.sh        (also: --seen | --all | --forget <name> | --query \"<SQL>\")"

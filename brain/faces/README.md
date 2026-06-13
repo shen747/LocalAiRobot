@@ -28,5 +28,24 @@ Tuning ([`config/robot.env`](../../config/robot.env)): `ROBOT_FACE_FPS` (default
 states; `talking` runs faster), `ROBOT_FACE_FRAMES_DIR` (defaults to this folder). Inspect rendered
 frames without a panel using `ROBOT_FACE_DUMP=<dir>` (writes `face_<state>.png` on each state change).
 
+## Generating the frames (concise)
+
+You only need PNGs sized to the panel (default **320×480 portrait**). Pick whichever is easiest:
+
+1. **AI image generator** (best for expressive art) — prompt per state, e.g.
+   *"robot face, `<happy/thinking/alarmed/…>` expression, glowing eyes, flat dark background, centered,
+   320×480 portrait, simple, high contrast."* Generate **2–4 variations per state** for animation, and
+   **reuse the same prompt + seed** so frames don't jump. Save as `<state>/01.png`, `02.png`, …
+2. **From a short clip/GIF** you already have:
+   `ffmpeg -i talk.mp4 -vf "fps=8,scale=320:480" brain/faces/talking/%02d.png`
+3. **Resize/pad any image** to the panel — ImageMagick:
+   `magick in.png -resize 320x480^ -gravity center -extent 320x480 out.png`
+   (or Pillow: `Image.open("in.png").resize((320,480)).save("out.png")`).
+4. **Preview without a panel:** `ROBOT_FACE_DUMP=/tmp/faces ./scripts/run_me.sh --dry`, drive through the
+   states, then open `/tmp/faces/face_<state>.png`.
+
+Start with one state (e.g. `talking/` with 3 frames) — every other state keeps its procedural look until
+you add art.
+
 > The 8 base moods plus `warmup`/`capturing` all have a built-in procedural look, so the robot is
 > expressive out of the box — these PNGs are just a nicer skin when you have the art.

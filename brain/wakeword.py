@@ -1,13 +1,12 @@
-# brain/wakeword.py -- optional "Richard" wake word (openWakeWord), in front of push-to-talk.
+# brain/wakeword.py -- the wake word (openWakeWord). LIVE trigger; ENTER survives only in --dry.
 #
 # Richard = Robotic Interactive Computing Hub Autonomous Response Device.
 #
-# Say "Richard" and the robot wakes -> main.py plays an ack earcon, sets the face to listening,
-# then runs the EXISTING 4s arecord + whisper command capture. This REPLACES, but does not
-# remove, the SSH ENTER push-to-talk: the CODE default is ROBOT_WAKEWORD_ENABLE=0 (plain ENTER),
-# though the shipped config/robot.env turns it ON. Even when enabled, ENTER/q still work over a
-# TTY. Crucially it also lets the robot run HEADLESS under scripts/robot.service / run_me.sh
-# --detach, where there is no usable stdin for ENTER at all.
+# Say the wake word and the robot wakes -> main.py plays an ack earcon, sets the face to listening,
+# then runs the EXISTING 4s arecord + whisper command capture. In LIVE mode the wake word is the
+# ONLY trigger (just 'q' quits over SSH); the old ENTER push-to-talk is GONE from live and survives
+# ONLY in --dry (bench testing with no mic). Headless (scripts/robot.service / run_me.sh --detach)
+# is wake-only by nature anyway -- there's no usable stdin there.
 #
 # The wake word ONLY starts capture. It is NOT the autonomy gate -- EXPLORE/FIND are still
 # demoted to DRIVE unless the raw transcript contains an explore phrase (main.is_explore_command).
@@ -23,10 +22,10 @@
 #     don't re-wake on the tail of the previous reply.
 #   - CPU guards from the reference: skip predict() below a silence floor, and (if the device
 #     can't do 16 kHz) the caller would resample -- here we just request 16 kHz directly.
-#   - Fail-safe: if openwakeword/sounddevice/the model are missing, available=False and main.py
-#     transparently uses ENTER PTT (mirrors camera.py/driver.py degrading to fakes).
-#   - Dry run: a fake detector lets the whole woken turn be bench-tested with NO mic
-#     (type 'r' to simulate "Richard", or set ROBOT_FAKE_WAKE=1 to auto-fire once).
+#   - Fail-safe: if openwakeword/sounddevice/the model are missing, available=False -- in LIVE that
+#     means no trigger, so main.py prints why and exits (use --dry, which never needs the model).
+#   - Dry run: a fake detector lets the whole turn be bench-tested with NO mic
+#     (ENTER=talk, 'r'=simulate the wake word, or ROBOT_FAKE_WAKE=1 to auto-fire once).
 #
 # NOTE: openWakeWord needs its feature models (melspectrogram/embedding). The pinned 0.4.0 wheel
 # BUNDLES them (and stock wake words) inside the package; 0.5+ would download them instead --
@@ -64,9 +63,9 @@ def _envi(key, default):
 
 
 class WakeWord:
-    """Optional always-listening wake-word trigger. wait() returns 'WAKE' | 'PTT' | 'QUIT'.
-    available is False unless enabled AND (dry-run, or the model + libs loaded) -- so the caller
-    can transparently fall back to ENTER push-to-talk."""
+    """Always-listening wake-word trigger. wait() returns 'WAKE' | 'TALK' | 'QUIT' ('TALK' is the
+    --dry ENTER only). available is False unless (dry-run) or (enabled AND model + libs loaded);
+    in live, not-available means no trigger and main.py exits (no ENTER fallback)."""
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -89,14 +88,17 @@ class WakeWord:
         dev = os.environ.get("ROBOT_WAKEWORD_DEVICE", "").strip()
         self._device = int(dev) if dev.isdigit() else (dev or None)
 
-        if not self.enabled:
-            log.info("wake word disabled (ROBOT_WAKEWORD_ENABLE=0) -- ENTER push-to-talk")
-            return
+        # Dry-run is ALWAYS interactive (bench testing with no mic): ENTER=talk, 'r'=simulate a wake,
+        # 'q'=quit. This is the ONLY place the ENTER trigger survives -- live mode is wake-word-only.
         if self.dry_run:
             self._fake = True
             self.available = True
-            log.info("wake word: DRY RUN (no mic). Type 'r' to simulate '%s'%s.",
+            log.info("wake word: DRY RUN (no mic). ENTER=talk, 'r'=simulate '%s'%s, q=quit.",
                      self._label, ", or ROBOT_FAKE_WAKE=1 to auto-fire once" if self._fake_auto else "")
+            return
+        if not self.enabled:
+            log.info("wake word disabled (ROBOT_WAKEWORD_ENABLE=0) -- live mode has NO trigger; "
+                     "enable it (and set ROBOT_WAKEWORD_MODEL), or run with --dry.")
             return
         # --- live: lazy-import so the module imports fine on a box without these deps ---
         try:
@@ -104,11 +106,11 @@ class WakeWord:
             import numpy         # noqa: F401
             from openwakeword.model import Model
         except Exception as e:
-            log.warning("wake word unavailable (import failed: %s) -- ENTER push-to-talk", e)
+            log.warning("wake word unavailable (import failed: %s) -- live mode has no trigger", e)
             return
         if not os.path.exists(model):
-            log.warning("wake word model not found: %s -- ENTER push-to-talk "
-                        "(set ROBOT_WAKEWORD_MODEL or train a 'Richard' model)", model)
+            log.warning("wake word model not found: %s -- live mode has no trigger "
+                        "(set ROBOT_WAKEWORD_MODEL, or run with --dry)", model)
             return
         # We install onnxruntime (NOT tflite-runtime -- it has no Python 3.13 / aarch64 wheel), and the
         # wake model is .onnx, so ask openWakeWord for the ONNX framework explicitly. Otherwise 0.4.x
@@ -136,13 +138,14 @@ class WakeWord:
                      model, self.threshold, self.trigger_level, self.cooldown_s,
                      self._device if self._device is not None else "default")
         else:
-            log.warning("wake word model load failed (%s) -- ENTER push-to-talk", last_err)
+            log.warning("wake word model load failed (%s) -- live mode has no trigger", last_err)
             self.available = False
 
     def wait(self, audio_lock):
-        """Block until the operator initiates a turn. Returns 'WAKE' | 'PTT' | 'QUIT'."""
+        """Block until the operator initiates a turn. Returns 'WAKE' | 'TALK' | 'QUIT'.
+        'TALK' comes ONLY from --dry's ENTER; live yields 'WAKE'/'QUIT' only."""
         if not self.available:
-            return self._ptt_fallback(sys.stdin.isatty())
+            return "QUIT"          # live with no wake word -> main.py exits before the loop; defensive
         if self._fake:
             return self._fake_wait()
         return self._listen(audio_lock)
@@ -193,15 +196,15 @@ class WakeWord:
                             if r:
                                 line = sys.stdin.readline()
                                 if line == "":
-                                    # EOF: the terminal went away (SSH logout under a detached
-                                    # run). select() would report readable forever -- if we
-                                    # treated it as ENTER we'd hot-loop recording ambient noise.
-                                    # Stop watching stdin; stay wake-word-only.
+                                    # EOF: the terminal went away (SSH logout under a detached run).
+                                    # select() would report readable forever -- stop watching stdin.
                                     log.info("wake: stdin closed -- continuing wake-word-only")
                                     watch_stdin = False
                                     continue
-                                result = "QUIT" if line.strip().lower() == "q" else "PTT"
-                                break
+                                if line.strip().lower() == "q":
+                                    result = "QUIT"      # 'q' still quits over SSH
+                                    break
+                                # any other key (incl. ENTER) is ignored: live is wake-word-only
                         data, _ = stream.read(chunk)
                         audio = np.frombuffer(data, dtype=np.int16)
                         if audio.ndim > 1:
@@ -238,8 +241,8 @@ class WakeWord:
                             best_amp = 0
                             next_report = time.time() + 15.0
         except Exception as e:
-            log.warning("wake listen failed (%s) -- falling back to ENTER push-to-talk", e)
-            return self._ptt_fallback(watch_stdin)
+            log.warning("wake listen failed (%s) -- live has no ENTER fallback, stopping.", e)
+            return "QUIT"
         time.sleep(0.2)   # let PortAudio/ALSA release the mic before arecord grabs it
         return result
 
@@ -288,15 +291,4 @@ class WakeWord:
         if s in ("r", "richard", self._label.lower()):
             log.info("wake (FAKE): simulated '%s'", self._label)
             return "WAKE"
-        return "PTT"
-
-    def _ptt_fallback(self, watch_stdin):
-        if watch_stdin:
-            try:
-                line = input("\n[ENTER]=talk  q=quit > ")
-            except EOFError:
-                return "QUIT"
-            return "QUIT" if line.strip().lower() == "q" else "PTT"
-        # No TTY and no working wake stream: avoid a tight loop, then cycle a capture.
-        time.sleep(1.0)
-        return "PTT"
+        return "TALK"      # plain ENTER in --dry -> start a command capture (bench testing)
