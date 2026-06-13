@@ -1,0 +1,7 @@
+# This folder is local scratch for training a wake word (see ../../docs/opnewakeword/openwake-word.md):
+# a Python 3.10 venv, the downloaded openWakeWord notebook, ~20 GB of audio downloads, and the
+# intermediate clips/features. NONE of it belongs in git -- the only artifact you keep is the trained
+# .onnx, which you copy out to ../../models/. So ignore everything here except this file and the README.
+*
+!.gitignore
+!README.md

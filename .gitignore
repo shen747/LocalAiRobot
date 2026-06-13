@@ -12,6 +12,9 @@ __pycache__/
 *.onnx
 *.onnx.json
 *.gguf
+# ...EXCEPTION: the small (~200 KB) wake-word model(s) in models/ ARE committed -- they're the robot's
+# default "hey richard" wake word (see models/README.md). Everything else .onnx stays ignored.
+!models/*.onnx
 
 # Local env override (config/robot.env IS committed as a template)
 .env

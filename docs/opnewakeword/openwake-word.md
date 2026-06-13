@@ -123,9 +123,12 @@ Now jump to **"Put it on your robot"** below.
 > On Windows, do everything inside **WSL**: open a terminal and type `wsl`. Ubuntu **22.04** already has
 > Python 3.10; Ubuntu **24.04** needs the extra "deadsnakes" step shown below.
 
-1. **Make a workspace and get Python 3.10** (the notebook needs exactly this version):
+1. **Work inside the repo, and get Python 3.10** (the notebook needs exactly this version). The repo
+   ships a **gitignored scratch folder — `tools/wakeword-training/`** — for exactly this, so the trained
+   model ends up one `cp` from `models/` (no separate `~/oww`, no `scp` to the Pi). From your repo clone
+   on the training PC/WSL:
    ```bash
-   mkdir -p ~/oww && cd ~/oww
+   cd ~/LocalAiRobot/tools/wakeword-training     # (adjust if you cloned the repo elsewhere)
    # On Ubuntu 24.04 only (skip on 22.04): add Python 3.10
    sudo apt install -y software-properties-common
    sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt update
@@ -144,8 +147,9 @@ Now jump to **"Put it on your robot"** below.
    ```
    Copy the printed `http://localhost:8888/...?token=...` link into your browser. (If you typed plain
    `localhost:8888` and it asks for a token, copy the long value after `token=` from the terminal into the
-   box.) *(Closed the terminal and come back later? Re-activate first: `cd ~/oww && source venv/bin/activate`,
-   then `jupyter notebook --no-browser` again — otherwise you'll be using the wrong Python.)*
+   box.) *(Closed the terminal and come back later? Re-activate first:
+   `cd ~/LocalAiRobot/tools/wakeword-training && source venv/bin/activate`, then
+   `jupyter notebook --no-browser` again — otherwise you'll be using the wrong Python.)*
 4. **Open** `automatic_model_training.ipynb`. Run cells **one at a time, top to bottom** with
    **Shift+Enter**, letting each finish (`[*]` → a number) before the next. **Don't use Run → Run All** —
    you must edit the config cell first (Step 5) and you skip the last cell (Step 6). The first cell
@@ -168,12 +172,15 @@ Now jump to **"Put it on your robot"** below.
    **harmless**; only a red `Traceback` matters. Keep the machine **awake** (it's the long part). **Skip
    the very last cell** (`convert_onnx_to_tflite`) — it's a Colab-only retry hack; the train step already
    saved the `.onnx`, which is all the robot needs.
-7. When training fully finishes, the model lands at **`~/oww/my_custom_model/hey_richard.onnx`** (a
-   **file**). *Heads-up: the `my_custom_model/hey_richard/` **folder** beside it is just the intermediate
+7. When training fully finishes, the model lands at
+   **`tools/wakeword-training/my_custom_model/hey_richard.onnx`** (a **file**, already inside your repo
+   clone). *Heads-up: the `my_custom_model/hey_richard/` **folder** beside it is just the intermediate
    clips + features — that is **not** the model; the `.onnx` only appears once `--train_model` completes
-   all its sequences.* Confirm the real path with `find ~/oww/my_custom_model -name "*.onnx"`. Everything
-   the notebook made is under `~/oww` — browse it from Windows with `explorer.exe .` (run from `~/oww`) or
-   `\\wsl$\Ubuntu\home\<you>\oww`. **Once the `.onnx` is on the Pi, `rm -rf ~/oww` reclaims the ~20 GB.**
+   all its sequences.* Confirm with `find my_custom_model -name "*.onnx"` (from the workspace). Browse it
+   from Windows with `explorer.exe .` (run from the workspace) or
+   `\\wsl$\Ubuntu\home\<you>\LocalAiRobot\tools\wakeword-training`. **After you copy the `.onnx` to
+   `models/` (next section), reclaim the ~20 GB: from the repo root, `git clean -dfx tools/wakeword-training`
+   (keeps the tracked README/.gitignore).**
 
 > 🔧 **Common errors — a too-new package vs the notebook's old pins.** The notebook pins old library
 > versions, and pip pairs them with *newer* core packages that break them. You'll see one of:
@@ -232,7 +239,7 @@ Now jump to **"Put it on your robot"** below.
 > tries to also make a `.tflite`, and that conversion fails on this aged stack (a protobuf
 > incompatibility). **Ignore it.** Just above the traceback you'll see
 > `Saving ONNX mode as '…/my_custom_model/hey_richard.onnx'` — that succeeded. Confirm with
-> `ls -la ~/oww/my_custom_model/hey_richard.onnx`; the robot only needs the `.onnx`. *(Low **Recall** in
+> `ls -la my_custom_model/hey_richard.onnx` (from the workspace); the robot only needs the `.onnx`. *(Low **Recall** in
 > the final metrics? The model works but is a baseline — lower `ROBOT_WAKEWORD_THRESHOLD` on the Pi, or
 > retrain with `n_samples=5000` / more steps.)*
 
@@ -240,27 +247,36 @@ Now jump to **"Put it on your robot"** below.
 
 ## Put it on your robot
 
-The model is on the machine you **trained** on; the robot is the **Pi** — so this is **two machines**.
-Replace `ramesh` / the hostname with yours.
+The model is on the machine you **trained** on; the robot is the **Pi**. The robot already points
+`ROBOT_WAKEWORD_MODEL` at **`models/hey_richard.onnx`** in the repo, so deploying is just dropping your new
+model there. Two ways — pick one. (Replace `ramesh` / the IP with yours.)
 
-**On your PC / WSL** (where `hey_richard.onnx` lives) — push it to the Pi **by IP** (WSL2 usually can't
-resolve `.local` mDNS names). First get the Pi's IP **on the Pi**: `hostname -I` (e.g. `192.168.68.122`).
-Then, on your PC/WSL:
+**Option A — commit it to the repo (recommended; it becomes the default).** Because you trained **inside
+the repo** (Path B), the model is already in your clone — copy it onto the shipped default and commit; the
+Pi picks it up on `git pull`, no config edit. From the **repo root** on your training PC:
+```bash
+cp tools/wakeword-training/my_custom_model/hey_richard.onnx models/hey_richard.onnx
+git add models/hey_richard.onnx && git commit -m "Update hey_richard wake model" && git push
+```
+*(Trained in Colab / Path A instead? Copy your downloaded file in: `cp ~/Downloads/hey_richard.onnx models/`.)*
+Then on the Pi:
+```bash
+cd ~/LocalAiRobot && git pull && ./scripts/run_me.sh --live
+```
+*(A wake `.onnx` is ~200 KB — committed via the `!models/*.onnx` exception in `.gitignore` (`*.onnx` is
+ignored everywhere else), and `.gitattributes` marks it `binary` so it isn't line-ending-mangled. To ship
+it under a different name, copy it as e.g. `models/hey_ramesh.onnx` and point `ROBOT_WAKEWORD_MODEL` there.)*
+
+**Option B — scp it (quick test, no commit).** Copy straight onto the Pi's already-wired path **by IP**
+(WSL2 usually can't resolve `.local` mDNS names). Get the Pi's IP on the Pi with `hostname -I`
+(e.g. `192.168.68.122`), then from the repo root on your PC/WSL:
 ```bash
 PI=192.168.68.122      # ← your Pi's IP from `hostname -I`
-ssh ramesh@$PI "mkdir -p ~/openwakeword"
-scp ~/oww/my_custom_model/hey_richard.onnx ramesh@$PI:~/openwakeword/
+scp tools/wakeword-training/my_custom_model/hey_richard.onnx ramesh@$PI:~/LocalAiRobot/models/hey_richard.onnx
 ```
-*(If `ramesh@LocalAiRobot-Richard.local` happens to resolve on your network, you can use that instead of
-the IP — but from WSL the IP is the safe bet.)*
+It lands on the default path, so there's no config to edit — on the Pi just `./scripts/run_me.sh --live`.
 
-**On the Pi** — point the config at the new model and test:
-```bash
-sed -i 's|^ROBOT_WAKEWORD_MODEL=.*|ROBOT_WAKEWORD_MODEL=/home/ramesh/openwakeword/hey_richard.onnx|' config/robot.env
-grep ROBOT_WAKEWORD_MODEL config/robot.env     # verify the path changed
-./scripts/run_me.sh --live
-```
-Say **"hey Richard"** → you should see `wake: 'hey_richard' detected (score=…)` in the log.
+**Test it.** Say **"hey Richard"** → you should see `wake: 'hey_richard' detected (score=…)` in the log.
 
 **If it misbehaves** (edit `config/robot.env`, then re-run `--live`):
 - Doesn't hear you → lower `ROBOT_WAKEWORD_THRESHOLD` (e.g. `0.4`, or `0.3` for a low-recall baseline), or speak closer.
@@ -268,8 +284,9 @@ Say **"hey Richard"** → you should see `wake: 'hey_richard' detected (score=�
 - Wrong microphone → set `ROBOT_WAKEWORD_DEVICE` to your mic's index, found with
   `brain/.venv/bin/python -c "import sounddevice as sd; print(sd.query_devices())"`.
 
-**Swapping models later** is just that one `ROBOT_WAKEWORD_MODEL` line — `scp` another `.onnx` into
-`~/openwakeword/` and re-point the line (several can live there side by side). The robot code never changes.
+**Swapping models later:** drop another `.onnx` in `models/` and re-point that one `ROBOT_WAKEWORD_MODEL`
+line (several can live there side by side); overwrite `hey_richard.onnx` to change the default. The robot
+code never changes.
 
 ---
 
@@ -283,6 +300,19 @@ Say **"hey Richard"** → you should see `wake: 'hey_richard' detected (score=�
 > 2. **First config cell** (`config = yaml.load(...)`) — re-defines `config` *(skip it → `NameError: name 'config' is not defined`)*.
 > 3. **Your edited config cell** (the `config["target_phrase"]`/`n_samples`/… one) — rewrites `my_model.yaml`.
 > 4. **Step 1 → 2 → 3** (generate → augment → train).
+
+> ⏭️ **On a re-run, Step 2 prints `Openwakeword features already exist, skipping data augmentation and
+> feature generation`.** Not an error — but a trap: the augment step found the **feature files from your
+> *previous* run** and skipped, so training would silently reuse the **old** clips and ignore the 30k you
+> just regenerated. Force it to rebuild them by adding **`--overwrite`** to the Step 2 cell:
+> ```python
+> !{sys.executable} openwakeword/openwakeword/train.py --training_config my_model.yaml --augment_clips --overwrite
+> ```
+> Re-run it — instead of the skip line you'll now see `Computing openwakeword features for generated
+> samples` and a `Computing features: …%` progress bar (~1875 steps, a few minutes), under the usual wall
+> of harmless `FutureWarning … output_type` / `float64 → float32` warnings. When it reaches 100%, run Step 3.
+> *(`--overwrite` only rebuilds the four `my_custom_model/<phrase>/*_features_*.npy` files from your new
+> clips — it does **not** re-download or touch the ~16 GB background-features file.)*
 
 **Why is my accuracy only ~70%, and how do I beat 90%?** The notebook ships **demo settings** built for
 speed, not quality: `n_samples = 1000`, `steps = 10000`, and lowered targets. **Overwrite** those values

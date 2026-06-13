@@ -148,7 +148,7 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word; `0` = ENTER push-to-talk only. |
-| `ROBOT_WAKEWORD_MODEL` | `~/openwakeword/richard.onnx` | Path to the wake `.onnx`. Missing/unloadable → degrades to ENTER. (Use a stock model to start; train "Richard" later.) |
+| `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_richard.onnx` | Path to the wake `.onnx`. The default **ships in the repo** (`models/`), so live wake works on a fresh clone. Missing/unloadable → degrades to ENTER. Train or swap your own: [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
 | `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |

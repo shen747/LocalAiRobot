@@ -163,8 +163,10 @@ drives no hardware at all).
    Want to see the safety features fire? Re-edit `robot.env`, re-run the `source` line, then re-launch:
    - `ROBOT_FAKE_DISTANCE_CM=20` → say "go forward" → the forward obstacle gate trips in the log.
    - `ROBOT_FAKE_VISION=sofa:left:near:0.9` → say "find the sofa" → the whole explore loop runs, no camera.
-8. **Wake-word check — read this carefully; the mode matters.** The "Richard" wake word is **on by
-   default**, but *how* you test it depends on dry-run vs live:
+8. **Wake-word check — read this carefully; the mode matters.** The **"hey Richard"** wake word is **on
+   by default**, and a ready-made **`models/hey_richard.onnx`** ships in the repo, already wired as
+   `ROBOT_WAKEWORD_MODEL` in `config/robot.env` — so live wake works on a fresh clone, nothing to train or
+   download. *How* you test it depends on dry-run vs live:
    - **In dry-run (where step 7 left you) the wake word is *simulated* — there is no live mic for it.**
      The log even says so: `wake word: DRY RUN (no mic). Type 'r' to simulate 'richard'.` So at the
      `[dry-run: no live mic] type r=simulate wake …` prompt, **type the letter `r` then ENTER** to fire a
@@ -172,22 +174,19 @@ drives no hardware at all).
      — if you press ENTER and say "Richard", you've just recorded the word "Richard" as a command, which
      is why you see `action=SAY`. Typing `r` only proves the wake→record→think→act *plumbing*, not the
      acoustic detection.
-   - **To actually say "Richard" out loud and have it wake, you need LIVE mode + a real wake model:**
-     1. **Get a wake `.onnx`.** There is **no "Richard" model to download** — it's custom-trained. Until
-        you train one, use a stock keyword model to prove the pipeline:
-        `find brain/.venv -path "*openwakeword*" -name "*.onnx"` lists what the installer fetched
-        (re-fetch if empty: `brain/.venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"`).
-     2. In `config/robot.env` set `ROBOT_WAKEWORD_MODEL` to that file's **full path** (e.g. a `hey_jarvis`
-        model) and `ROBOT_DRY_RUN=0`.
-     3. Run **live**: `./scripts/run_me.sh --live`, then say that wake word out loud — you should see
-        `wake: '…' detected`. (A missing/unloadable model just degrades to ENTER push-to-talk;
-        `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the system default.)
-   - **Want your own wake word to activate the robot** (e.g. a real *"Richard"* instead of a stock
-     phrase)? That's a separate, one-time job done on a **PC or Google Colab — not the Pi** — that
-     produces a small `.onnx` you copy over. Follow the beginner-friendly guide
-     **[Training your own wake word](opnewakeword/openwake-word.md)** — it explains the tools it uses
-     (the openWakeWord library, the Jupyter notebook app, what "cells" are and how to run them) from
-     scratch, so no prior experience is needed.
+   - **To actually say "hey Richard" out loud and have it wake, run LIVE:** set `ROBOT_DRY_RUN=0`,
+     re-source (`set -a; source config/robot.env; set +a`), then `./scripts/run_me.sh --live` and say
+     **"hey Richard"** — you should see `wake: 'hey_richard' detected`. The model is already wired, so
+     there's nothing to point at. *(Prefer a different stock phrase first? Point `ROBOT_WAKEWORD_MODEL` at
+     any `.onnx` from `find brain/.venv -path "*openwakeword*" -name "*.onnx"`, e.g. a `hey_jarvis` model.
+     A missing/unloadable model just degrades to ENTER push-to-talk; `ROBOT_WAKEWORD_DEVICE` picks the
+     input if it's not the system default.)*
+   - **Want a *different* or fully custom wake word** (a phrase you choose, in your own model)? That's a
+     separate, one-time job done on a **PC or Google Colab — not the Pi** — that produces a small `.onnx`.
+     Follow the beginner-friendly guide **[Training your own wake word](opnewakeword/openwake-word.md)** —
+     it explains the tools it uses (openWakeWord, the Jupyter notebook app, what "cells" are and how to run
+     them) from scratch. Then drop the new `.onnx` in `models/` and point `ROBOT_WAKEWORD_MODEL` at it (or
+     overwrite `hey_richard.onnx` to keep it the default).
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on

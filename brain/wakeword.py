@@ -31,8 +31,9 @@
 # NOTE: openWakeWord needs its feature models (melspectrogram/embedding). The pinned 0.4.0 wheel
 # BUNDLES them (and stock wake words) inside the package; 0.5+ would download them instead --
 # install_stack.sh handles either. The "Richard" model itself is a small keyword classifier you
-# train separately (NOT TTS voice cloning); until then, point ROBOT_WAKEWORD_MODEL at a bundled
-# stock model (find brain/.venv -path "*openwakeword*" -name "*.onnx") to prove the pipeline.
+# train separately (NOT TTS voice cloning). A ready-made one ships at models/hey_richard.onnx (the
+# ROBOT_WAKEWORD_MODEL default); swap it, or point at a bundled stock model
+# (find brain/.venv -path "*openwakeword*" -name "*.onnx"). See docs/opnewakeword/.
 
 import logging
 import os
@@ -81,7 +82,7 @@ class WakeWord:
         self.cooldown_s = _envf("ROBOT_WAKEWORD_COOLDOWN_S", 2.0)
 
         model = os.path.expanduser(
-            os.environ.get("ROBOT_WAKEWORD_MODEL", "~/openwakeword/richard.onnx"))
+            os.environ.get("ROBOT_WAKEWORD_MODEL", "~/LocalAiRobot/models/hey_richard.onnx"))
         self._model_path = model
         self._label = os.path.splitext(os.path.basename(model))[0] or "wake word"
         self.label = self._label.replace("_", " ")   # what to SAY (main.py banner); from the model file
