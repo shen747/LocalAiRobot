@@ -32,7 +32,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | `ROBOT_WHISPER_MODEL` | `/home/YOUR_USER/whisper.cpp/models/ggml-base.en.bin` | Whisper GGML model file. |
 | `ROBOT_PIPER_BIN` | `/home/YOUR_USER/piper/piper/piper` | Path to the Piper TTS binary. |
 | `ROBOT_PIPER_VOICE` | `/home/YOUR_USER/piper/en_US-lessac-medium.onnx` | Piper voice model. |
-| `ROBOT_MIC` | `plughw:1,0` | ALSA capture device for command recording, `plughw:CARD,DEVICE` (find with `arecord -l`). `plughw` auto-resamples to 16 kHz. |
+| `ROBOT_MIC` | `plughw:1,0` | ALSA capture device for command recording (find with `arecord -l`); `plughw` auto-resamples to 16 kHz. Card **numbers shift** when you add USB audio — pin by name: `plughw:CARD=<id>,DEV=0`. |
 | `ROBOT_RECORD_SECS` | `4` | Seconds of audio captured per command after a wake/ENTER. |
 | `ROBOT_TMPDIR` | `/dev/shm` | Scratch dir for the per-turn WAV/JPEG (RAM-backed = fast, no SD wear). |
 
@@ -156,7 +156,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 | `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. Stock models score high (use `0.5`); a weak custom model may need `0.3`–`0.15` (watch the `best score` log line). |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |
-| `ROBOT_WAKEWORD_DEVICE` | *(empty)* | PortAudio input device index/name; empty = system default input. |
+| `ROBOT_WAKEWORD_DEVICE` | *(empty)* | The **wake mic** (PortAudio): an index, or a unique substring of the mic's name (e.g. `PnP`) — by-name survives card renumbering. Empty = default input. |
 | `ROBOT_FAKE_WAKE` | `0` | Dry-run: `1` auto-fires the wake once; else type `r` at the prompt to simulate it. |
 
 ## Audio cues / earcons
@@ -167,7 +167,7 @@ WAV folder layout + format tips: [`sounds/README.md`](../sounds/README.md).
 |---|---|---|
 | `ROBOT_SOUNDS_ENABLE` | `1` | Master switch for ack/greeting/thinking/error earcons. |
 | `ROBOT_SOUNDS_DIR` | *(empty → `<repo>/sounds`)* | Root holding the `*_sounds/` folders. |
-| `ROBOT_SOUNDS_DEVICE` | *(empty)* | USB **speaker** ALSA card for `aplay -D` (e.g. `plughw:2,0`); separate from the mic. Empty = default. |
+| `ROBOT_SOUNDS_DEVICE` | *(empty)* | **Earcons only** — the **voice** (Piper) uses the ALSA *default*, so route that via `~/.asoundrc`. USB speaker by name: `plughw:CARD=<id>,DEV=0`. Empty = default. |
 | `ROBOT_SOUNDS_GREETING` | `1` | Play once on boot/arm (audible "stack is up" — vital headless). |
 | `ROBOT_SOUNDS_ACK` | `1` | Short blip on wake / command accepted. |
 | `ROBOT_SOUNDS_THINKING` | `1` | Looped tone **while** the model runs (proof-of-life on slow vision). |

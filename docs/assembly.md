@@ -36,6 +36,10 @@ Phase 7 connects the ESC (Electronic Speed Controller).
 > - **SSH** — Secure Shell: how you log into the Pi remotely from your laptop's terminal.
 > - **LiPo** — Lithium-Polymer, the motor battery. **TTS / STT** — text-to-speech (Piper) / speech-to-text (whisper.cpp).
 > - **VLM** — Vision-Language Model: the model (moondream) that reads the camera frames.
+> - **ALSA** — Advanced Linux Sound Architecture: the Linux audio subsystem every program uses to reach the
+>   sound hardware. It's why audio devices are numbered "cards" (`card 2`), addressed as `plughw:CARD=…`, and
+>   what `aplay`/`arecord`/`amixer`/`alsactl`/`~/.asoundrc` all belong to. On Pi OS Lite (no desktop sound
+>   server) it's the *whole* audio stack — apps talk straight to it.
 
 ---
 
@@ -144,10 +148,9 @@ drives no hardware at all).
    ```
    The bar should jump right as you speak (a low % like `06%` = speak louder / closer). The trailing
    `/tmp/test.wav` is the output file — don't drop it, or `arecord` dumps raw audio to your screen.
-   **No sound on playback?** `aplay` uses the *default* output — list outputs
-   with `aplay -l`, play straight to your real speaker with `aplay -D plughw:CARD,0 /tmp/test.wav`, then
-   make it the default in `~/.asoundrc` (`defaults.pcm.card CARD` + `defaults.ctl.card CARD`); the robot's
-   voice uses this default too. **`arecord` errored or the file is silent?** That's the mic — fix
+   **No sound on playback?** `aplay` uses the *default* ALSA output, and the robot's **voice depends on
+   that default** — see the 🔊 callout at the end of this phase to point it at your USB speaker (and dodge
+   the card-renumbering trap). **`arecord` errored or the file is silent?** That's the mic — fix
    `ROBOT_MIC`. Once you hear yourself back, start the brain in dry-run:
    ```bash
    ./scripts/run_me.sh --dry
@@ -169,19 +172,18 @@ drives no hardware at all).
    retrain to be dependable. Either way live wake works on a fresh clone, nothing to train or download.
    *How* you test it depends on dry-run vs live:
    - **In dry-run (where step 7 left you) the wake word is *simulated* — there is no live mic for it.**
-     The log even says so: `wake word: DRY RUN (no mic). Type 'r' to simulate 'richard'.` So at the
+     The log even says so: `wake word: DRY RUN (no mic). ENTER=talk, 'r'=simulate 'hey jarvis', q=quit.` So at the
      `[dry-run: no live mic] type r=simulate wake …` prompt, **type the letter `r` then ENTER** to fire a
      wake (it acks, then records your spoken *command*). **Speaking "Richard" out loud here does nothing**
      — if you press ENTER and say "Richard", you've just recorded the word "Richard" as a command, which
      is why you see `action=SAY`. Typing `r` only proves the wake→record→think→act *plumbing*, not the
      acoustic detection.
-   - **To actually say "hey Richard" out loud and have it wake, run LIVE:** set `ROBOT_DRY_RUN=0`,
+   - **To actually say "hey jarvis" out loud and have it wake, run LIVE:** set `ROBOT_DRY_RUN=0`,
      re-source (`set -a; source config/robot.env; set +a`), then `./scripts/run_me.sh --live` and say
-     **"hey Richard"** — you should see `wake: 'hey_richard' detected`. The model is already wired, so
-     there's nothing to point at. *(Prefer a different stock phrase first? Point `ROBOT_WAKEWORD_MODEL` at
-     any `.onnx` from `find brain/.venv -path "*openwakeword*" -name "*.onnx"`, e.g. a `hey_jarvis` model.
-     A missing/unloadable model means live has no trigger (the brain exits -- use --dry); `ROBOT_WAKEWORD_DEVICE` picks the
-     input if it's not the system default.)*
+     **"hey jarvis"** — you should see `wake: 'hey_jarvis' detected (score=…)`. The model is already
+     wired, so there's nothing to point at. *(Unreliable? It's almost always **mic gain** or the threshold
+     — see the tuning bullet below. A missing/unloadable model means live has no trigger (the brain exits
+     — use `--dry`); `ROBOT_WAKEWORD_DEVICE` picks the input if it's not the default.)*
    - **Want a *different* or fully custom wake word** (a phrase you choose, in your own model)? That's a
      separate, one-time job done on a **PC or Google Colab — not the Pi** — that produces a small `.onnx`.
      Follow the beginner-friendly guide **[Training your own wake word](opnewakeword/openwake-word.md)** —
@@ -196,6 +198,37 @@ drives no hardware at all).
    - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
      (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
      (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
+
+> 🔊 **Audio devices — and the card-numbering trap.** Four things route audio, and **plugging in a USB
+> speaker renumbers the ALSA cards** (they also shuffle on reboot) — so address everything **by name**,
+> not by card number:
+> - **Voice (Piper TTS)** → the **ALSA default** output (no per-device knob in the code). To hear the voice
+>   on a USB speaker, that speaker must be the **default** (`~/.asoundrc`, below).
+> - **Earcons** → `ROBOT_SOUNDS_DEVICE` (empty = the default too).
+> - **Command capture** → `ROBOT_MIC` (arecord).  •  **Wake-word mic** → `ROBOT_WAKEWORD_DEVICE` (PortAudio
+>   — the *same* mic, addressed a second way).
+>
+> Get the ids from `aplay -l` / `arecord -l` (the word after `card N:`), then set up once. **`~/.asoundrc`
+> is ALSA's per-user config file** — the block below defines the system **`default`** audio device, which is
+> what every program (including the robot's `aplay`) plays to when not told otherwise; that's how the
+> voice reaches your USB speaker.
+> ```bash
+> SPK=UACDemoV10                 # speaker id (aplay -l);  mic id (arecord -l), e.g. 'Device'
+> cat > ~/.asoundrc <<EOF        # speaker = default -> the VOICE comes out it
+> pcm.!default { type plug; slave.pcm "hw:CARD=$SPK,DEV=0" }
+> ctl.!default { type hw; card $SPK }
+> EOF
+> amixer -c "$SPK" sset PCM 80% && sudo alsactl store    # volume + persist (USB audio resets on reboot)
+> ```
+> Then in `config/robot.env`, all **by name** so a reboot/replug never breaks them:
+> ```
+> ROBOT_MIC=plughw:CARD=<mic-id>,DEV=0                            # command capture
+> ROBOT_WAKEWORD_DEVICE=<unique bit of the mic name, e.g. PnP>    # wake mic (sounddevice name-match)
+> ROBOT_SOUNDS_DEVICE=plughw:CARD=$SPK,DEV=0                      # earcons
+> ```
+> Test: `speaker-test -D "plughw:CARD=$SPK,DEV=0" -t wav -l 1`, then `aplay /tmp/test.wav` (via the
+> default) should hit the speaker too. The half-duplex `audio_lock` already stops the mic recording the
+> speaker's own output, so a plain mic + speaker pair is fine.
 
 > 💬 **It also chats and remembers (works in dry-run too).** Beyond driving: ask a question or say
 > hello → it just **answers in words** and stays put (`SAY`). Say *"this is my wife Shani"* → it
@@ -295,8 +328,9 @@ aren't swapped; the brain itself only logs the **front** beam (on a gate trip).
 
 ## Phase 5 — Wire the camera (Pi Camera V2 NoIR, IMX219)
 
-Visual input for the multimodal `gemma3:4b`. It is on the **CSI ribbon**, not GPIO/I2C, so it doesn't
-conflict with anything else.
+Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text
+brain `gemma4:e2b-it-qat` is multimodal too and can take over if you empty that var). It is on the **CSI
+ribbon**, not GPIO/I2C, so it doesn't conflict with anything else.
 
 - ⚠️ **The Pi 5 needs the adapter cable.** The Pi 5 CSI/DSI ports are the narrow **22-pin, 0.5 mm**
   type; the Camera V2 ships with a **15-pin, 1 mm** cable that **will not fit**. Get a **22-way-to-15-way
@@ -484,17 +518,17 @@ chmod +x scripts/*.sh
 
 | Command | What it does |
 |---|---|
-| `./scripts/run_me.sh` | **The launcher.** Mode from `ROBOT_DRY_RUN` in `config/robot.env` (override with `--dry` / `--live`). Runs in the **foreground**, interactive: ENTER = talk, `r` = simulate "Richard", `q` = quit, **Ctrl-C = stop** (neutralises the motor). `--dry` drives nothing; `--live` uses real hardware. Use this for bench + calibration. |
-| `./scripts/run_me.sh --detach` | Run **live in the background** (survives SSH logout), listening for "Richard". For running untethered *without* the boot service. Stop it with `shutdown.sh`. |
+| `./scripts/run_me.sh` | **The launcher.** Mode from `ROBOT_DRY_RUN` (override with `--dry` / `--live`). Runs in the **foreground**, interactive: **`q` = quit**, **Ctrl-C = stop** (neutralises the motor). In **`--live`** the **wake word is the only trigger**; in **`--dry`** ENTER = talk and `r` = simulate a wake (bench testing, no mic). `--dry` drives nothing; `--live` uses real hardware. |
+| `./scripts/run_me.sh --detach` | Run **live in the background** (survives SSH logout), listening for the wake word. For running untethered *without* the boot service. Stop it with `shutdown.sh`. |
 | `./scripts/run_me.sh --reload` | **Re-apply an edited `config/robot.env`** to a running robot — restarts the boot service if installed, else the `--detach` instance. |
 | `./scripts/shutdown.sh` | **Stop** a detached brain (SIGINT first → neutralises the motor). The Pi stays on; add **`--poweroff`** to also halt the Pi (your SSH session drops). (Foreground run? just Ctrl-C. Boot service? `sudo systemctl stop robot.service`.) |
 | `tail -f ~/.localairobot/robot.log` | Watch a **detached** brain's output (PID in `~/.localairobot/robot.pid`). |
 
 > 🔴 **On real wheels:** keep the **physical kill switch in reach** and bench everything with `--dry`
-> first. The headless modes (`--detach` / the boot service) have no terminal, so the **wake word is
-> the only way to trigger them** — with no working wake model the brain simply exits at startup
-> (set the wake word up in Phase 1 step 8). Foreground `--live` is safer for first runs — ENTER
-> gates each command.
+> first. **Live is wake-word-only** (ENTER works only in `--dry`); with no working wake model the brain
+> exits at startup (set the wake word up in Phase 1 step 8) — this is true for foreground `--live` *and*
+> the headless modes (`--detach` / the boot service), which have no terminal anyway. For first live runs,
+> foreground `--live` is safest: you watch every command in the log and `q`/Ctrl-C stops instantly.
 
 **Auto-loading the config.** `install_stack.sh` already adds a line to `~/.bashrc` so every new SSH
 session loads `config/robot.env` for you (and `run_me.sh`/`shutdown.sh` source it themselves). To re-add
