@@ -33,7 +33,7 @@ echo ">> [4/8] Ollama + models (text intent + vision)"
 command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
 ollama pull "${MODEL}"
 ollama pull "${VISION_MODEL}"            # dedicated vision VLM (ROBOT_VISION_MODEL); default moondream
-echo "   note: gemma3 vision needs Ollama >= 0.6 -- 'ollama --version' is $(ollama --version 2>/dev/null || echo '?')"
+echo "   note: ${MODEL} (Gemma 4) needs a RECENT Ollama -- if the pull 404s, upgrade Ollama and retry. 'ollama --version' is $(ollama --version 2>/dev/null || echo '?')"
 
 echo ">> [5/8] whisper.cpp"
 [ -d "${H}/whisper.cpp" ] || git clone https://github.com/ggerganov/whisper.cpp.git "${H}/whisper.cpp"
@@ -73,7 +73,7 @@ fi
 # So this is version-tolerant: download if we can, else confirm the bundled models exist. Non-fatal --
 # the wake word just won't load -- LIVE then has no trigger (ENTER works only in --dry).
 echo "   checking openWakeWord wake-word models..."
-./.venv/bin/python - <<'PY' || echo "   (model check failed -- wake word degrades to ENTER; see docs/assembly.md step 8)"
+./.venv/bin/python - <<'PY' || echo "   (model check failed -- if the wake word won't load, LIVE has no trigger; use --dry, see docs/assembly.md step 8)"
 import glob, os, openwakeword
 ver = getattr(openwakeword, "__version__", "?")
 dl = getattr(getattr(openwakeword, "utils", None), "download_models", None)

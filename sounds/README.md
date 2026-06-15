@@ -25,6 +25,11 @@ the mic), per-category `ROBOT_SOUNDS_{GREETING,ACK,THINKING,ERROR}`, `ROBOT_THIN
 Format tip: use a sample rate the USB speaker supports natively (44100 or 48000 Hz) so `aplay`
 never has to resample. Keep `ack` clips well under a second; `thinking` clips short and loopable.
 
+Speaker note: **any** USB speaker works — `ROBOT_SOUNDS_DEVICE` is just its `aplay -l` card name, so
+swapping is config-only (no code change). A **USB-powered** model (e.g. **Naciffo 2**) avoids a separate
+PSU. If the speaker has **no volume control** (`amixer -c <id> scontrols` is empty), its level is fixed —
+make the WAVs themselves quieter (`sox in.wav out.wav gain -6`) instead.
+
 ## Generating the earcons (concise)
 
 Target format: **16-bit PCM mono WAV**, ideally 44100 Hz. `ack` < 1 s; `thinking` 1–3 s and loopable.

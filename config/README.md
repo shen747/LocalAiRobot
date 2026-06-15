@@ -147,12 +147,12 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 |---|---|---|
 | `ROBOT_VISION_MODEL` | `moondream` | Separate VLM for camera frames (decouples vision latency from the text brain). Empty falls back to sharing `ROBOT_MODEL`. Switch: `ollama pull <new>`, set here, re-source. |
 
-## Wake word "Richard" (openWakeWord)
+## Wake word (openWakeWord)
 
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word (required in live). `0` disables it — then **live has no trigger** and the brain exits; ENTER works only in `--dry`. |
-| `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_jarvis.onnx` | Path to the wake `.onnx`. Ships wired to the stock **hey_jarvis** (reliable out of the box); a custom **hey_richard** also ships in `models/` (retrain it stronger to switch). Missing/unloadable → degrades to ENTER. [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
+| `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_jarvis.onnx` | Path to the wake `.onnx`. Ships wired to the stock **hey_jarvis** (reliable out of the box); a custom **hey_richard** also ships in `models/` (retrain it stronger to switch). Missing/unloadable → **live has no trigger** (the brain exits; ENTER works only in `--dry`). [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
 | `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. Stock models score high (use `0.5`); a weak custom model may need `0.3`–`0.15` (watch the `best score` log line). |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |

@@ -69,7 +69,7 @@ class WakeWord:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        self.enabled = os.environ.get("ROBOT_WAKEWORD_ENABLE", "0") == "1"
+        self.enabled = os.environ.get("ROBOT_WAKEWORD_ENABLE", "1") == "1"   # ON by default (matches config/robot.env + README)
         self.dry_run = dry_run_enabled()
         self.available = False
         self._model = None

@@ -1,4 +1,5 @@
-# brain/vision.py -- multimodal "look" via gemma3:4b (or an optional dedicated VLM, ROBOT_VISION_MODEL).
+# brain/vision.py -- multimodal "look" via a dedicated VLM (ROBOT_VISION_MODEL, default moondream;
+# falls back to sharing ROBOT_MODEL when unset).
 #
 # A captured JPEG is sent to Ollama's native /api/generate as a base64 `images` array with a
 # JSON-schema `format`, so the model returns a structured, enum-constrained scene report that

@@ -5,7 +5,7 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
-![LocalAiRobot voice + vision control flow: a voice command — started by an optional "Richard" wake word (openWakeWord) or ENTER push-to-talk — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the multimodal gemma3:4b (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks gemma3:4b what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama model behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command — started by a wake word (openWakeWord; ENTER push-to-talk survives in --dry only) — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the gemma4:e2b-it-qat text model (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks the moondream VLM what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama server behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
 intent (**Ollama** `gemma4:e2b-it-qat`; a separate **`moondream`** VLM reads the camera frames), speaks a reply
@@ -40,7 +40,7 @@ path-planning, or SLAM. Vision on the Pi 5 CPU is **slow** (tens of seconds to m
 brain/main.py            # orchestrator: listen → think → (drive | explore | find) → speak; face events
 brain/driver.py          # PCA9685 ESC (Electronic Speed Controller) + steering servo, 3x HC-SR04P, software failsafe, dry-run fakes
 brain/camera.py          # Pi Camera V2 NoIR capture → preprocessed JPEG (picamera2)
-brain/vision.py          # send a frame to gemma3:4b via Ollama → structured scene JSON
+brain/vision.py          # send a frame to the vision VLM (moondream) via Ollama → structured scene JSON
 brain/memory.py          # SQLite environment memory: record sightings, summarise back to the prompt
 brain/behavior.py        # bounded autonomous explore / find-and-drive-to-object loop
 brain/face.py            # expression face: USB-C panel | DSI/HDMI framebuffer | simulated (+ PNG animation)
@@ -78,7 +78,7 @@ Search terms are generic — use your preferred retailer.
 | Official PSU, 27 W | `Raspberry Pi 5 27W USB-C power supply` | **bench power while building (use this first, UPS later)** |
 | microSD (or NVMe) | `high-endurance microSD 64GB` | OS storage (NVMe is much faster for model load) |
 | USB microphone | `mini USB microphone` | voice input |
-| USB speaker | `USB sound card speaker Raspberry Pi` | TTS output |
+| USB speaker (**USB-powered**) | `mini USB powered speaker stereo` | TTS + earcon output. A **USB-powered** speaker (e.g. **Naciffo 2**) needs no separate PSU — ideal on a battery robot; plug-and-play, no 3.5 mm jack. **Any** USB speaker works — it's only a config value (`ROBOT_SOUNDS_DEVICE` + `~/.asoundrc`), no code change. |
 
 **Vision & display:**
 
@@ -213,8 +213,8 @@ The LLM returns one JSON object; the Pi validates and clamps it before acting:
 | `duration_ms` | `300`–`5000` | run time before the failsafe neutralizes the move |
 | `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 
-**Vision & explore.** On *"look around"* the robot stops, captures a frame, asks `gemma3:4b` what's in
-view (on the dedicated `moondream` VLM), records it, and says what it sees. On *"find the sofa"* it runs a **bounded** loop —
+**Vision & explore.** On *"look around"* the robot stops, captures a frame, asks the dedicated `moondream`
+VLM what's in view, records it, and says what it sees. On *"find the sofa"* it runs a **bounded** loop —
 stop → look → step toward the sighting (or arc-scan if not seen) — gated by the forward sensor and
 capped by `ROBOT_EXPLORE_MAX_ITERS`. Vision is slow on the Pi 5 CPU; the car is held at neutral during
 each look. The fixed camera + no-spin steering means "look around" is a coarse arc-scan.
@@ -255,7 +255,7 @@ After the one-time downloads, disable Wi-Fi — everything runs on-device.
 ## Credits & license
 
 MIT — see [LICENSE](LICENSE). Built on [Ollama](https://ollama.com/) +
-[Gemma 3](https://ai.google.dev/gemma), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
+[Gemma](https://ai.google.dev/gemma) + [moondream](https://moondream.ai/), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
 [Piper](https://github.com/rhasspy/piper), [picamera2](https://github.com/raspberrypi/picamera2),
 [gpiozero](https://gpiozero.readthedocs.io/),
 [Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit),

@@ -1,7 +1,7 @@
 # brain/camera.py -- Pi Camera V2 NoIR (IMX219) capture for the multimodal vision pipeline.
 #
-# Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so Gemma 3's
-# SigLIP encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands
+# Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision
+# encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands
 # the JPEG bytes to vision.py. picamera2 is imported LAZILY inside the live branch so this
 # module imports fine on a laptop / unwired Pi; in dry run there is no capture at all and
 # vision.py falls back to ROBOT_FAKE_VISION (so the explore loop is testable with no camera).

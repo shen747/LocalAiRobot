@@ -220,6 +220,12 @@ drives no hardware at all).
 > EOF
 > amixer -c "$SPK" sset PCM 80% && sudo alsactl store    # volume + persist (USB audio resets on reboot)
 > ```
+> **Any USB speaker works here** — it's purely this config, no code change, so you can swap freely. A
+> **USB-powered** one (e.g. the **Naciffo 2**) needs no separate supply — handy on the battery robot, and
+> it's plug-and-play with no 3.5 mm jack. One gotcha: tiny USB speakers often expose **no volume control**
+> (`amixer -c "$SPK" scontrols` lists nothing, and the listing may literally say "no volume control") —
+> then **skip the `amixer` line**; level is fixed in hardware (set volume at the source, or add an ALSA
+> `softvol` plugin in `~/.asoundrc` if you must attenuate).
 > Then in `config/robot.env`, all **by name** so a reboot/replug never breaks them:
 > ```
 > ROBOT_MIC=plughw:CARD=<mic-id>,DEV=0                            # command capture

@@ -231,7 +231,8 @@ class RobotDriver:
         self._throttle = 0.0          # target magnitude, 0..max_throttle
         self._deadline = 0.0          # time.monotonic() after which we coast to neutral
         self._closed = False
-        self.on_obstacle = None       # optional callback(distance_cm) -- keep it non-blocking
+        self.on_obstacle = None       # optional callback(distance_cm); dispatched on a daemon thread
+                                      # (see _trip_obstacle) so its I/O can't stall the safety loop
         self._last_obstacle = 0.0
 
         self._arm()                   # ESC (Electronic Speed Controller) must see neutral before it will run (it will beep)
@@ -405,7 +406,16 @@ class RobotDriver:
         cb = self.on_obstacle
         if cb and now - self._last_obstacle > 3.0:   # debounce
             self._last_obstacle = now
-            try:
-                cb(distance_cm)
-            except Exception:
-                pass
+            # Fire the callback on a daemon thread, NOT inline. _trip_obstacle runs on the 20 Hz
+            # safety control thread, and runs BEFORE this tick's throttle-cut write. on_obstacle does
+            # I/O (a SQLite write with an fsync, an earcon/TTS spawn) -- a slow SD-card fsync inline
+            # here would BOTH stall the safety loop AND delay the physical motor stop. Off-thread keeps
+            # the throttle cut immediate no matter what the callback does.
+            threading.Thread(target=self._safe_cb, args=(cb, distance_cm), daemon=True).start()
+
+    @staticmethod
+    def _safe_cb(cb, distance_cm):
+        try:
+            cb(distance_cm)
+        except Exception:
+            pass

@@ -4,8 +4,9 @@
 # MODE comes from ROBOT_DRY_RUN in config/robot.env (override per run with --dry / --live):
 #   --dry  / ROBOT_DRY_RUN=1 -> FOREGROUND, interactive, nothing drives (logs what it WOULD do).
 #   --live / ROBOT_DRY_RUN=0 -> FOREGROUND, interactive, REAL hardware.
-# Both are interactive: ENTER = talk, 'r' = simulate the "Richard" wake, q = quit, Ctrl-C = stop
-# (Ctrl-C neutralises the motor on the way out). Foreground is what you want for bench + calibration.
+# Both run in the foreground: q = quit, Ctrl-C = stop (neutralises the motor on the way out).
+# --live triggers on the WAKE WORD only; --dry adds ENTER = talk and 'r' = simulate a wake (no mic
+# needed on the bench). Foreground is what you want for bench + calibration.
 #
 # Other actions:
 #   --detach        run LIVE in the BACKGROUND (survives SSH logout). Stop with scripts/shutdown.sh.
@@ -113,7 +114,7 @@ if pid_is_brain "$(cat "$PIDFILE" 2>/dev/null)"; then
 fi
 rm -f "$PIDFILE"   # stale leftover (e.g. from before a reboot) -- safe to clear
 echo ">> Bringing the robot to LIFE, detached (survives SSH logout). Logs -> $LOG"
-echo "   Say \"Richard\" to wake it.  Stop with ./scripts/shutdown.sh (does NOT power off the Pi)."
+echo "   Say the wake word to wake it.  Stop with ./scripts/shutdown.sh (does NOT power off the Pi)."
 echo "   (Needs a working wake word -- detached has no keyboard, so with no wake model it just exits.)"
 # stdin MUST be /dev/null: left attached to the SSH terminal it would hit EOF on logout and the
 # brain would misread that as endless ENTER presses (a hot record/transcribe loop on ambient noise).
