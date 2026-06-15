@@ -38,18 +38,19 @@ Linux), not the Pi — the Pi only ever runs `scripts/install_stack.sh` and read
 ```
 This puts Piper at `~/piper/piper/piper` (the same path and voice the Pi uses).
 
-**2. Synthesize one WAV per cue** — pipe the words to Piper. Add several to `ack_sounds/` for variety:
+**2. Generate the spoken set.**
+```bash
+./scripts/generate_sounds.sh   # makes the sound folders + speaks a default set into them
+```
+**To change the words/voice**, edit the `say <file> "<words>"` lines near the bottom of
+`scripts/generate_sounds.sh` and re-run. Add several `ack_sounds/` lines — the robot plays one at random
+each wake. To add or replace a *single* cue by hand (the folders now exist), call Piper directly:
 ```bash
 P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
-echo "Systems online" | $P -f sounds/greeting_sounds/online.wav
-echo "Yes?"           | $P -f sounds/ack_sounds/yes.wav
-echo "Got it"         | $P -f sounds/ack_sounds/got_it.wav
-echo "On it"          | $P -f sounds/ack_sounds/on_it.wav
-echo "Working on it"  | $P -f sounds/thinking_sounds/working.wav
-echo "Uh oh"          | $P -f sounds/error_sounds/uh_oh.wav
+echo "Coming right up" | $P -f sounds/ack_sounds/coming.wav
 ```
-Piper writes **16-bit mono 22050 Hz** — fine for `aplay`. If your speaker ever complains about the rate,
-normalize to 44100 with sox (installed by `host_setup.sh`): `sox in.wav -r 44100 -c 1 -b 16 out.wav`.
+Piper writes **16-bit mono 22050 Hz** — fine for `aplay`. If a speaker ever complains about the rate,
+normalize to 44100 with sox (from `host_setup.sh`): `sox in.wav -r 44100 -c 1 -b 16 out.wav`.
 
 **3. Test, then commit.** Play a clip with `aplay sounds/ack_sounds/yes.wav` (any machine with a speaker),
 or run `./scripts/run_me.sh --dry`, which logs `SOUND -> <cue>` instead of playing. When they sound right:

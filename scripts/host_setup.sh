@@ -130,6 +130,6 @@ fi
 
 echo
 echo "=== DONE -- authoring toolkit ready. ==="
-echo "   Faces:  ./scripts/generate_faces.sh  (+ magick / ffmpeg)  -> follow brain/faces/README.md"
-echo "   Sounds: Piper at  ${PIPER_DIR}/piper/piper  (+ sox)  -> follow sounds/README.md (spoken cues)"
+echo "   Sounds: ./scripts/generate_sounds.sh  (Piper)   -> follow sounds/README.md"
+echo "   Faces:  ./scripts/generate_faces.sh   (+ magick / ffmpeg)  -> follow brain/faces/README.md"
 echo "   Then commit your sounds/ + brain/faces/ and deploy to the Pi."

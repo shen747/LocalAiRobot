@@ -58,6 +58,7 @@ scripts/shutdown.sh      # stop the brain gracefully; --poweroff also halts the 
 scripts/setup_audio.sh   # point ALSA's default output at your USB speaker (writes ~/.asoundrc)
 scripts/test_sensors.sh  # read the 3 HC-SR04P sensors live (bench check before trusting the gate)
 scripts/host_setup.sh    # install the asset-authoring toolkit on YOUR PC (WSL/macOS/Linux) for sounds/faces
+scripts/generate_sounds.sh # speak the earcon WAVs with Piper, on your PC (spoken cues)
 scripts/generate_faces.sh  # render procedural face PNG templates to customize (run on your PC)
 scripts/rag.sh           # inspect/edit the SQLite memory store (taught people/things, sightings)
 scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
