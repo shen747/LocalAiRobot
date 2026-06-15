@@ -13,8 +13,8 @@ Phase 7 connects the ESC (Electronic Speed Controller).
 
 > 🖥️ **Where these commands run.** Unless noted, every shell command in this doc runs in **bash on the
 > Pi, over SSH** — not on your laptop and not in PowerShell. Flash the SD card with SSH enabled (Phase 1),
-> then `ssh YOUR_USER@raspberrypi.local` in and work from there. Multi-line Python shown as
-> `python - <<'PY' … PY` is a heredoc you paste whole — you don't create a `.py` file (see the appendix).
+> then `ssh YOUR_USER@raspberrypi.local` in and work from there. Every multi-step task is wrapped in a
+> `./scripts/*.sh` helper — you never run Python by hand.
 
 > **What's an ESC (Electronic Speed Controller)?** The **ESC (Electronic Speed Controller) (Electronic Speed Controller)** is the standard RC component wired between
 > the battery and the drive motor: it converts a throttle PWM signal into motor power (and direction).
@@ -327,9 +327,9 @@ These BCM pins avoid I2C (2/3), SPI0 (7–11) and UART (14/15); alternates if yo
 > add a divider on each `ECHO` only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND
 > (5 V → ~3.3 V). `TRIG` driven by the Pi's 3.3 V output is fine either way.
 
-**Check:** read all three live with the **3-sensor snippet in the Command cheat-sheet** (end of this
-doc) — cover each beam in turn and watch *its* number drop. This is how you prove front/left/right
-aren't swapped; the brain itself only logs the **front** beam (on a gate trip).
+**Check:** read all three live with **`./scripts/test_sensors.sh`** — cover each beam in turn and watch
+*its* number drop. This is how you prove front/left/right aren't swapped; the brain itself only logs the
+**front** beam (on a gate trip).
 
 **Two known sensing limits (by design):**
 - The forward gate **fails closed on a read error** (a sensor exception blocks FORWARD), but a *dead/
@@ -424,7 +424,7 @@ i2cdetect -y 1                  # PCA9685 at 0x40
 rpicam-hello --list-cameras     # IMX219 detected (Pi Camera V2 NoIR or Arducam IMX219)
 lsusb | grep -i 1a86            # USB-C face panel (turing backend) ...
 ls /dev/fb0                     # ... OR a DSI/HDMI panel (framebuffer backend), if you went that route
-# read the 3 sensors live before trusting the gate (snippet in the Command cheat-sheet)
+./scripts/test_sensors.sh       # read the 3 sensors live before trusting the gate (Ctrl-C to stop)
 ./scripts/run_me.sh --live      # foreground, real hardware (ESC/motor still unplugged)
 ```
 
@@ -504,13 +504,6 @@ Build and test on the 27 W PSU first; add the UPS once everything works.
 laptop and *not* in PowerShell. Paste each line at the Pi's `$` prompt; lines starting with `#` are
 comments, so you don't type them.
 
-The last block is a **Python heredoc, not a file you create.** Everything between
-`brain/.venv/bin/python - <<'PY'` and the closing `PY` is piped into Python on **stdin** — the `-` tells
-Python "read the program from stdin." So **select and paste the whole block at once** (from the `set -a`
-line through the final `PY`) and it runs inline; press **Ctrl-C** to stop the sensor loop. You do *not*
-write a `.py` file. (If you'd rather keep it as one, copy just the lines *between* `<<'PY'` and `PY` into
-e.g. `sensors.py` and run `brain/.venv/bin/python sensors.py` — same result.)
-
 ```bash
 # Mic device id  →  put the plughw string in config/robot.env (ROBOT_MIC)
 arecord -l
@@ -523,22 +516,9 @@ i2cdetect -y 1                  # PCA9685 at 0x40 (and 0x36 once the UPS is fitt
 rpicam-hello --list-cameras     # IMX219 NoIR (after the 22→15 adapter cable)
 lsusb | grep -i 1a86            # USB-C face panel
 
-# Read all three HC-SR04P live (cover each beam in turn and watch ITS number drop -- this is
-# how you confirm front/left/right aren't swapped). Uses the pins from robot.env; Ctrl-C to stop.
-set -a; source config/robot.env; set +a
-brain/.venv/bin/python - <<'PY'
-import os, time
-from gpiozero import DistanceSensor
-p = lambda n: int(os.environ[n])
-s = {
-    "front": DistanceSensor(echo=p("ROBOT_ECHO_PIN"),       trigger=p("ROBOT_TRIG_PIN"),       max_distance=4.0),
-    "left":  DistanceSensor(echo=p("ROBOT_LEFT_ECHO_PIN"),  trigger=p("ROBOT_LEFT_TRIG_PIN"),  max_distance=4.0),
-    "right": DistanceSensor(echo=p("ROBOT_RIGHT_ECHO_PIN"), trigger=p("ROBOT_RIGHT_TRIG_PIN"), max_distance=4.0),
-}
-while True:
-    print("  ".join(f"{k}={v.distance*100:5.1f}cm" for k, v in s.items()))
-    time.sleep(0.3)
-PY
+# Read all three HC-SR04P sensors live -- cover each beam in turn and watch ITS number drop
+# (confirms front/left/right aren't swapped). Uses the pins from config/robot.env; Ctrl-C to stop.
+./scripts/test_sensors.sh
 ```
 
 ### Safety note — software failsafe, not hardware

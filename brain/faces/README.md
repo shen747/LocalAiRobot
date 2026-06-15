@@ -41,10 +41,10 @@ Author face PNGs **on your PC** (WSL / macOS / Linux), not the Pi — the Pi onl
 
 **2. Make the frames** — pick whichever is easiest:
 
-- **On-model templates (`scripts/generate_faces.py`)** — renders the *actual* procedural face for every
+- **On-model templates (`scripts/generate_faces.sh`)** — renders the *actual* procedural face for every
   state to `<state>/01.png`, a ready starting point to edit or hand to an image generator:
   ```bash
-  ~/.localairobot-tools/venv/bin/python scripts/generate_faces.py --size 800x480
+  ./scripts/generate_faces.sh --size 800x480
   ```
 - **AI image generator** — one prompt per state, e.g. *"robot face, happy expression, glowing eyes, flat
   dark background, centered, 800×480, simple, high contrast."* Make 2–4 variations per state (reuse the

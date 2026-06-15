@@ -6,7 +6,7 @@
 # Installs ONLY what's missing, after a plan + confirm (the cleanup_pi.sh pattern):
 #   - ImageMagick + ffmpeg            -> faces: resize/pad, extract frames from a clip
 #   - sox                             -> sounds: normalize/convert the Piper WAVs (e.g. 22050 -> 44100)
-#   - a small Python venv with Pillow -> faces: scripts/generate_faces.py (procedural templates)
+#   - a small Python venv with Pillow -> faces: ./scripts/generate_faces.sh (procedural templates)
 #   - Piper + the en_US-lessac voice  -> sounds: SPOKEN earcons, same voice as the Pi (-> ~/piper)
 #
 #   ./scripts/host_setup.sh        plan, confirm, then install what's missing
@@ -69,7 +69,7 @@ PILLOW_NEED=0
 if [ ! -x "${VENV}/bin/python" ] || ! "${VENV}/bin/python" -c 'import PIL' 2>/dev/null; then
   PILLOW_NEED=1
   [ "$PM" = "apt" ] && add_pkg python3-venv "create the Pillow venv"
-  PLAN+=("create venv ${VENV} + pip install Pillow -- faces: generate_faces.py")
+  PLAN+=("create venv ${VENV} + pip install Pillow -- faces: ./scripts/generate_faces.sh")
 fi
 
 PIPER_NEED=0
@@ -130,7 +130,6 @@ fi
 
 echo
 echo "=== DONE -- authoring toolkit ready. ==="
-echo "   Faces:  magick + ffmpeg  ·  Pillow at  ${VENV}/bin/python  (for scripts/generate_faces.py)"
-echo "           -> follow brain/faces/README.md"
-echo "   Sounds: Piper at  ${PIPER_DIR}/piper/piper  (+ sox for normalizing)"
-echo "           -> follow sounds/README.md  (spoken cues; commit and deploy to the Pi)"
+echo "   Faces:  ./scripts/generate_faces.sh  (+ magick / ffmpeg)  -> follow brain/faces/README.md"
+echo "   Sounds: Piper at  ${PIPER_DIR}/piper/piper  (+ sox)  -> follow sounds/README.md (spoken cues)"
+echo "   Then commit your sounds/ + brain/faces/ and deploy to the Pi."

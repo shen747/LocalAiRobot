@@ -56,8 +56,9 @@ scripts/install_stack.sh # one-shot Pi installer (Ollama + whisper.cpp + Piper +
 scripts/run_me.sh        # run the brain: --dry/--live (foreground), --detach (bg), --reload, --install-boot
 scripts/shutdown.sh      # stop the brain gracefully; --poweroff also halts the Pi
 scripts/setup_audio.sh   # point ALSA's default output at your USB speaker (writes ~/.asoundrc)
+scripts/test_sensors.sh  # read the 3 HC-SR04P sensors live (bench check before trusting the gate)
 scripts/host_setup.sh    # install the asset-authoring toolkit on YOUR PC (WSL/macOS/Linux) for sounds/faces
-scripts/generate_faces.py  # render procedural face PNG templates to customize (Pillow)
+scripts/generate_faces.sh  # render procedural face PNG templates to customize (run on your PC)
 scripts/rag.sh           # inspect/edit the SQLite memory store (taught people/things, sightings)
 scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
 scripts/robot.service    # systemd unit for boot autostart (install: ./scripts/run_me.sh --install-boot)
