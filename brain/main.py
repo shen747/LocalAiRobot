@@ -259,8 +259,11 @@ def main():
         installed, prev = False, None
 
         def _abort(_signum, _frame):
+            # Print only on the FIRST Ctrl-C: the behaviour notices `ev` at the next look/step boundary,
+            # so mashing Ctrl-C in that window would otherwise spam the line. (ev.set() is idempotent.)
+            if not ev.is_set():
+                print("\n(aborting — returning to prompt)")
             ev.set()
-            print("\n(aborting — returning to prompt)")
 
         try:
             prev = signal.getsignal(signal.SIGINT)

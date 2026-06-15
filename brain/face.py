@@ -204,33 +204,53 @@ class _TuringBackend:
 
 
 class _FramebufferBackend:
-    """DSI/HDMI panel: write the PIL frame to /dev/fb0 as RGB565 (no X, no pygame)."""
+    """A DSI/HDMI panel (e.g. a Freenove 5" 800x480 DSI touchscreen, or any HDMI screen): write the
+    PIL frame straight to /dev/fb0 (no X, no pygame -- KMSDRM is broken on a headless Pi 5).
+
+    Handles BOTH common framebuffer depths, picked from sysfs: 16-bit RGB565 (a legacy/console fb)
+    and 32-bit XRGB8888 (what the Pi 5 KMS driver gives a DSI/HDMI panel). Hardcoding 16bpp -- the old
+    behaviour -- silently memmaps only half a 32bpp buffer and renders garbage, so the depth check is
+    what makes a modern DSI screen actually work. Geometry is read from the fb too, so an 800x480 panel
+    is auto-sized (ROBOT_FACE_WIDTH/HEIGHT are ignored here). The capacitive touch layer is unused --
+    the face is display-only. Assumes the fb row stride has no extra padding (true for 800x480)."""
 
     def __init__(self, w, h, dev="/dev/fb0"):
         import numpy as np
         self.dev = dev
+        self._np = np
         try:
             with open("/sys/class/graphics/fb0/virtual_size") as f:
                 vw, vh = (int(x) for x in f.read().strip().split(","))
             self.width, self.height = vw, vh
         except Exception:
             self.width, self.height = w, h
+        try:
+            with open("/sys/class/graphics/fb0/bits_per_pixel") as f:
+                self.bpp = int(f.read().strip())
+        except Exception:
+            self.bpp = 16
+        if self.bpp not in (16, 32):
+            raise RuntimeError(f"unsupported framebuffer depth {self.bpp}bpp (need 16 or 32)")
         # Probe writability early so auto() can fall back if it fails.
         open(self.dev, "r+b").close()
         # Map the framebuffer ONCE and reuse it -- under animation, re-opening a memmap every
         # frame (the old behaviour) is needless churn. Per-frame show() is now just pack + write.
-        self._np = np
-        self._fb = np.memmap(self.dev, dtype="uint16", mode="r+", shape=(self.height, self.width))
-        log.info("face backend: framebuffer %s (%dx%d RGB565, persistent map)",
-                 self.dev, self.width, self.height)
+        dtype = "uint16" if self.bpp == 16 else "uint32"
+        self._fb = np.memmap(self.dev, dtype=dtype, mode="r+", shape=(self.height, self.width))
+        log.info("face backend: framebuffer %s (%dx%d %dbpp, persistent map)",
+                 self.dev, self.width, self.height, self.bpp)
 
     def show(self, state, img):
         if img is None or self._fb is None:
             return
         np = self._np
-        a = np.asarray(img.resize((self.width, self.height)).convert("RGB"), dtype=np.uint16)
-        rgb565 = ((a[:, :, 0] >> 3) << 11) | ((a[:, :, 1] >> 2) << 5) | (a[:, :, 2] >> 3)
-        self._fb[:] = rgb565
+        a = np.asarray(img.resize((self.width, self.height)).convert("RGB"), dtype=np.uint32)
+        r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+        if self.bpp == 16:
+            self._fb[:] = (((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)).astype(np.uint16)
+        else:
+            # XRGB8888 (0xFFRRGGBB). If red/blue ever look swapped on your panel, swap r and b here.
+            self._fb[:] = (np.uint32(0xFF000000) | (r << 16) | (g << 8) | b)
 
     def close(self):
         self._fb = None

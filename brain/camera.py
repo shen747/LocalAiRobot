@@ -1,4 +1,6 @@
-# brain/camera.py -- Pi Camera V2 NoIR (IMX219) capture for the multimodal vision pipeline.
+# brain/camera.py -- IMX219 camera capture for the multimodal vision pipeline. Works with any
+# libcamera-supported camera; the build uses an IMX219 module -- a Pi Camera V2 NoIR OR an Arducam
+# IMX219 8MP (same sensor, same driver, interchangeable; no code change to swap).
 #
 # Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision
 # encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands
@@ -56,7 +58,11 @@ class Camera:
             self.available = True
             log.info("camera: Picamera2 started (still capture -> %dpx square JPEG)", self.size)
         except Exception as e:
-            log.warning("camera unavailable (%s) -- vision will report no frame", e)
+            # "list index out of range" here = libcamera saw NO camera. If one IS connected, confirm
+            # `rpicam-hello --list-cameras` detects it (reseat the CSI ribbon; on the Pi 5 the camera
+            # board's 15-pin cable needs the 22->15 adapter -- the Arducam kit's "Pi Zero cable" is it).
+            log.warning("camera unavailable (%s) -- vision will report no frame "
+                        "(if a camera is connected, check `rpicam-hello --list-cameras`)", e)
             self._picam = None
             self.available = False
 

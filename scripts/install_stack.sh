@@ -108,6 +108,13 @@ else
   echo "   added config/robot.env auto-load to ~/.bashrc (new SSH sessions load it automatically)"
 fi
 
+# Make the USB speaker ALSA's DEFAULT output (writes ~/.asoundrc) so the robot's VOICE has somewhere to
+# play -- otherwise `aplay` hits the wrong card and errors ("audio open error: Unknown error 524"). This
+# is best-effort + non-interactive: if no USB speaker is plugged in yet it just prints how to run it
+# later. cleanup_pi.sh removes the ~/.asoundrc it writes.
+echo ">> audio: pointing ALSA's default output at your USB speaker (if one is plugged in)"
+bash "${REPO}/scripts/setup_audio.sh" || true
+
 echo ">> DONE -- the offline AI stack is installed:"
 echo "   Ollama + the gemma4:e2b-it-qat (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
 echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
@@ -122,6 +129,7 @@ echo
 echo "   2. Tell the robot who you are and which microphone to use:   nano config/robot.env"
 echo "        - set your username in the whisper/piper paths:   sed -i \"s/YOUR_USER/\$(whoami)/g\" config/robot.env"
 echo "        - set ROBOT_MIC to your USB microphone (the doc shows how to find it)"
+echo "        - point the VOICE at your USB speaker:   ./scripts/setup_audio.sh   (writes ~/.asoundrc)"
 echo "        - for the bench, set ROBOT_DRY_RUN=1   (nothing drives)"
 echo
 echo "   3. Check the AI brain answers, entirely on the Pi (no internet):"

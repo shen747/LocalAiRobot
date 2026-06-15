@@ -84,11 +84,10 @@ Search terms are generic — use your preferred retailer.
 
 | Part | Search term | Notes |
 |---|---|---|
-| Pi Camera V2 **NoIR** | `Raspberry Pi Camera V2 NoIR IMX219` | visual input for the multimodal LLM |
-| **Pi 5 camera adapter cable** ⚠️ | `Raspberry Pi 5 camera cable 22-pin 0.5mm to 15-pin 1mm` | **MANDATORY** — the Pi 5 CSI port is the narrow 22-way type; the V2's 15-way cable **will not fit** without this |
-| IR illuminator (optional) | `850nm IR LED illuminator board` | NoIR sees nothing in the dark without IR light; skip for lit rooms |
-| 3.5" USB-C face screen | `3.5 inch USB Type-C secondary screen 320x480 IPS` | the TURZX/"NO AIDA64" panel; driven over USB-serial (see [assembly](docs/assembly.md)) |
-| Small DSI/HDMI display (fallback) | `Raspberry Pi DSI 3.5 inch display` | only if the USB-C panel won't enumerate on Linux |
+| IMX219 camera | `Raspberry Pi Camera V2 NoIR IMX219` **or** `Arducam IMX219 8MP Raspberry Pi 5` | visual input for the VLM. **Same IMX219 sensor** either way — interchangeable, no code change. **NoIR** = no IR-cut (reddish daylight, sees with IR light); a standard module = natural daylight colour |
+| **Pi 5 camera adapter cable** ⚠️ | `Raspberry Pi 5 camera cable 22-pin 0.5mm to 15-pin 1mm` | the Pi 5 CSI port is the narrow 22-way type; a bare V2's 15-way cable **won't fit** without this. **Some Arducam kits bundle it** (their "Pi Zero cable" is 22→15) — check before buying separately |
+| IR illuminator (optional) | `850nm IR LED illuminator board` | a NoIR module sees nothing in the dark without IR light; skip for lit rooms / a standard module |
+| Face screen — pick one | **USB-C:** `3.5 inch USB Type-C secondary screen 320x480 IPS` · **DSI:** `Freenove 5 inch DSI touchscreen 800x480 Raspberry Pi` | the robot's face. **USB-C** = the TURZX/"NO AIDA64" panel (USB-serial, `turing` backend). **DSI** = a ribbon panel like the Freenove 5" 800×480 (`framebuffer` backend, `/dev/fb0`). Either works — the code auto-detects; touch (if any) is unused. See [assembly](docs/assembly.md) |
 
 **Vehicle & control electronics:**
 

@@ -148,9 +148,10 @@ drives no hardware at all).
    ```
    The bar should jump right as you speak (a low % like `06%` = speak louder / closer). The trailing
    `/tmp/test.wav` is the output file — don't drop it, or `arecord` dumps raw audio to your screen.
-   **No sound on playback?** `aplay` uses the *default* ALSA output, and the robot's **voice depends on
-   that default** — see the 🔊 callout at the end of this phase to point it at your USB speaker (and dodge
-   the card-renumbering trap). **`arecord` errored or the file is silent?** That's the mic — fix
+   **No sound on playback?** (e.g. `aplay: audio open error: Unknown error 524`) — `aplay` uses the
+   *default* ALSA output and the robot's **voice depends on that default**. Run **`./scripts/setup_audio.sh`**
+   to point it at your USB speaker (it writes `~/.asoundrc`); the 🔊 callout at the end of this phase
+   explains what that does and the card-renumbering trap. **`arecord` errored or the file is silent?** That's the mic — fix
    `ROBOT_MIC`. Once you hear yourself back, start the brain in dry-run:
    ```bash
    ./scripts/run_me.sh --dry
@@ -208,10 +209,16 @@ drives no hardware at all).
 > - **Command capture** → `ROBOT_MIC` (arecord).  •  **Wake-word mic** → `ROBOT_WAKEWORD_DEVICE` (PortAudio
 >   — the *same* mic, addressed a second way).
 >
-> Get the ids from `aplay -l` / `arecord -l` (the word after `card N:`), then set up once. **`~/.asoundrc`
-> is ALSA's per-user config file** — the block below defines the system **`default`** audio device, which is
-> what every program (including the robot's `aplay`) plays to when not told otherwise; that's how the
-> voice reaches your USB speaker.
+> **The easy way — one command:** **`./scripts/setup_audio.sh`**. It finds your USB *playback* card, makes
+> it ALSA's **`default`** output (writes `~/.asoundrc`), sets the volume + persists it, and prints the
+> matching `ROBOT_*` values to paste below. `install_stack.sh` already runs it once; re-run it whenever you
+> change speakers (pass a card id if you have more than one: `./scripts/setup_audio.sh <id>`).
+> `scripts/cleanup_pi.sh` removes the `~/.asoundrc` it writes (and restores any backup).
+>
+> **What it does under the hood (or do it by hand).** `~/.asoundrc` is **ALSA's per-user config file**; this
+> block makes the system **`default`** device your speaker — what every program (including the robot's
+> `aplay`) plays to when not told otherwise, so it's how the **voice** reaches the USB speaker. Get the id
+> from `aplay -l` (the word after `card N:`):
 > ```bash
 > SPK=UACDemoV10                 # speaker id (aplay -l);  mic id (arecord -l), e.g. 'Device'
 > cat > ~/.asoundrc <<EOF        # speaker = default -> the VOICE comes out it
@@ -332,42 +339,71 @@ aren't swapped; the brain itself only logs the **front** beam (on a gate trip).
 
 ---
 
-## Phase 5 — Wire the camera (Pi Camera V2 NoIR, IMX219)
+## Phase 5 — Wire the camera (IMX219: Pi Camera V2 NoIR **or** Arducam IMX219 8MP)
 
 Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text
 brain `gemma4:e2b-it-qat` is multimodal too and can take over if you empty that var). It is on the **CSI
 ribbon**, not GPIO/I2C, so it doesn't conflict with anything else.
 
-- ⚠️ **The Pi 5 needs the adapter cable.** The Pi 5 CSI/DSI ports are the narrow **22-pin, 0.5 mm**
-  type; the Camera V2 ships with a **15-pin, 1 mm** cable that **will not fit**. Get a **22-way-to-15-way
-  adapter FPC cable** and run it from the camera to either CAM/DISP port (contacts the correct way, latch
-  closed).
+- **Any IMX219 module works — pick whichever you have.** A **Pi Camera V2 NoIR** and an **Arducam IMX219
+  8MP** are the *same IMX219 sensor*; libcamera/picamera2 drive them identically, so swapping is **zero
+  code change**. NoIR = no IR-cut filter (reddish daylight, but sees with IR light); a standard module
+  gives natural daylight colour.
+- ⚠️ **The Pi 5 needs the 22→15 cable.** The Pi 5 CSI/DSI ports are the narrow **22-pin, 0.5 mm** type; a
+  module's **15-pin, 1 mm** cable **will not fit** directly. Get a **22-way-to-15-way adapter FPC cable**
+  (the **Arducam kit often bundles this as its "Pi Zero cable"** — same 22→15 wiring) and run it from the
+  camera to either CAM/DISP port (contacts the correct way, latch closed).
 - Install: `python3-picamera2` comes from **apt** (the installer does this) and the venv is created with
   `--system-site-packages` so it can import it. Confirm the camera with `rpicam-hello --list-cameras`,
-  then grab a test frame headless with `rpicam-jpeg -n -o /tmp/test.jpg`.
-- **NoIR has no IR-cut filter:** images look reddish/magenta in daylight, and it sees nothing in the dark
-  without an **IR illuminator** (850/940 nm). Fine for lit rooms; add IR LEDs for night use.
+  then grab a test frame headless with `rpicam-jpeg -n -o /tmp/test.jpg`. *(If the brain logs `camera
+  unavailable (list index out of range)`, libcamera saw **no** camera — reseat the ribbon and re-check
+  `rpicam-hello --list-cameras`. The brain runs fine without it; vision just reports "no frame".)* If
+  `rpicam-hello` itself sees nothing and auto-detect isn't catching the module, add an explicit overlay
+  for the port it's on — `dtoverlay=imx219,cam0` (or `cam1`) in `/boot/firmware/config.txt` — and reboot.
+- **A NoIR module has no IR-cut filter:** images look reddish/magenta in daylight, and it sees nothing in
+  the dark without an **IR illuminator** (850/940 nm). Fine for lit rooms; add IR LEDs for night use. A
+  *standard* (non-NoIR) module skips this — natural colour, but still blind in the dark.
 - Tuning: `ROBOT_CAMERA_ENABLE`, `ROBOT_CAMERA_SIZE` (square letterbox before the LLM), `ROBOT_CAMERA_WARMUP_S`.
   Vision is **CPU-only and slow** on the Pi 5 (`ROBOT_VISION_TIMEOUT_S` defaults to 600 s) — the car is
   held at neutral during each look.
 
 ---
 
-## Phase 6 — Wire the face panel (3.5" USB-C screen)
+## Phase 6 — Wire the face panel (USB-C serial **or** DSI/HDMI — pick one)
 
-The robot's face. On Linux these "secondary screen" panels are **not** a framebuffer — they enumerate as
-a **USB-serial** device and are driven by the `turing-smart-screen-python` library (cloned to
-`~/turing-smart-screen-python` by the installer; `face.py` finds it via `ROBOT_FACE_LIB`).
+The robot's face. `face.py` has three backends and `ROBOT_FACE_BACKEND=auto` tries them in order, so it
+adapts to whatever panel you fit:
 
-- Connect the panel to a Pi USB port with a **data** USB-C cable; it appears as `/dev/ttyACM0`
-  (CH340, USB id `1a86:5722`). The installer adds you to the **`dialout`** group — re-login after.
+- **`turing`** — a small **USB-C "secondary screen"** (e.g. the 3.5" TURZX/"NO AIDA64" 320×480). On Linux
+  these are **not** a framebuffer; they enumerate as a **USB-serial** device, driven by the
+  `turing-smart-screen-python` library (cloned to `~/turing-smart-screen-python` by the installer).
+- **`framebuffer`** — any **DSI or HDMI** display, e.g. a **Freenove 5" 800×480 DSI touchscreen**. `face.py`
+  writes the frame straight to `/dev/fb0` (PIL → the framebuffer; no X, no pygame).
+- **`simulated`** — no panel; just logs `FACE -> <state>`. A missing face **never blocks driving**.
+
+**If you're using the USB-C serial panel (`turing`):**
+- Connect it to a Pi USB port with a **data** USB-C cable; it appears as `/dev/ttyACM0` (CH340, USB id
+  `1a86:5722`). The installer adds you to the **`dialout`** group — re-login after.
 - Confirm it enumerated: `lsusb | grep -i 1a86` and `ls /dev/ttyACM*` (expect `/dev/ttyACM0`). Run the
   library's `simple-program.py` once (`cd ~/turing-smart-screen-python`) to see which revision drives your
-  panel cleanly, then put it in `config/robot.env` as `ROBOT_FACE_REVISION=A` (Turing/UsbPCMonitor
-  320×480) or `B` (XuanFang) and re-`source` the file.
-- It's **fully optional and fail-safe.** If the panel doesn't enumerate, set
-  `ROBOT_FACE_BACKEND=framebuffer` to use a small **DSI/HDMI** display instead (PIL → `/dev/fb0`, no
-  pygame), or `ROBOT_FACE_BACKEND=simulated` to just log expressions. A missing face never blocks driving.
+  panel cleanly, then set `config/robot.env` `ROBOT_FACE_REVISION=A` (Turing/UsbPCMonitor 320×480) or `B`
+  (XuanFang) and re-`source` the file.
+
+**If you're using a DSI/HDMI panel (`framebuffer`) — e.g. the Freenove 5" 800×480 DSI touchscreen:**
+- Plug the panel's **DSI ribbon** into a Pi 5 **CAM/DISP** port (same narrow 22-pin connector as the
+  camera; mind which port and the contact direction). A "driver-free" DSI panel shows up after boot as
+  `/dev/fb0`; some need a `dtoverlay` line in `/boot/firmware/config.txt` per the panel's instructions —
+  check `ls /dev/fb0` exists before expecting a face.
+- Set `ROBOT_FACE_BACKEND=framebuffer` (or leave `auto` — it falls through to it when no USB-C panel is
+  found) and re-`source`. The backend **auto-reads the panel's size and colour depth** from the kernel, so
+  800×480 and the Pi 5 KMS **32-bit** framebuffer are handled automatically — `ROBOT_FACE_WIDTH/HEIGHT` are
+  ignored here. The **capacitive touch layer is unused** (the face is display-only; harmless).
+- Best on **Pi OS Lite / the console**: with a full desktop running, the compositor owns the screen and
+  may draw over the face. If red/blue ever look swapped, that's the one panel-specific quirk — tell me and
+  it's a one-line flip in `_FramebufferBackend.show`.
+
+It's **fully optional and fail-safe**: if no panel is found, `auto` ends at `simulated` and the robot runs
+exactly the same, just logging expressions.
 - **Animated faces (optional):** drop PNG frames in `brain/faces/<state>/NN.png` (states
   `idle/listening/thinking/talking/exploring/happy/confused/alarmed/warmup/capturing`). A state with
   **≥2 frames animates** on a background thread (`talking` is fast with a random-frame mouth); 1 frame
@@ -382,8 +418,9 @@ face wired and the ESC (Electronic Speed Controller)/motor *not connected*, the 
 
 ```bash
 i2cdetect -y 1                  # PCA9685 at 0x40
-rpicam-hello --list-cameras     # IMX219 NoIR detected
-lsusb | grep -i 1a86            # USB-C face panel
+rpicam-hello --list-cameras     # IMX219 detected (Pi Camera V2 NoIR or Arducam IMX219)
+lsusb | grep -i 1a86            # USB-C face panel (turing backend) ...
+ls /dev/fb0                     # ... OR a DSI/HDMI panel (framebuffer backend), if you went that route
 # read the 3 sensors live before trusting the gate (snippet in the Command cheat-sheet)
 ./scripts/run_me.sh --live      # foreground, real hardware (ESC/motor still unplugged)
 ```
@@ -583,8 +620,9 @@ sudo reboot                       # finish up: clears /tmp and applies the I2C c
 **Removes by default** (only the items that still exist — the dry run shows you first): `~/whisper.cpp`,
 `~/piper`, `~/turing-smart-screen-python`, `~/openwakeword`, Ollama + all pulled models (binary, libs and
 model store), `brain/.venv` (which also holds the openWakeWord models), `~/.localairobot` (scene memory,
-taught photos + the run log/PID), `/tmp/test.*`, an installed `robot.service`, and the `config/robot.env`
-auto-load line the installer added to `~/.bashrc`.
+taught photos + the run log/PID), `/tmp/test.*`, an installed `robot.service`, the `config/robot.env`
+auto-load line the installer added to `~/.bashrc`, and the `~/.asoundrc` written by `setup_audio.sh`
+(restoring any `~/.asoundrc.bak` it had backed up).
 
 **Good to know:** `--deep` also apt-removes packages the installer added (cmake, build-essential,
 i2c-tools, …); a few may have shipped with your OS image, so it can take slightly more than the install

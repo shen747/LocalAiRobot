@@ -100,10 +100,10 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_FACE_ENABLE` | `1` | `0` turns the face off entirely (never blocks driving either way). |
-| `ROBOT_FACE_BACKEND` | `auto` | `auto` \| `turing` (USB-C panel) \| `framebuffer` (DSI/HDMI `/dev/fb0`) \| `simulated` (logs only). |
-| `ROBOT_FACE_PORT` | `AUTO` | Serial port for the USB-C panel, or `AUTO` (e.g. `/dev/ttyACM0`). |
-| `ROBOT_FACE_REVISION` | `A` | `A` (Turing/UsbPCMonitor 320×480) or `B` (XuanFang) — confirm with the lib's `simple-program.py`. |
-| `ROBOT_FACE_WIDTH` / `ROBOT_FACE_HEIGHT` | `320` / `480` | Panel geometry (portrait). |
+| `ROBOT_FACE_BACKEND` | `auto` | `auto` (tries turing→framebuffer→simulated) \| `turing` (USB-C serial panel) \| `framebuffer` (a **DSI/HDMI** screen e.g. **Freenove 5" 800×480** → `/dev/fb0`) \| `simulated` (logs only). |
+| `ROBOT_FACE_PORT` | `AUTO` | **turing only.** Serial port for the USB-C panel, or `AUTO` (e.g. `/dev/ttyACM0`). |
+| `ROBOT_FACE_REVISION` | `A` | **turing only.** `A` (Turing/UsbPCMonitor 320×480) or `B` (XuanFang) — confirm with the lib's `simple-program.py`. |
+| `ROBOT_FACE_WIDTH` / `ROBOT_FACE_HEIGHT` | `320` / `480` | **turing only** (panel geometry, portrait). The `framebuffer` backend auto-reads size **and** colour depth from the kernel (so 800×480 + Pi 5 KMS 32bpp just work). |
 | `ROBOT_FACE_BRIGHTNESS` | `80` | Panel brightness 0–100 (dim to save power). |
 | `ROBOT_FACE_LIB` | `~/turing-smart-screen-python` | Path to the panel library (cloned by the installer). |
 | `ROBOT_FACE_DUMP` | *(empty)* | If set to a dir, the simulated backend writes `face_<state>.png` per state — inspect the face with no panel. |
