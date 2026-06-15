@@ -196,9 +196,13 @@ drives no hardware at all).
      every ~15 s to tune by — set the gain with `amixer -c <card> sset Mic 75%` (aim `loudest` mid-scale,
      not near 32767). Full procedure: the **[wake-word guide's tuning list](opnewakeword/openwake-word.md)**.
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
-   - **Optional extras:** earcons — drop `.wav` files in `sounds/{greeting,ack,thinking,error}_sounds/`
-     (empty = silent; see [`sounds/README.md`](../sounds/README.md)). Model warmup is already on
-     (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
+   - **Acknowledge each wake (recommended):** every detected *"hey jarvis"* plays a **random** clip from
+     `sounds/ack_sounds/` as the face switches to *listening* — an audible + visual "I heard you". It's on
+     by default but **silent until you add clips** (the folder ships empty). Quick start with the installed
+     Piper: `echo "Yes?" | "$HOME/piper/piper/piper" -m "$HOME/piper/en_US-lessac-medium.onnx" -f sounds/ack_sounds/yes.wav`
+     (drop in 2–3 for variety). See [`sounds/README.md`](../sounds/README.md).
+   - **Other earcons:** drop `.wav` files in `sounds/{greeting,thinking,error}_sounds/` too (empty =
+     silent). Model warmup is already on (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
 
 > 🔊 **Audio devices — and the card-numbering trap.** Four things route audio, and **plugging in a USB
 > speaker renumbers the ALSA cards** (they also shuffle on reboot) — so address everything **by name**,

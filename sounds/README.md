@@ -7,10 +7,17 @@ are a silent no-op** — the feature is harmless until you add sounds, and it ne
 ```
 sounds/
   greeting_sounds/   # played once on boot/arm        (e.g. online.wav, systems_go.wav)
-  ack_sounds/        # short blip on wake / command    (e.g. got_it.wav, on_it.wav)   < ~1 s
+  ack_sounds/        # random blip on EACH wake + command  (e.g. yes.wav, got_it.wav, on_it.wav)  < ~1 s
   thinking_sounds/   # looped tone WHILE the model runs (e.g. computing.wav, processing.wav) 1–3 s
   error_sounds/      # on obstacle / LLM error          (e.g. uh_oh.wav)   [optional]
 ```
+
+**Wake acknowledgement.** Every time the wake word fires (each *"hey jarvis"*), `main.py` plays a
+**random** clip from `ack_sounds/` *as* it switches the face to **`listening`** — so each detection gets
+an audible **and** visual "I heard you" before it records your command (a second `ack` fires when the
+spoken command is then accepted). This is **on by default** (`ROBOT_SOUNDS_ACK=1`); it's silent only
+because `ack_sounds/` ships **empty** — drop a couple of short clips in (see *Generating* below) and the
+random pick gives variety.
 
 Why this matters here: on the Pi 5 CPU the model is slow (text up to 120 s, **vision up to
 600 s**), so without a cue a think/look is silent and the operator can't tell the robot heard them.
