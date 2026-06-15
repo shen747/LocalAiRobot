@@ -34,6 +34,10 @@ fi
 if ! running; then
   echo "No robot brain running."
 else
+  # Resume first: a SUSPENDED brain (you pressed Ctrl-Z) can't act on SIGINT, so it would never run its
+  # clean stop and we'd fall through to SIGKILL -- leaving the PCA9685 holding its last pulse. SIGCONT
+  # wakes it so the SIGINT below gets handled (neutralise ESC + close devices).
+  pkill -CONT -f "$PAT" 2>/dev/null || true
   echo "Stopping the robot brain with SIGINT (it neutralises the ESC + closes devices)..."
   pkill -INT -f "$PAT" 2>/dev/null || true
   wait_exit 10                                    # a clean exit needs a few seconds
