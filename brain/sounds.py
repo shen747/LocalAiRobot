@@ -7,8 +7,9 @@
 # re-grounded on THIS repo's aplay + half-duplex audio_lock discipline (NOT sounddevice):
 #
 #   greeting  -- once, after the stack is up / model warmed (audible "I'm online", vital headless)
-#   ack       -- instant, the moment a wake word fires or a command is accepted ("heard you")
-#   thinking  -- a loop played WHILE the model blocks (proof-of-life across a multi-minute look)
+#   wake_ack  -- the instant the wake word fires ("yes?/hi" -- responding to being summoned)
+#   ack       -- after a SPOKEN command is accepted ("got it" -- confirming the command)
+#   thinking  -- a cue played WHILE the model blocks; once, or re-cued every ROBOT_THINKING_REPEAT_S
 #   error     -- optional, on obstacle / LLM failure (fire-and-forget; see SAFETY below)
 #
 # SAFETY: every cue is fire-and-forget on a daemon thread and is NEVER on the synchronous path
@@ -33,9 +34,11 @@ from driver import dry_run_enabled
 
 log = logging.getLogger("robot.sound")
 
-# cue name -> asset subdirectory (mirrors the reference layout)
+# cue name -> asset subdirectory. wake_ack (on wake) is separate from ack (on accepted command), so the
+# two moments can sound different ("Yes?" when summoned vs "Got it" when a command lands).
 _CATEGORY_DIR = {
     "greeting": "greeting_sounds",
+    "wake_ack": "wake_word_ack",
     "ack": "ack_sounds",
     "thinking": "thinking_sounds",
     "error": "error_sounds",
@@ -62,8 +65,10 @@ class Sounds:
         self._cat_enable = {
             cat: os.environ.get(f"ROBOT_SOUNDS_{cat.upper()}", "1") == "1" for cat in _CATEGORY_DIR
         }
-        self._lead_ms = _envi("ROBOT_THINKING_LEAD_MS", 500)  # stay silent on fast turns
-        self._gap_ms = _envi("ROBOT_THINKING_GAP_MS", 0)      # gap between looped thinking clips
+        self._lead_ms = _envi("ROBOT_THINKING_LEAD_MS", 500)   # stay silent on fast turns
+        # Seconds between thinking cues; 0 = play ONCE. A SPOKEN clip ("Let me think") must NOT repeat
+        # back-to-back (the old gap=0 looped it ~10x over a 13s think); the face shows we're still busy.
+        self._repeat_s = _envi("ROBOT_THINKING_REPEAT_S", 20)
         self._thinking = threading.Event()
         self._thinking_thread = None
         if not self.enabled:
@@ -127,20 +132,28 @@ class Sounds:
         # Lead-in: stay quiet so a cache-warm fast turn never triggers a cue (reference does 0.5s).
         if self._wait_or_stopped(ev, self._lead_ms / 1000.0):
             return
+        count = 0
         while ev.is_set():
             wav = self._pick("thinking")
-            if wav:
-                # Acquire the lock PER CLIP, never across the whole loop, or say()/arecord starve.
-                with self._audio_lock:
-                    if not ev.is_set():
-                        return
-                    self._aplay(wav)
-                if self._wait_or_stopped(ev, self._gap_ms / 1000.0):
-                    return
-            else:
+            if not wav:
                 # no thinking assets present -> don't busy-spin, just idle until stopped
                 if self._wait_or_stopped(ev, 0.5):
                     return
+                continue
+            # Acquire the lock PER CLIP, never across the whole loop, or say()/arecord starve.
+            with self._audio_lock:
+                if not ev.is_set():
+                    return
+                self._aplay(wav)
+            count += 1
+            # Re-cue only after a real interval so a spoken cue can't machine-gun. 0 = play ONCE then
+            # stay silent (the thinking FACE is the ongoing proof-of-life). The log makes the cadence
+            # auditable -- a runaway loop would show as cue #2, #3, ... in quick succession.
+            once = self._repeat_s <= 0
+            log.info("thinking cue #%d played -- %s", count,
+                     "once; silent until the reply" if once else f"re-cue in {self._repeat_s:.0f}s if still busy")
+            if self._wait_or_stopped(ev, 86400.0 if once else self._repeat_s):
+                return
 
     def _wait_or_stopped(self, ev, secs):
         """Sleep up to `secs`, checking THIS session's event every 100ms. True if it was cleared."""
@@ -169,8 +182,14 @@ class Sounds:
             cmd += ["-D", self._device]
         cmd.append(wav)
         try:
-            subprocess.run(cmd, timeout=15,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Capture stderr so a wrong/busy ROBOT_SOUNDS_DEVICE surfaces in the log instead of a
+            # silent no-sound (the earcon equivalent of the voice's aplay diagnostics).
+            r = subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, text=True)
+            if r.returncode != 0:
+                err = (r.stderr or "").strip().splitlines()
+                log.warning("earcon aplay failed (exit %d, dev=%s): %s", r.returncode,
+                            self._device or "default", err[-1] if err else "(no stderr)")
         except Exception as e:
             log.warning("aplay failed (%s)", e)
 

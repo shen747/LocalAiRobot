@@ -78,11 +78,11 @@ echo ">> wrote ~/.asoundrc  (default output -> $SPK)"
 # and tiny USB speakers often expose NONE -- that's fine, the level is just fixed in hardware, not an error.
 vol_ctl=""
 for ctl in PCM Master Speaker; do
-  if amixer -c "$SPK" sset "$ctl" 80% >/dev/null 2>&1; then vol_ctl="$ctl"; break; fi
+  if amixer -c "$SPK" sset "$ctl" 100% >/dev/null 2>&1; then vol_ctl="$ctl"; break; fi
 done
 if [ -n "$vol_ctl" ]; then
   sudo alsactl store >/dev/null 2>&1 || true
-  echo "   volume set to 80% ('$vol_ctl') and persisted (alsactl store)"
+  echo "   volume set to 100% ('$vol_ctl') and persisted (alsactl store)"
 else
   echo "   ('$SPK' exposes no volume control -- level is fixed in hardware; nothing to set)"
 fi

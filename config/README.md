@@ -165,12 +165,13 @@ WAV folder layout + format tips: [`sounds/README.md`](../sounds/README.md).
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_SOUNDS_ENABLE` | `1` | Master switch for ack/greeting/thinking/error earcons. |
-| `ROBOT_SOUNDS_DIR` | *(empty → `<repo>/sounds`)* | Root holding the `*_sounds/` folders. |
+| `ROBOT_SOUNDS_ENABLE` | `1` | Master switch for greeting/wake-ack/ack/thinking/error earcons. |
+| `ROBOT_SOUNDS_DIR` | *(empty → `<repo>/sounds`)* | Root holding the cue folders. |
 | `ROBOT_SOUNDS_DEVICE` | *(empty)* | **Earcons only** — the **voice** (Piper) uses the ALSA *default*, so route that via `~/.asoundrc`. USB speaker by name: `plughw:CARD=<id>,DEV=0`. Empty = default. |
 | `ROBOT_SOUNDS_GREETING` | `1` | Play once on boot/arm (audible "stack is up" — vital headless). |
-| `ROBOT_SOUNDS_ACK` | `1` | Short blip on wake / command accepted. |
+| `ROBOT_SOUNDS_WAKE_ACK` | `1` | "Yes?/Hi" the instant the **wake word** fires (`wake_word_ack/`) — responding to being summoned, *before* it records your command. |
+| `ROBOT_SOUNDS_ACK` | `1` | "Got it/On it" after a **spoken command** is transcribed and accepted (`ack_sounds/`). |
 | `ROBOT_SOUNDS_THINKING` | `1` | Looped spoken cue **while** the model runs (proof-of-life on slow vision). |
 | `ROBOT_SOUNDS_ERROR` | `1` | On obstacle / LLM error (fire-and-forget; never delays the stop). |
-| `ROBOT_THINKING_LEAD_MS` | `500` | Stay silent this long before the first thinking clip (fast turns). |
-| `ROBOT_THINKING_GAP_MS` | `0` | Gap between looped thinking clips. |
+| `ROBOT_THINKING_LEAD_MS` | `500` | Stay silent this long before the first thinking cue (fast turns). |
+| `ROBOT_THINKING_REPEAT_S` | `20` | Seconds between thinking cues while the model runs. **`0` = play it once** (the face shows it's still thinking). Stops a spoken "Let me think" from repeating back-to-back over a long think. |

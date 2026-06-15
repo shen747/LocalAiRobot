@@ -247,7 +247,7 @@ the robot listens continuously and wakes on it, then records a command. In
 **ENTER trigger remains only in `--dry`** bench mode. Continuous listening is also what lets the brain
 run **headless under `scripts/robot.service`** (no stdin needed). The wake word only *starts* capture; the explore/find autonomy gate is separate and
 still required. Because the model is **slow** on the Pi CPU, the robot plays short **earcons**
-([`sounds/`](sounds/README.md)) — an ack when it hears you, a *thinking* loop while it works, and a boot greeting — and
+([`sounds/`](sounds/README.md)) — a wake-ack when it hears *"hey jarvis"*, a command-ack when it accepts your command, a *thinking* cue while it works, and a boot greeting — and
 **warms the model at boot** (`ROBOT_WARMUP`) with `keep-alive` so the first command isn't a multi-minute
 cold load. A single `model_lock` serialises the text-intent and vision calls so two generations never run at once
 on the Pi's CPU.

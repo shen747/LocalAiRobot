@@ -9,16 +9,21 @@ dropping a few variants in a folder adds variety.
 ```
 sounds/
   greeting_sounds/   # played once on boot/arm             (e.g. "Systems online")
-  ack_sounds/        # random, on EACH wake + accepted cmd  (e.g. "Yes?", "Got it", "On it")  < ~1 s
+  wake_word_ack/     # the instant "hey jarvis" fires      (e.g. "Yes?", "Hi", "Hello there")  < ~1 s
+  ack_sounds/        # after a spoken command is accepted  (e.g. "Got it", "On it")  < ~1 s
   thinking_sounds/   # looped WHILE the model runs          (e.g. "Working on it")  ~1–2 s, loopable
   error_sounds/      # on obstacle / LLM error              (e.g. "Uh oh")
 ```
 
-**Wake acknowledgement.** Every time the wake word fires (each *"hey jarvis"*), `main.py` plays a
-**random** clip from `ack_sounds/` *as* it switches the face to **`listening`** — so each detection gets
-an audible **and** visual "I heard you" before it records your command (a second `ack` fires when the
-spoken command is then accepted). On by default (`ROBOT_SOUNDS_ACK=1`); put two or three clips in
-`ack_sounds/` and the random pick keeps it from feeling repetitive.
+**Two acks — wake vs command.** There are *two* acknowledgement moments, each with its own folder so they
+can sound different:
+- **`wake_word_ack/`** plays the **instant the wake word fires** (each *"hey jarvis"*), *as* the face
+  switches to **`listening`**. These are summon responses — *"Yes?", "Hi", "Hello there"* — telling you to
+  go ahead and speak (it plays before recording your command). Toggle with `ROBOT_SOUNDS_WAKE_ACK`.
+- **`ack_sounds/`** plays after your **spoken command** is transcribed and accepted (past the noise
+  filter) — confirmations like *"Got it", "On it"*. Toggle with `ROBOT_SOUNDS_ACK`.
+
+A **random** clip is picked from the relevant folder each time, so put two or three in each for variety.
 
 Why this matters here: on the Pi 5 CPU the model is slow (text up to 120 s, **vision up to 600 s**), so
 without a cue a think/look is silent and the operator can't tell the robot heard them. The **greeting**
@@ -66,12 +71,15 @@ them with your own words/voice.
 All knobs live in [`config/robot.env`](../config/robot.env) (reference: [`config/README.md`](../config/README.md)):
 `ROBOT_SOUNDS_ENABLE`, `ROBOT_SOUNDS_DIR`, **`ROBOT_SOUNDS_DEVICE`** (the USB *speaker* card for `aplay -D`,
 separate from the mic), per-category `ROBOT_SOUNDS_{GREETING,ACK,THINKING,ERROR}`, `ROBOT_THINKING_LEAD_MS`
-(stay silent on fast turns), and `ROBOT_THINKING_GAP_MS`.
+(stay silent on fast turns), and `ROBOT_THINKING_REPEAT_S` (seconds between thinking cues; **`0` = play it
+once** — keeps a spoken "Let me think" from repeating while the model runs).
 
 Speaker note: **any** USB speaker works — `ROBOT_SOUNDS_DEVICE` is just its `aplay -l` card name, so
 swapping is config-only (no code change). A **USB-powered** model (e.g. **Naciffo 2**) avoids a separate
-PSU. If the speaker has **no volume control** (`amixer -c <id> scontrols` is empty), its level is fixed —
-make the WAVs themselves quieter on your PC (`sox in.wav out.wav gain -6`) instead.
+PSU. **Too quiet?** Max the speaker's mixer **on the Pi**: `amixer -c <id> sset PCM 100% && sudo alsactl
+store` (80% is ~−6 dB; this lifts both the voice *and* the earcons — they share the speaker). If the
+speaker has **no volume control** (`amixer -c <id> scontrols` is empty) its level is fixed — make the WAVs
+themselves quieter on your PC instead (`sox in.wav out.wav gain -6`).
 
 > These cues play through `aplay` under the same half-duplex `audio_lock` as Piper TTS, so a cue can never
 > garble speech or be recorded into a command. In dry-run (`ROBOT_DRY_RUN=1`) nothing is played — each cue

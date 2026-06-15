@@ -183,6 +183,15 @@ class RobotDriver:
             except Exception as e:
                 DistanceSensor = None
                 log.error("HARDWARE FAILURE: HC-SR04P driver import failed (gpiozero): %s", e)
+            # gpiozero emits a DistanceSensorNoEcho warning on EVERY read with no echo -- ~15/sec with
+            # the 3-sensor array unwired, which buries the real log. Show it ONCE (a genuine fault is
+            # still surfaced; the forward gate already fail-closes on a bad read), not on every ping.
+            try:
+                import warnings
+                from gpiozero.exc import DistanceSensorNoEcho
+                warnings.filterwarnings("once", category=DistanceSensorNoEcho)
+            except Exception:
+                pass
 
             # PCA9685 (ESC throttle + steering servo) -- probes I2C 0x40; the usual failure point.
             try:

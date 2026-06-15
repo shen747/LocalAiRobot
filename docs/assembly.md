@@ -197,8 +197,9 @@ drives no hardware at all).
      not near 32767). Full procedure: the **[wake-word guide's tuning list](opnewakeword/openwake-word.md)**.
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Wake acknowledgement:** every detected *"hey jarvis"* plays a **random** spoken clip from
-     `sounds/ack_sounds/` as the face switches to *listening* — an audible + visual "I heard you". The
-     spoken earcons are **generated on your PC** with Piper and committed (see
+     `sounds/wake_word_ack/` ("Yes?/Hi") as the face switches to *listening* — an audible + visual "go
+     ahead"; then a clip from `sounds/ack_sounds/` ("Got it") fires once your spoken command is accepted.
+     The spoken earcons are **generated on your PC** with Piper and committed (see
      [`sounds/README.md`](../sounds/README.md)); the Pi just plays whatever WAVs are in `sounds/`.
      Model warmup is already on (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
 
@@ -227,7 +228,7 @@ drives no hardware at all).
 > pcm.!default { type plug; slave.pcm "hw:CARD=$SPK,DEV=0" }
 > ctl.!default { type hw; card $SPK }
 > EOF
-> amixer -c "$SPK" sset PCM 80% && sudo alsactl store    # volume + persist (USB audio resets on reboot)
+> amixer -c "$SPK" sset PCM 100% && sudo alsactl store   # volume + persist (USB audio resets on reboot; 80% is ~-6dB -- use 100% if the voice is too quiet)
 > ```
 > **Any USB speaker works here** — it's purely this config, no code change, so you can swap freely. A
 > **USB-powered** one (e.g. the **Naciffo 2**) needs no separate supply — handy on the battery robot, and

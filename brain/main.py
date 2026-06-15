@@ -103,20 +103,37 @@ def is_remember_command(text):
 audio_lock = threading.Lock()
 
 
+def _last_line(s):
+    """The last non-empty line of captured stderr -- the bit that actually names the failure
+    (e.g. ALSA's 'audio open error: No such file or directory'), for clear logs."""
+    s = (s or "").strip()
+    return s.splitlines()[-1].strip() if s else "(no stderr)"
+
+
 def listen_and_transcribe(cfg):
     wav = os.path.join(cfg["tmpdir"], "command.wav")
+    t0 = time.monotonic()
     with audio_lock:
-        subprocess.run(
+        # Capture arecord's stderr instead of /dev/null: when the mic device is missing/busy/renamed
+        # we want ALSA's actual reason in the log, not a bare 'exit status 1'.
+        rec = subprocess.run(
             ["arecord", "-D", cfg["mic"], "-d", cfg["record_secs"],
              "-f", "S16_LE", "-r", "16000", "-c", "1", wav],
-            check=True, timeout=20,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
         )
+    if rec.returncode != 0:
+        raise RuntimeError(f"arecord failed on ROBOT_MIC={cfg['mic']!r} (exit {rec.returncode}): "
+                           f"{_last_line(rec.stderr)}  -- check `arecord -l` (card renamed/unplugged?)")
+    rec_s = time.monotonic() - t0
     out = subprocess.run(
         [cfg["whisper_bin"], "-m", cfg["whisper_model"], "-f", wav, "-nt"],
-        check=True, timeout=30, capture_output=True, text=True,
+        timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
-    return out.stdout.strip()
+    if out.returncode != 0:
+        raise RuntimeError(f"whisper failed (exit {out.returncode}): {_last_line(out.stderr)}")
+    text = out.stdout.strip()
+    log.info("STT: %.1fs record + %.1fs transcribe -> %r", rec_s, time.monotonic() - t0 - rec_s, text[:60])
+    return text
 
 
 def wait_for_trigger(cfg, wake):
@@ -186,19 +203,28 @@ def speak(cfg, text):
     if not text:
         return
     wav = os.path.join(cfg["tmpdir"], f"reply-{os.getpid()}-{int(time.time() * 1000)}.wav")
+    t0 = time.monotonic()
     try:
-        # Synthesize: pipe text via stdin (no shell -> no injection).
-        subprocess.run(
+        # Synthesize: pipe text via stdin (no shell -> no injection). Capture stderr so a Piper/voice
+        # failure is logged with its reason, not silently swallowed.
+        syn = subprocess.run(
             [cfg["piper_bin"], "-m", cfg["piper_voice"], "--output_file", wav],
-            input=text.encode("utf-8"), check=True, timeout=30,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            input=text.encode("utf-8"), timeout=30,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
-        # Play back under the audio lock (serialized, never overlaps recording).
+        if syn.returncode != 0:
+            raise RuntimeError(f"piper exit {syn.returncode}: {_last_line(syn.stderr.decode('utf-8', 'replace'))}")
+        # Play back under the audio lock (serialized, never overlaps recording). aplay errors
+        # (wrong/busy speaker, bad ~/.asoundrc) are the usual 'no voice' culprit -- surface them.
         with audio_lock:
-            subprocess.run(["aplay", wav], timeout=30,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            pb = subprocess.run(["aplay", wav], timeout=30,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if pb.returncode != 0:
+            raise RuntimeError(f"aplay exit {pb.returncode}: {_last_line(pb.stderr)}  -- check ~/.asoundrc / `aplay -l`")
+        log.info("TTS: spoke %d chars in %.1fs", len(text), time.monotonic() - t0)
     except Exception as e:
         print(f"tts: {e}", file=sys.stderr)
+        log.warning("TTS failed: %s", e)
     finally:
         try:
             os.remove(wav)
@@ -328,13 +354,14 @@ def main():
                 print("Bye.")
                 return
             if trigger == "WAKE":
-                snd.play("ack")            # wake-ack: "heard my name", before recording starts
+                snd.play("wake_ack")       # wake-ack: "yes?/hi" -- responding to being summoned, before recording
 
             fc.set_expression("listening")
             try:
                 text = listen_and_transcribe(cfg)
             except Exception as e:
                 print(f"listen: {e}", file=sys.stderr)
+                log.warning("listen failed: %s", e)
                 continue
 
             text = text.strip()
@@ -342,19 +369,22 @@ def main():
                 print("(ignored: empty / noise)")
                 continue
             print(f"Heard: {text!r}")
-            snd.play("ack")                # command-ack: "got it", placed AFTER the noise filter
+            snd.play("ack")                # command-ack: "got it/on it" -- command accepted, AFTER the noise filter
 
             fc.set_expression("thinking")
-            snd.start_thinking()           # proof-of-life loop while the (slow) model runs
+            snd.start_thinking()           # proof-of-life cue while the (slow) model runs
+            t_think = time.monotonic()
             try:
                 resp = query_ollama(cfg, text, context=mem.prompt_context())
             except Exception as e:
                 snd.stop_thinking()
                 snd.play("error")
                 print(f"llm: {e}", file=sys.stderr)
+                log.warning("llm failed after %.1fs: %s", time.monotonic() - t_think, e)
                 driver.stop()  # fail safe
                 continue
             snd.stop_thinking()            # stop BEFORE any say() so it doesn't fight TTS
+            log.info("think: model replied in %.1fs", time.monotonic() - t_think)
 
             action = str(resp.get("action", "DRIVE")).upper()
             target = resp.get("target")
