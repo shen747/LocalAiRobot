@@ -170,7 +170,7 @@ WAV folder layout + format tips: [`sounds/README.md`](../sounds/README.md).
 | `ROBOT_SOUNDS_DEVICE` | *(empty)* | **Earcons only** — the **voice** (Piper) uses the ALSA *default*, so route that via `~/.asoundrc`. USB speaker by name: `plughw:CARD=<id>,DEV=0`. Empty = default. |
 | `ROBOT_SOUNDS_GREETING` | `1` | Play once on boot/arm (audible "stack is up" — vital headless). |
 | `ROBOT_SOUNDS_ACK` | `1` | Short blip on wake / command accepted. |
-| `ROBOT_SOUNDS_THINKING` | `1` | Looped tone **while** the model runs (proof-of-life on slow vision). |
+| `ROBOT_SOUNDS_THINKING` | `1` | Looped spoken cue **while** the model runs (proof-of-life on slow vision). |
 | `ROBOT_SOUNDS_ERROR` | `1` | On obstacle / LLM error (fire-and-forget; never delays the stop). |
 | `ROBOT_THINKING_LEAD_MS` | `500` | Stay silent this long before the first thinking clip (fast turns). |
 | `ROBOT_THINKING_GAP_MS` | `0` | Gap between looped thinking clips. |

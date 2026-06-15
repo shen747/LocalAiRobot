@@ -88,8 +88,9 @@ else:
     assert n_onnx or n_tfl, f"no bundled models found under {res}"
 PY
 
-# Earcon directories for the ack/greeting/thinking cues. Drop your own short .wav files in here;
-# an empty directory is a silent no-op, so the feature is harmless until you add sounds.
+# Earcon folders for the spoken ack/greeting/thinking/error cues. The WAVs are generated on your PC with
+# Piper and committed (see sounds/README.md), so a fresh clone already has them; this just makes sure the
+# folders exist. An empty folder is a silent no-op.
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
 

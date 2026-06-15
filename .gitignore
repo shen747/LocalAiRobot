@@ -6,6 +6,9 @@ __pycache__/
 
 # Runtime audio scratch (normally written to /dev/shm, but guard anyway)
 *.wav
+# ...EXCEPTION: the spoken earcons under sounds/ ARE committed (you generate them with Piper on your PC --
+# see sounds/README.md) so they ship with the repo. Drop your own WAVs there and they're tracked too.
+!sounds/**/*.wav
 
 # Runtime logs -- e.g. log.log from redirecting a run's console output to a file. (The detached-run
 # log lives in ~/.localairobot/robot.log, outside the repo.)

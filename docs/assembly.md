@@ -196,13 +196,11 @@ drives no hardware at all).
      every ~15 s to tune by — set the gain with `amixer -c <card> sset Mic 75%` (aim `loudest` mid-scale,
      not near 32767). Full procedure: the **[wake-word guide's tuning list](opnewakeword/openwake-word.md)**.
    - False-firing? Raise `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
-   - **Acknowledge each wake (recommended):** every detected *"hey jarvis"* plays a **random** clip from
-     `sounds/ack_sounds/` as the face switches to *listening* — an audible + visual "I heard you". It's on
-     by default but **silent until you add clips** (the folder ships empty). Quick start with the installed
-     Piper: `echo "Yes?" | "$HOME/piper/piper/piper" -m "$HOME/piper/en_US-lessac-medium.onnx" -f sounds/ack_sounds/yes.wav`
-     (drop in 2–3 for variety). See [`sounds/README.md`](../sounds/README.md).
-   - **Other earcons:** drop `.wav` files in `sounds/{greeting,thinking,error}_sounds/` too (empty =
-     silent). Model warmup is already on (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
+   - **Wake acknowledgement:** every detected *"hey jarvis"* plays a **random** spoken clip from
+     `sounds/ack_sounds/` as the face switches to *listening* — an audible + visual "I heard you". The
+     spoken earcons are **generated on your PC** with Piper and committed (see
+     [`sounds/README.md`](../sounds/README.md)); the Pi just plays whatever WAVs are in `sounds/`.
+     Model warmup is already on (`ROBOT_WARMUP=1`) so the first command isn't a cold load.
 
 > 🔊 **Audio devices — and the card-numbering trap.** Four things route audio, and **plugging in a USB
 > speaker renumbers the ALSA cards** (they also shuffle on reboot) — so address everything **by name**,
@@ -408,13 +406,14 @@ adapts to whatever panel you fit:
 
 It's **fully optional and fail-safe**: if no panel is found, `auto` ends at `simulated` and the robot runs
 exactly the same, just logging expressions.
-- **Animated faces (optional):** drop PNG frames in `brain/faces/<state>/NN.png` (states
+- **Custom face frames:** drop PNG frames in `brain/faces/<state>/NN.png` (states
   `idle/listening/thinking/talking/exploring/happy/confused/alarmed/warmup/capturing`). A state with
   **≥2 frames animates** on a background thread (`talking` is fast with a random-frame mouth); 1 frame
   is a static still; **none** falls back to the built-in procedural face — so with no `faces/` dir the
   face behaves exactly as before. Tune `ROBOT_FACE_FPS` / `ROBOT_FACE_FRAMES_DIR`; the USB-C panel's
   serial link caps the effective frame rate. Inspect frames in dry-run with `ROBOT_FACE_DUMP=<dir>`.
-  Full folder layout + naming rules: [`brain/faces/README.md`](../brain/faces/README.md).
+  You design these (and the spoken earcons) **on your PC** — full process in
+  [`brain/faces/README.md`](../brain/faces/README.md) and [`sounds/README.md`](../sounds/README.md).
 - Mount it forward-facing as the robot's "face"; dim it with `ROBOT_FACE_BRIGHTNESS` to save power.
 
 **Now run the brain LIVE on the bench (still no chassis/motor).** With the PCA9685 + 3 sensors + camera +

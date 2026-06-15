@@ -1,66 +1,77 @@
-# Earcons (non-verbal audio cues)
+# Earcons — spoken audio cues
 
-Drop short **16-bit PCM mono/stereo WAV** files into these folders and `brain/sounds.py` will
-play them as feedback. A random file is chosen from the relevant folder each time. **Empty folders
-are a silent no-op** — the feature is harmless until you add sounds, and it never blocks driving.
+Short **spoken** WAV cues are part of how the robot talks to you: a greeting at boot, an "I heard you"
+on every wake, a "thinking" cue while the (slow) model runs, and an error cue. You **generate them with
+Piper on your PC** (instructions below — the same voice the robot speaks with) and **commit them**, so
+they ship with the repo. `brain/sounds.py` plays a **random** clip from the matching folder each time, so
+dropping a few variants in a folder adds variety.
 
 ```
 sounds/
-  greeting_sounds/   # played once on boot/arm        (e.g. online.wav, systems_go.wav)
-  ack_sounds/        # random blip on EACH wake + command  (e.g. yes.wav, got_it.wav, on_it.wav)  < ~1 s
-  thinking_sounds/   # looped tone WHILE the model runs (e.g. computing.wav, processing.wav) 1–3 s
-  error_sounds/      # on obstacle / LLM error          (e.g. uh_oh.wav)   [optional]
+  greeting_sounds/   # played once on boot/arm             (e.g. "Systems online")
+  ack_sounds/        # random, on EACH wake + accepted cmd  (e.g. "Yes?", "Got it", "On it")  < ~1 s
+  thinking_sounds/   # looped WHILE the model runs          (e.g. "Working on it")  ~1–2 s, loopable
+  error_sounds/      # on obstacle / LLM error              (e.g. "Uh oh")
 ```
 
 **Wake acknowledgement.** Every time the wake word fires (each *"hey jarvis"*), `main.py` plays a
 **random** clip from `ack_sounds/` *as* it switches the face to **`listening`** — so each detection gets
 an audible **and** visual "I heard you" before it records your command (a second `ack` fires when the
-spoken command is then accepted). This is **on by default** (`ROBOT_SOUNDS_ACK=1`); it's silent only
-because `ack_sounds/` ships **empty** — drop a couple of short clips in (see *Generating* below) and the
-random pick gives variety.
+spoken command is then accepted). On by default (`ROBOT_SOUNDS_ACK=1`); put two or three clips in
+`ack_sounds/` and the random pick keeps it from feeling repetitive.
 
-Why this matters here: on the Pi 5 CPU the model is slow (text up to 120 s, **vision up to
-600 s**), so without a cue a think/look is silent and the operator can't tell the robot heard them.
-The **greeting** is especially useful when running **headless under `scripts/robot.service`** (no
-console) as an audible "the stack is up".
+Why this matters here: on the Pi 5 CPU the model is slow (text up to 120 s, **vision up to 600 s**), so
+without a cue a think/look is silent and the operator can't tell the robot heard them. The **greeting**
+is especially useful **headless under `scripts/robot.service`** (no console) as an audible "stack is up".
 
-Tuning is all in [`config/robot.env`](../config/robot.env): `ROBOT_SOUNDS_ENABLE`,
-`ROBOT_SOUNDS_DIR`, **`ROBOT_SOUNDS_DEVICE`** (the USB *speaker* card for `aplay -D`, separate from
-the mic), per-category `ROBOT_SOUNDS_{GREETING,ACK,THINKING,ERROR}`, `ROBOT_THINKING_LEAD_MS`
+An **empty folder is a silent no-op**, and audio never blocks driving — so the robot still runs if a
+folder is empty, it just won't make that cue.
+
+## Generating the spoken cues (on your PC)
+
+Cues are made with **Piper** so they match the robot's own voice. **Do this on your PC** (WSL / macOS /
+Linux), not the Pi — the Pi only ever runs `scripts/install_stack.sh` and reads `config/robot.env`.
+
+**1. One-time: install the tools.**
+```bash
+./scripts/host_setup.sh        # plan -> confirm -> installs Piper (+ the en_US-lessac voice) + sox + the face tools
+```
+This puts Piper at `~/piper/piper/piper` (the same path and voice the Pi uses).
+
+**2. Synthesize one WAV per cue** — pipe the words to Piper. Add several to `ack_sounds/` for variety:
+```bash
+P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
+echo "Systems online" | $P -f sounds/greeting_sounds/online.wav
+echo "Yes?"           | $P -f sounds/ack_sounds/yes.wav
+echo "Got it"         | $P -f sounds/ack_sounds/got_it.wav
+echo "On it"          | $P -f sounds/ack_sounds/on_it.wav
+echo "Working on it"  | $P -f sounds/thinking_sounds/working.wav
+echo "Uh oh"          | $P -f sounds/error_sounds/uh_oh.wav
+```
+Piper writes **16-bit mono 22050 Hz** — fine for `aplay`. If your speaker ever complains about the rate,
+normalize to 44100 with sox (installed by `host_setup.sh`): `sox in.wav -r 44100 -c 1 -b 16 out.wav`.
+
+**3. Test, then commit.** Play a clip with `aplay sounds/ack_sounds/yes.wav` (any machine with a speaker),
+or run `./scripts/run_me.sh --dry`, which logs `SOUND -> <cue>` instead of playing. When they sound right:
+```bash
+git add sounds/ && git commit -m "Spoken earcons"
+```
+`sounds/**/*.wav` is git-tracked (a `.gitignore` exception), so the cues deploy to the robot with your
+next `git pull`/rebase. **This is the exact process used to make the shipped set** — follow it to replace
+them with your own words/voice.
+
+## Tuning (on the Pi, via config)
+
+All knobs live in [`config/robot.env`](../config/robot.env) (reference: [`config/README.md`](../config/README.md)):
+`ROBOT_SOUNDS_ENABLE`, `ROBOT_SOUNDS_DIR`, **`ROBOT_SOUNDS_DEVICE`** (the USB *speaker* card for `aplay -D`,
+separate from the mic), per-category `ROBOT_SOUNDS_{GREETING,ACK,THINKING,ERROR}`, `ROBOT_THINKING_LEAD_MS`
 (stay silent on fast turns), and `ROBOT_THINKING_GAP_MS`.
-
-Format tip: use a sample rate the USB speaker supports natively (44100 or 48000 Hz) so `aplay`
-never has to resample. Keep `ack` clips well under a second; `thinking` clips short and loopable.
 
 Speaker note: **any** USB speaker works — `ROBOT_SOUNDS_DEVICE` is just its `aplay -l` card name, so
 swapping is config-only (no code change). A **USB-powered** model (e.g. **Naciffo 2**) avoids a separate
 PSU. If the speaker has **no volume control** (`amixer -c <id> scontrols` is empty), its level is fixed —
-make the WAVs themselves quieter (`sox in.wav out.wav gain -6`) instead.
+make the WAVs themselves quieter on your PC (`sox in.wav out.wav gain -6`) instead.
 
-## Generating the earcons (concise)
-
-Target format: **16-bit PCM mono WAV**, ideally 44100 Hz. `ack` < 1 s; `thinking` 1–3 s and loopable.
-
-1. **Spoken cues with Piper** (already installed at `~/piper/piper/piper`) — pipe text to a WAV:
-   ```bash
-   P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
-   echo "Got it"         | $P -f sounds/ack_sounds/got_it.wav
-   echo "Systems online" | $P -f sounds/greeting_sounds/online.wav
-   echo "Working on it"  | $P -f sounds/thinking_sounds/working.wav
-   echo "Uh oh"          | $P -f sounds/error_sounds/uh_oh.wav
-   ```
-   (Piper outputs 22050 Hz mono — fine, but run step 3 to match your speaker if `aplay` complains.)
-2. **Beeps/tones with sox** (`sudo apt install sox`):
-   ```bash
-   sox -n sounds/ack_sounds/blip.wav       synth 0.12 sine 880 fade 0 0.12 0.02   # short ack blip
-   sox -n sounds/thinking_sounds/think.wav synth 1.0  sine 440 gain -8            # loopable hum
-   ```
-3. **Normalize** any file to 16-bit mono 44100: `sox in.wav -r 44100 -c 1 -b 16 out.wav`
-4. **Test:** `aplay sounds/ack_sounds/blip.wav`, or `./scripts/run_me.sh --dry` (logs `SOUND -> <cue>`
-   instead of playing).
-
-A random file is picked from each folder, so drop in a few variants per category for variety.
-
-> These cues play through `aplay` under the same half-duplex `audio_lock` as Piper TTS, so a cue
-> can never garble speech or be recorded into a command. In dry-run (`ROBOT_DRY_RUN=1`) nothing is
-> played — each cue logs `SOUND -> <cue>` on the `robot.sound` logger instead.
+> These cues play through `aplay` under the same half-duplex `audio_lock` as Piper TTS, so a cue can never
+> garble speech or be recorded into a command. In dry-run (`ROBOT_DRY_RUN=1`) nothing is played — each cue
+> logs `SOUND -> <cue>` on the `robot.sound` logger instead.

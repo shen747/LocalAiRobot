@@ -50,13 +50,18 @@ brain/wakeword.py        # the wake word (openWakeWord); the ENTER trigger survi
 brain/requirements.txt   # Pi 5 deps (ServoKit, gpiozero, lgpio, Pillow, numpy, pyserial; + openwakeword)
 config/robot.env         # runtime config (env vars)
 config/README.md         # every ROBOT_* setting explained (default + what each does)
-sounds/                  # optional earcon WAVs (greeting/ack/thinking/error); empty = silent — see sounds/README.md
-brain/faces/             # optional per-state PNG animation frames (none = procedural) — see brain/faces/README.md
-scripts/install_stack.sh # one-shot installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
+sounds/                  # spoken earcon WAVs (greeting/ack/thinking/error) — generate with Piper, see sounds/README.md
+brain/faces/             # per-state PNG face frames (none = built-in procedural) — see brain/faces/README.md
+scripts/install_stack.sh # one-shot Pi installer (Ollama + whisper.cpp + Piper + picamera2 + venv)
 scripts/run_me.sh        # run the brain: --dry/--live (foreground), --detach (bg), --reload, --install-boot
 scripts/shutdown.sh      # stop the brain gracefully; --poweroff also halts the Pi
+scripts/setup_audio.sh   # point ALSA's default output at your USB speaker (writes ~/.asoundrc)
+scripts/host_setup.sh    # install the asset-authoring toolkit on YOUR PC (WSL/macOS/Linux) for sounds/faces
+scripts/generate_faces.py  # render procedural face PNG templates to customize (Pillow)
+scripts/rag.sh           # inspect/edit the SQLite memory store (taught people/things, sightings)
 scripts/cleanup_pi.sh    # uninstall: dry-run + confirm, then remove downloads/models/venv/data
 scripts/robot.service    # systemd unit for boot autostart (install: ./scripts/run_me.sh --install-boot)
+tools/wakeword-training/ # PC workspace to train a custom wake word — see its README + docs/opnewakeword/
 docs/assembly.md         # wiring + build reference (start here to build it)
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
@@ -229,11 +234,13 @@ across commands and reboots. **`SAY`** handles plain chat/questions: it answers 
 alarmed / warmup / capturing`. Each state renders the built-in procedural face **or**, if you drop PNG
 frames in `brain/faces/<state>/NN.png`, an animation (≥2 frames; `talking` is fast with a random-frame
 mouth). It auto-selects a backend (USB-C panel → DSI/HDMI framebuffer → simulated-logs) and is **fully
-optional** — a missing panel never blocks driving. See
-[`brain/faces/README.md`](brain/faces/README.md) for the per-state frame layout and rules.
+optional** — a missing panel never blocks driving. To design your own face frames (and the spoken
+earcons) **on your PC** — `./scripts/host_setup.sh` installs the tools — and ship them to the robot, see
+[`brain/faces/README.md`](brain/faces/README.md) and [`sounds/README.md`](sounds/README.md).
 
 **Wake word, audio cues & warmup.** Control is the **wake word** (openWakeWord, **on by default** —
-stock *"hey jarvis"*): the robot listens continuously and wakes on it, then records a command. In
+stock *"hey jarvis"*, or **train your own on your PC**: [`tools/wakeword-training/`](tools/wakeword-training/README.md)):
+the robot listens continuously and wakes on it, then records a command. In
 **live this is the only trigger** (if it can't load, the brain exits — `q` over SSH still quits); the
 **ENTER trigger remains only in `--dry`** bench mode. Continuous listening is also what lets the brain
 run **headless under `scripts/robot.service`** (no stdin needed). The wake word only *starts* capture; the explore/find autonomy gate is separate and
