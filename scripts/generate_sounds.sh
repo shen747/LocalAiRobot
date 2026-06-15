@@ -3,11 +3,20 @@
 # folders and speaks a default set into them; edit the word list at the bottom to make them your own,
 # then commit. Run this AFTER ./scripts/host_setup.sh (which installs Piper + the en_US-lessac voice).
 #
-#   ./scripts/generate_sounds.sh        # write the default spoken cues (overwrites same-named files)
+#   ./scripts/generate_sounds.sh          # write ONLY cues you don't already have (safe to re-run -- skips existing)
+#   ./scripts/generate_sounds.sh --force  # re-synthesize ALL of them (overwrite existing)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PIPER="$HOME/piper/piper/piper"
 VOICE="$HOME/piper/en_US-lessac-medium.onnx"
+
+FORCE=0
+case "${1:-}" in
+  -f|--force) FORCE=1 ;;
+  -h|--help)  echo "usage: $(basename "$0") [--force]   (default: skip cues that already exist)"; exit 0 ;;
+  "") ;;
+  *) echo "unknown option: $1 (use --force)"; exit 2 ;;
+esac
 
 if [ ! -x "$PIPER" ] || [ ! -f "$VOICE" ]; then
   echo "Piper isn't installed where this expects it:" >&2
@@ -21,10 +30,17 @@ cd "$REPO"
 mkdir -p sounds/greeting_sounds sounds/wake_word_ack sounds/ack_sounds \
          sounds/thinking_sounds sounds/error_sounds
 
-# say <out.wav> "<words>": speak the words into the WAV with Piper (the robot's own voice).
+# say <out.wav> "<words>": speak the words into the WAV with Piper (the robot's own voice). Skips a file
+# that already exists (so re-running never regenerates/clobbers what's there) unless --force.
+made=0; kept=0
 say() {
+  if [ -e "$1" ] && [ "$FORCE" != 1 ]; then
+    printf '  kept   %-38s (exists -- --force to overwrite)\n' "$1"
+    kept=$((kept + 1)); return
+  fi
   if echo "$2" | "$PIPER" -m "$VOICE" -f "$1" >/dev/null 2>&1; then
     printf '  wrote  %-38s "%s"\n' "$1" "$2"
+    made=$((made + 1))
   else
     echo "  !! FAILED $1 -- test Piper by hand: echo hi | \"$PIPER\" -m \"$VOICE\" -f /tmp/t.wav" >&2
   fi
@@ -47,5 +63,6 @@ say sounds/thinking_sounds/thinking.wav  "Let me think"
 # error -- obstacle / LLM error
 say sounds/error_sounds/uh_oh.wav        "Uh oh"
 
-echo ">> done. Test a clip:   aplay sounds/ack_sounds/yes.wav"
-echo "   Keep them?           git add sounds/ && git commit -m \"Spoken earcons\""
+echo ">> done: $made written, $kept kept (already existed; use --force to overwrite)."
+echo "   Test a clip:  aplay sounds/wake_word_ack/yes.wav"
+echo "   Keep them?    git add sounds/ && git commit -m \"Spoken earcons\""

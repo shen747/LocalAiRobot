@@ -45,11 +45,13 @@ This puts Piper at `~/piper/piper/piper` (the same path and voice the Pi uses).
 
 **2. Generate the spoken set.**
 ```bash
-./scripts/generate_sounds.sh   # makes the sound folders + speaks a default set into them
+./scripts/generate_sounds.sh   # creates the folders + speaks the default cues
 ```
-**To change the words/voice**, edit the `say <file> "<words>"` lines near the bottom of
-`scripts/generate_sounds.sh` and re-run. Add several `ack_sounds/` lines — the robot plays one at random
-each wake. To add or replace a *single* cue by hand (the folders now exist), call Piper directly:
+Re-running is **safe**: it only fills in cues you're **missing** and **skips ones that already exist** —
+it never regenerates or duplicates them. **To change the words/voice**, edit the `say <file> "<words>"`
+lines near the bottom of `scripts/generate_sounds.sh`, then re-run with **`--force`** (or delete that file
+first). Add several `wake_word_ack/` and `ack_sounds/` lines — the robot plays one at random each time. To
+add or replace a *single* cue by hand (the folders exist after the script), call Piper directly:
 ```bash
 P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
 echo "Coming right up" | $P -f sounds/ack_sounds/coming.wav
@@ -57,7 +59,7 @@ echo "Coming right up" | $P -f sounds/ack_sounds/coming.wav
 Piper writes **16-bit mono 22050 Hz** — fine for `aplay`. If a speaker ever complains about the rate,
 normalize to 44100 with sox (from `host_setup.sh`): `sox in.wav -r 44100 -c 1 -b 16 out.wav`.
 
-**3. Test, then commit.** Play a clip with `aplay sounds/ack_sounds/yes.wav` (any machine with a speaker),
+**3. Test, then commit.** Play a clip with `aplay sounds/wake_word_ack/yes.wav` (any machine with a speaker),
 or run `./scripts/run_me.sh --dry`, which logs `SOUND -> <cue>` instead of playing. When they sound right:
 ```bash
 git add sounds/ && git commit -m "Spoken earcons"
