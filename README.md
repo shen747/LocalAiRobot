@@ -5,10 +5,10 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
-![LocalAiRobot voice + vision control flow: a voice command — started by a wake word (openWakeWord; ENTER push-to-talk survives in --dry only) — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the gemma4:e2b-it-qat text model (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks the moondream VLM what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama server behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
+![LocalAiRobot voice + vision control flow: a voice command — started by a wake word (openWakeWord; ENTER push-to-talk survives in --dry only) — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the gemma4:e4b-it-qat text model (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks the moondream VLM what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama server behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
-intent (**Ollama** `gemma4:e2b-it-qat`; a separate **`moondream`** VLM reads the camera frames), speaks a reply
+intent (**Ollama** `gemma4:e4b-it-qat`; a separate **`moondream`** VLM reads the camera frames), speaks a reply
 (**Piper**), shows a face, and drives the car. A **PCA9685** over I2C generates the 50 Hz PWM for the
 **ESC (Electronic Speed Controller)** (Electronic Speed Controller — the throttle/motor driver between battery and motor) and the
 steering servo, jitter-free even under LLM load; a **3-sensor HC-SR04P** array (front/left/right) cuts
@@ -143,7 +143,7 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md).
 git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # put your GitHub username in place of YOUR_GITHUB_USER
 cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
 ```
-Installs Ollama + `gemma4:e2b-it-qat`, whisper.cpp + `base.en`, Piper + voice, **picamera2** (apt) and the
+Installs Ollama + `gemma4:e4b-it-qat`, whisper.cpp + `base.en`, Piper + voice, **picamera2** (apt) and the
 **USB-C face-panel library**, enables I2C, adds you to the `i2c`/`gpio`/`dialout`/`audio`/`video`
 groups, and builds the venv at `brain/.venv` **with `--system-site-packages`** (required so it can see
 picamera2/libcamera).
@@ -151,7 +151,7 @@ picamera2/libcamera).
 **2. Reboot and verify.**
 ```bash
 sudo reboot
-ollama list                     # lists gemma4:e2b-it-qat (text) + moondream (vision)
+ollama list                     # lists gemma4:e4b-it-qat (text) + moondream (vision)
 i2cdetect -y 1                  # PCA9685 at 0x40
 rpicam-hello --list-cameras     # the IMX219 NoIR (needs the Pi-5 22→15 adapter cable)
 lsusb | grep -i 1a86            # the USB-C face panel (CH340 serial), if connected

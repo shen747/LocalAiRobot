@@ -25,7 +25,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MODEL` | `gemma4:e2b-it-qat` | Ollama **text/intent** model (4-bit QAT — fast on the Pi) that turns a transcript into the command JSON. Vision is a separate `ROBOT_VISION_MODEL`. |
+| `ROBOT_MODEL` | `gemma4:e4b-it-qat` | Ollama **text/intent** model (4-bit QAT) that turns a transcript into the command JSON. **E4B** = more capable (better at structured fields like REMEMBER's `note` + recall) but slower; **E2B** (`gemma4:e2b-it-qat`) = faster/lighter. Vision is a separate `ROBOT_VISION_MODEL`. |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |

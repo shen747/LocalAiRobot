@@ -116,14 +116,14 @@ drives no hardware at all).
 6. **Send the local LLM a text prompt and watch it reply** (then check the Pi stays cool). This is the
    proof the AI brain runs **entirely on the Pi** — Ollama serves the model on `localhost`, no internet:
    ```bash
-   ollama list                                        # expect gemma4:e2b-it-qat (text) AND moondream (vision)
-   ollama run gemma4:e2b-it-qat "reply with one word: ready"  # send a text prompt -> the model prints a reply
+   ollama list                                        # expect gemma4:e4b-it-qat (text) AND moondream (vision)
+   ollama run gemma4:e4b-it-qat "reply with one word: ready"  # send a text prompt -> the model prints a reply
                                                       #   (first run is a slow cold load; Ctrl-D to exit)
    ```
    You should see the model print its answer. **Ask it anything** to be sure it's really thinking:
    ```bash
-   ollama run gemma4:e2b-it-qat "name three primary colours" # one-shot: prompt in quotes, reply prints, done
-   ollama run gemma4:e2b-it-qat                              # interactive chat: type, read reply, /bye to quit
+   ollama run gemma4:e4b-it-qat "name three primary colours" # one-shot: prompt in quotes, reply prints, done
+   ollama run gemma4:e4b-it-qat                              # interactive chat: type, read reply, /bye to quit
    ```
    Want proof it's truly offline? Turn Wi-Fi off and ask again — it still answers. Then watch the
    temperature while the model works (it's CPU-heavy):
@@ -345,7 +345,7 @@ These BCM pins avoid I2C (2/3), SPI0 (7–11) and UART (14/15); alternates if yo
 ## Phase 5 — Wire the camera (IMX219: Pi Camera V2 NoIR **or** Arducam IMX219 8MP)
 
 Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text
-brain `gemma4:e2b-it-qat` is multimodal too and can take over if you empty that var). It is on the **CSI
+brain `gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var). It is on the **CSI
 ribbon**, not GPIO/I2C, so it doesn't conflict with anything else.
 
 - **Any IMX219 module works — pick whichever you have.** A **Pi Camera V2 NoIR** and an **Arducam IMX219

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
-# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e2b-it-qat (intent JSON) -> Piper (TTS),
+# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e4b-it-qat (intent JSON) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
@@ -46,7 +46,7 @@ def load_config():
     home = os.path.expanduser("~")
     return {
         "ollama_url": env("ROBOT_OLLAMA_URL", "http://localhost:11434/api/generate"),
-        "model": env("ROBOT_MODEL", "gemma4:e2b-it-qat"),
+        "model": env("ROBOT_MODEL", "gemma4:e4b-it-qat"),
         "whisper_bin": env("ROBOT_WHISPER_BIN", os.path.join(home, "whisper.cpp/build/bin/whisper-cli")),
         "whisper_model": env("ROBOT_WHISPER_MODEL", os.path.join(home, "whisper.cpp/models/ggml-base.en.bin")),
         "piper_bin": env("ROBOT_PIPER_BIN", os.path.join(home, "piper/piper/piper")),

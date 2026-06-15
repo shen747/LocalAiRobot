@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Installs the fully-offline AI stack + Raspberry Pi 5 hardware deps for the RC crawler (arm64):
-# Ollama + gemma4:e2b-it-qat (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
+# Ollama + gemma4:e4b-it-qat (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
 # and the Python venv. Needs internet for THIS step only. Re-runnable.
 set -euo pipefail
 
-MODEL="${ROBOT_MODEL:-gemma4:e2b-it-qat}"
+MODEL="${ROBOT_MODEL:-gemma4:e4b-it-qat}"
 VISION_MODEL="${ROBOT_VISION_MODEL:-moondream}"
 WHISPER_MODEL="base.en"
 PIPER_REL="2023.11.14-2"      # check https://github.com/rhasspy/piper/releases
@@ -117,7 +117,7 @@ echo ">> audio: pointing ALSA's default output at your USB speaker (if one is pl
 bash "${REPO}/scripts/setup_audio.sh" || true
 
 echo ">> DONE -- the offline AI stack is installed:"
-echo "   Ollama + the gemma4:e2b-it-qat (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
+echo "   Ollama + the gemma4:e4b-it-qat (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
 echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
 echo
 echo "What to do next  (full, explained walkthrough: docs/assembly.md -> Phase 1, from step 5):"
@@ -134,7 +134,7 @@ echo "        - point the VOICE at your USB speaker:   ./scripts/setup_audio.sh 
 echo "        - for the bench, set ROBOT_DRY_RUN=1   (nothing drives)"
 echo
 echo "   3. Check the AI brain answers, entirely on the Pi (no internet):"
-echo "        ollama run gemma4:e2b-it-qat \"reply with one word: ready\""
+echo "        ollama run gemma4:e4b-it-qat \"reply with one word: ready\""
 echo
 echo "   4. Dry-run the brain -- nothing moves, it just prints what it WOULD do:"
 echo "        ./scripts/run_me.sh --dry"
