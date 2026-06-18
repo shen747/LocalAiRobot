@@ -153,7 +153,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 |---|---|---|
 | `ROBOT_WAKEWORD_ENABLE` | `1` | `1` = always-listening wake word (required in live). `0` disables it — then **live has no trigger** and the brain exits; ENTER works only in `--dry`. |
 | `ROBOT_WAKEWORD_MODEL` | `~/LocalAiRobot/models/hey_jarvis.onnx` | Path to the wake `.onnx`. Ships wired to the stock **hey_jarvis** (reliable out of the box); a custom **hey_richard** also ships in `models/` (retrain it stronger to switch). Missing/unloadable → **live has no trigger** (the brain exits; ENTER works only in `--dry`). [openwake-word.md](../docs/opnewakeword/openwake-word.md). |
-| `ROBOT_WAKEWORD_THRESHOLD` | `0.5` | Minimum detection probability 0–1. Stock models score high (use `0.5`); a weak custom model may need `0.3`–`0.15` (watch the `best score` log line). |
+| `ROBOT_WAKEWORD_THRESHOLD` | `0.4` | Minimum detection probability 0–1. Watch the `best score`/`loudest` log line: if genuine *"hey jarvis"* lands below this, lower it; **but first check `loudest` isn't near 32767** (mic clipping collapses the score — lower the mic gain instead). Raise toward `0.5`+ if it false-fires. |
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |
 | `ROBOT_WAKEWORD_DEVICE` | *(empty)* | The **wake mic** (PortAudio): an index, or a unique substring of the mic's name (e.g. `PnP`) — by-name survives card renumbering. Empty = default input. |
