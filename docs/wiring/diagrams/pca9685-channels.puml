@@ -1,0 +1,30 @@
+@startuml pca9685-channels
+title PCA9685 output columns — component side up, POWER terminal at TOP, output pins along BOTTOM
+
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #333333
+  FontSize 12
+}
+
+' Each channel is a vertical column of 3 pins. Physical top->bottom = PWM, V+, GND.
+
+rectangle "Channel 0  (leftmost = ESC)" as C0 #f7f7f7 {
+  rectangle "PWM  (yellow row)  <-  ESC signal  (white)" as C0P #FFE082
+  rectangle "V+   (red row)     <-  ESC BEC red  (feeds 6V rail)" as C0V #EF9A9A
+  rectangle "GND  (black row)   <-  ESC black" as C0G #CFD8DC
+}
+
+rectangle "Channel 1  (2nd from left = front servo)" as C1 #f7f7f7 {
+  rectangle "PWM  (yellow row)  <-  servo signal (yellow)" as C1P #FFE082
+  rectangle "V+   (red row)     <-  servo red  (powered by rail)" as C1V #EF9A9A
+  rectangle "GND  (black row)   <-  servo brown" as C1G #CFD8DC
+}
+
+C0 -[hidden]right-> C1
+
+note bottom of C1
+  Verify with the silkscreen: "0" is printed under the first column, "15" under the last.
+  Channels 2..15 stay unused.
+end note
+@enduml

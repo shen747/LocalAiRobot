@@ -1,0 +1,34 @@
+@startuml wiring-overview
+title LocalAiRobot — Power & Signal Wiring (front-steer, brushed 540 35T)
+
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #333333
+}
+
+package "MOTOR DOMAIN  (7.4V LiPo)" #ffe6e6 {
+  rectangle "2S LiPo\n5200 mAh" as LIPO
+  rectangle "Kill switch\n(inline loop)" as KILL
+  rectangle "ESC\n(QuicRun brushed)" as ESC
+  rectangle "540 35T\nbrushed motor" as MOTOR
+}
+
+package "BRAIN DOMAIN  (5V / 3.3V)" #e6f0ff {
+  rectangle "Raspberry Pi 5\n(27W PSU / UPS HAT)" as PI
+  rectangle "PCA9685\nPWM @ 0x40" as PCA
+  rectangle "Steering servo\n(FRONT only, ch1)" as SERVO
+}
+
+LIPO  --> KILL  : red (+) / black (-)
+KILL  --> ESC   : battery in
+ESC   --> MOTOR : blue + yellow\n(2-wire brushed)
+ESC   --> PCA   : 3-wire lead\nsignal -> ch0 PWM\nred -> V+ rail (6V BEC)\nblack -> ch0 GND
+PCA   --> SERVO : ch1\nPWM / V+ / GND
+PI    --> PCA   : 3.3V VCC\nSDA=GPIO2 / SCL=GPIO3\nGND  (I2C)
+
+note bottom
+  COMMON GROUND BUS:  Pi GND  <->  PCA9685 GND  <->  ESC GND
+  The ESC 6V BEC (on ch0 V+) powers the whole V+ rail -> the ch1 servo.
+  NEVER bridge LiPo (+) to the Pi/brain (+).
+end note
+@enduml

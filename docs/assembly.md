@@ -279,29 +279,20 @@ BEC** feeding the PCA9685 V+ rail and the steering servo), and where the sensors
 
 ## Phase 3 — Wire the PWM bridge (PCA9685)
 
-Still on the bench, **ESC (Electronic Speed Controller)/motor not connected.** The Pi 5 cannot cleanly bit-bang servo signals while
-running an LLM, so a PCA9685 generates them over I2C. Wire it like this:
+Still on the bench, **ESC (Electronic Speed Controller)/motor not connected.** The Pi 5 cannot cleanly
+bit-bang servo signals while running an LLM, so a PCA9685 generates them over I2C. **In this phase wire
+only the Pi↔PCA9685 logic side** — four jumpers: `VCC`→Pi **3.3V**, `SDA`→**GPIO2**, `SCL`→**GPIO3**,
+`GND`→Pi **GND**. The ESC and servo outputs come later (Phase 7).
 
-| PCA9685 pin | Connect to | Why |
-|---|---|---|
-| `VCC` (logic) | Pi **3.3V** | chip logic + I2C level (matches the Pi's 3.3V I2C) |
-| `SDA` | Pi **GPIO2 / SDA** | I2C data |
-| `SCL` | Pi **GPIO3 / SCL** | I2C clock |
-| `GND` | Pi **GND** | common ground (also shared with the ESC (Electronic Speed Controller)) |
-| `V+` (servo rail) | **ESC (Electronic Speed Controller) 6V BEC** (the red wire of the ESC (Electronic Speed Controller)'s servo plug) | powers the steering servo — **not** from the Pi |
-| Channel 0 (signal/V+/GND) | **ESC (Electronic Speed Controller) signal plug** | throttle PWM to the ESC (Electronic Speed Controller) (+ BEC feeds V+, + GND) |
-| Channel 1 (signal/V+/GND) | **steering servo** | steering PWM + 6V power + GND |
+> 📐 **Full pin-by-pin wiring lives in one place:** board orientation, which output column is ch0 (ESC) /
+> ch1 (servo), the ESC 3-wire + servo leads, the V+ rail fed by the ESC's 6V BEC, the exact Pi-header
+> pins, and the `i2cdetect` walkthrough — see **[PWM / ESC / servo wiring](wiring/pwm-esc-servo-wiring.md)**.
+> This phase is just its logic-side connection; only channels 0 and 1 are used (2–15 stay free).
 
-Notes:
-- The ESC (Electronic Speed Controller)'s 3-wire plug (the one that normally goes to an RC receiver's throttle channel) carries
-  **signal + 6V BEC + GND**. Signal → PCA9685 ch0 signal; BEC red → PCA9685 V+ rail; GND → PCA9685 GND.
-  (You make the ESC (Electronic Speed Controller) connection itself in Phase 7 — for now just wire the Pi↔PCA9685 logic side.)
-- Default I2C address is **0x40** (`i2cdetect -y 1`). If you stacked boards/changed solder jumpers,
-  set `ROBOT_PCA9685_*`/the driver accordingly. Channels 2–15 stay free.
-- The DS3225 is a hungry servo (stall ~2.5–3A). The QuicRun's 6V/3A BEC is enough for normal steering;
-  if you see brownouts under hard steering load, add a separate servo BEC on the V+ rail.
+The DS3225 is a hungry servo (stall ~2.5–3A). The QuicRun's 6V/3A BEC is enough for normal steering; if
+you see brownouts under hard steering load, add a separate servo BEC on the V+ rail.
 
-**Check:** `i2cdetect -y 1` shows the PCA9685 at **0x40**.
+**Check:** `i2cdetect -y 1` shows the PCA9685 at **0x40** (full grid walkthrough in the wiring guide).
 
 ---
 
@@ -447,9 +438,10 @@ This is where the **ESC (Electronic Speed Controller), motor, and LiPo finally g
    Keep fan airflow clear.
 4. Mount the **ESC (Electronic Speed Controller)**, **PCA9685**, and **LiPo** on the chassis; route wiring clear of the driveshafts
    and steering links. Keep the mic away from the cooler fan to reduce recorded noise. **Now make the
-   motor-domain connections you deferred in Phase 3:** ESC (Electronic Speed Controller) 3-wire plug → PCA9685 **ch0** (signal / V+ /
-   GND, with the BEC red on the V+ rail), the **steering servo → ch1**, and the **LiPo → ESC (Electronic Speed Controller) through
-   your physical kill switch**. Keep all grounds common (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller)); never bridge the battery
+   motor-domain connections you deferred in Phase 3** — ESC → motor, ESC 3-wire → PCA9685 **ch0**,
+   **steering servo → ch1**, and **LiPo → ESC (Electronic Speed Controller) through your physical kill
+   switch** — done pin-by-pin in the **[PWM / ESC / servo wiring guide](wiring/pwm-esc-servo-wiring.md)**.
+   Keep all grounds common (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller)); never bridge the battery
    positives (Phase 2).
 5. Mount the **3-sensor plate** across the front (forward + ~45–60° left/right), clear of the wheels and
    roughly level. Mount the **camera** forward-facing near the sensors, and the **face panel** where you
