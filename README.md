@@ -75,6 +75,11 @@ docs/images/*.puml       # editable PlantUML sources for the diagrams (render in
 
 Search terms are generic — use your preferred retailer.
 
+> 🛒 **Ready-made cart:** the parts below are collected in this
+> [**AliExpress wishlist**](https://www.aliexpress.com/p/wish-manage/share.html?spm=a2g0o.productlist.headerAcount.6.5b533bbc853DSK&smbPageCode=wishlist-amp&spreadId=EAF81BDA069358563ED6BEBC329A18554A43DABDD29B2526E03A87F05A681D99)
+> if you'd rather buy the same items than search. Listings/prices change over time — confirm each against
+> the search terms and notes here before ordering.
+
 **Compute, power & audio (Pi side):**
 
 | Part | Search term | Notes |
