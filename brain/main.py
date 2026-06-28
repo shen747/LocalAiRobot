@@ -333,6 +333,8 @@ def main():
         return
 
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
+    if getattr(driver, "motors_off", False):
+        mode += " — MOTORS OFF (stationary: wheels won't move; everything else live)"
     if getattr(driver, "hw_failed", False):
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")

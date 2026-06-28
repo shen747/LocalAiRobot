@@ -53,6 +53,14 @@ def dry_run_enabled():
     return os.environ.get("ROBOT_DRY_RUN", os.environ.get("ROBOT_SIMULATE", "0")) == "1"
 
 
+def motors_off_enabled():
+    # STATIONARY / tabletop mode: run fully LIVE but suppress the ESC + steering PWM so the wheels
+    # never move (the console still logs every intended command, like dry-run). Distinct from dry_run,
+    # which ALSO fakes the camera/face/wake word/sounds -- motors-off keeps all of those live and only
+    # silences the motor outputs. Has no effect under dry_run (that already fakes the motors).
+    return os.environ.get("ROBOT_MOTORS_OFF", "0") == "1"
+
+
 # ---------------------------------------------------------------------------
 # Dry-run fakes. These stand in for adafruit_servokit.ServoKit and
 # gpiozero.DistanceSensor so the whole pipeline runs with no I2C/GPIO present.
@@ -103,6 +111,8 @@ class RobotDriver:
 
     def __init__(self):
         self.dry_run = dry_run_enabled()
+        # Stationary mode only matters when we're otherwise LIVE (dry_run already fakes the motors).
+        self.motors_off = motors_off_enabled() and not self.dry_run
 
         # --- PCA9685 channels ---
         self.esc_ch = _envi("ROBOT_ESC_CHANNEL", 0)
@@ -147,8 +157,14 @@ class RobotDriver:
         self._io = threading.Lock()
         self._lock = threading.Lock()
 
-        log.info("*** %s ***", "DRY RUN -- no hardware will be driven"
-                 if self.dry_run else "LIVE HARDWARE")
+        if self.dry_run:
+            _mode = "DRY RUN -- no hardware will be driven"
+        elif self.motors_off:
+            _mode = ("MOTORS OFF (stationary) -- LIVE sensors/camera/voice/wake, but the ESC + steering "
+                     "get NO PWM (wheels won't move; commands are still logged)")
+        else:
+            _mode = "LIVE HARDWARE"
+        log.info("*** %s ***", _mode)
         log.info("PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC (Electronic Speed Controller) ch=%d, steer ch=%d | "
                  "max_throttle=%.2f invert=%d", self.esc_ch, self.steer_ch,
                  self.max_throttle, int(self.invert))
@@ -173,11 +189,14 @@ class RobotDriver:
             # Each device is built defensively: a hardware failure is LOGGED (naming the device
             # and how to fix it) and swapped for a fake, so the brain keeps running instead of
             # crashing with a traceback.
-            try:
-                from adafruit_servokit import ServoKit
-            except Exception as e:
-                ServoKit = None
-                log.error("HARDWARE FAILURE: PCA9685 driver import failed (adafruit_servokit): %s", e)
+            if self.motors_off:
+                ServoKit = None      # motors-off: PWM is simulated, so the real PCA9685 driver isn't needed
+            else:
+                try:
+                    from adafruit_servokit import ServoKit
+                except Exception as e:
+                    ServoKit = None
+                    log.error("HARDWARE FAILURE: PCA9685 driver import failed (adafruit_servokit): %s", e)
             try:
                 from gpiozero import DistanceSensor
             except Exception as e:
@@ -194,16 +213,23 @@ class RobotDriver:
                 pass
 
             # PCA9685 (ESC throttle + steering servo) -- probes I2C 0x40; the usual failure point.
-            try:
-                if ServoKit is None:
-                    raise RuntimeError("adafruit_servokit unavailable")
-                self.kit = ServoKit(channels=channels)
-            except Exception as e:
-                log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40 (SDA GPIO2 / SCL GPIO3): %s", e)
-                log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and `i2cdetect -y 1` "
-                          "(expect 0x40); on the bench run with ROBOT_DRY_RUN=1. Motors are DISABLED.")
+            if self.motors_off:
+                # STATIONARY mode: deliberately fake the PWM output so the ESC/servo get NO signal
+                # (wheels won't move). Sensors below stay REAL. This is intentional, NOT hw_failed.
+                log.info("*** MOTORS OFF (stationary): ESC/servo PWM is SIMULATED -- wheels will NOT move; "
+                         "sensors, camera, face, voice + wake word are LIVE. ***")
                 self.kit = FakeServoKit(channels=channels)
-                self.hw_failed = True
+            else:
+                try:
+                    if ServoKit is None:
+                        raise RuntimeError("adafruit_servokit unavailable")
+                    self.kit = ServoKit(channels=channels)
+                except Exception as e:
+                    log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40 (SDA GPIO2 / SCL GPIO3): %s", e)
+                    log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and `i2cdetect -y 1` "
+                              "(expect 0x40); on the bench run with ROBOT_DRY_RUN=1. Motors are DISABLED.")
+                    self.kit = FakeServoKit(channels=channels)
+                    self.hw_failed = True
 
             # Three HC-SR04P distance sensors -- build each on its own so one bad pin doesn't take
             # out the others. A failed sensor falls back to a fake (reads 'clear'); we log loudly.

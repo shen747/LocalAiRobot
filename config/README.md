@@ -19,6 +19,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_DRY_RUN` | `0` | `1` = no real PCA9685/ESC/servo/sensors needed: `driver.py` swaps in fakes and **logs** every intended GPIO/PWM/I2C action. Use `1` on the bench, `0` to drive real hardware. (`ROBOT_SIMULATE` is an alias.) |
+| `ROBOT_MOTORS_OFF` | `0` | `1` = **stationary / tabletop** mode: runs **fully live** (wake word, voice, camera, sensors, RAG, face) but the **ESC + steering get no PWM** — the console still logs the throttle/steer commands (like dry-run) yet the **wheels never move**. For talking to the assembled car on a desk without it driving off. Needs `ROBOT_DRY_RUN=0` (dry-run already fakes everything). |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
 ## AI backend (local Ollama vs remote Gemini)

@@ -198,6 +198,11 @@ robot.hw INFO I2C->PCA9685 SERVO ch=1 steer=LEFT   angle=55.0deg pulse_us=1111
 Set `ROBOT_FAKE_DISTANCE_CM=20` to prove the forward gate trips; set `ROBOT_FAKE_VISION=sofa:left:near:0.9`
 and say *"find the sofa"* to dry-run the whole explore loop with no camera.
 
+> 🪑 **Talk to the *built* car on a desk (wheels off).** Set **`ROBOT_MOTORS_OFF=1`** (keep
+> `ROBOT_DRY_RUN=0`) and run `--live`: wake word, voice, camera, sensors and face all work for real, but
+> the ESC + steering get **no signal**, so it **can't drive off the table** — the console still shows the
+> throttle/steer commands. Back to driving: `ROBOT_MOTORS_OFF=0`.
+
 **5. Calibrate on a stand — wheels OFF the ground** (LIVE now, ESC (Electronic Speed Controller) powered). Run the brain and:
 - say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`;
 - say *"go forward"* (low speed); if it reverses, set `ROBOT_THROTTLE_INVERT=1`;

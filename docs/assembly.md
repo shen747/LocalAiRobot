@@ -444,6 +444,10 @@ switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: e
 launch) — repeat until it's dialled in. If a board isn't found, the brain now **logs which device failed
 and runs degraded** (motors off) instead of crashing — read that line, fix the wiring, and relaunch.
 
+> 🪑 **Test voice/vision without driving.** Set **`ROBOT_MOTORS_OFF=1`** (keep `ROBOT_DRY_RUN=0`) to run
+> fully live — wake word, camera, sensors, face — with the **ESC/steering getting no signal** (wheels
+> won't move). Ideal for desk-testing the brain on the assembled car before the throttle steps below.
+
 1. **ESC (Electronic Speed Controller) arm:** with the LiPo connected, the brain holds neutral for `ROBOT_ESC_ARM_SECS` on start — the
    ESC (Electronic Speed Controller) should beep its arming tones. No arm = check signal/GND to PCA9685 ch0 and the BEC on V+.
 2. **Steering:** run the brain, say *"center" / "left" / "right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`
