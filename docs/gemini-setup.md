@@ -52,8 +52,38 @@ Then reload the config (the brain reads the **shell**, not the file):
 set -a; source config/robot.env; set +a      # or just open a new SSH session; or ./scripts/run_me.sh --reload
 ```
 
-> 🔒 **Keep the key secret.** It lives only in `config/robot.env` on your Pi. **Don't commit a real key.**
-> If it ever leaks, delete/rotate it in AI Studio → API Keys.
+### Paste the key over SSH without an editor (keeps it out of GitHub)
+
+`ROBOT_GEMINI_API_KEY=` ships **empty** in the repo, so your key is never on GitHub. On the Pi, inject your
+real key with `sed` instead of opening an editor (the `|` delimiter avoids any clash — replace `AIza…`):
+
+```bash
+sed -i "s|^ROBOT_GEMINI_API_KEY=.*|ROBOT_GEMINI_API_KEY=AIza...your-key...|" config/robot.env
+```
+
+To avoid leaving the key in your shell history, read it into a variable first (no echo) — history then
+records only `${KEY}`, not the key itself:
+
+```bash
+read -rsp 'Gemini API key: ' KEY && echo
+sed -i "s|^ROBOT_GEMINI_API_KEY=.*|ROBOT_GEMINI_API_KEY=${KEY}|" config/robot.env
+unset KEY
+```
+
+Check it took (without printing the key):
+
+```bash
+grep -q '^ROBOT_GEMINI_API_KEY=AIza' config/robot.env && echo "key set" || echo "key NOT set"
+```
+
+> 🔒 **Keep the key secret.** `config/robot.env` is a **tracked** file, so your edit shows in `git status`.
+> Simplest rule: **never `git add config/robot.env`** (and avoid blind `git commit -a`). Belt-and-braces,
+> tell git to ignore your local edits to it:
+> ```bash
+> git update-index --skip-worktree config/robot.env      # undo with: --no-skip-worktree
+> ```
+> (While that's on, a `git pull` that also changes this file upstream may complain — temporarily
+> `--no-skip-worktree`, pull, then re-apply.) If a key ever leaks, delete/rotate it in AI Studio → API Keys.
 
 ---
 
