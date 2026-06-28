@@ -21,7 +21,28 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | `ROBOT_DRY_RUN` | `0` | `1` = no real PCA9685/ESC/servo/sensors needed: `driver.py` swaps in fakes and **logs** every intended GPIO/PWM/I2C action. Use `1` on the bench, `0` to drive real hardware. (`ROBOT_SIMULATE` is an alias.) |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
+## AI backend (local Ollama vs remote Gemini)
+
+The "brain" — **text-intent and camera vision** — runs either **locally** on Ollama (default, fully
+offline) or **remotely** on **Google Gemini**. The one switch flips **both**. Speech (whisper/piper),
+sensors, motors, face and the wake word are **always local**. Getting a key + full setup:
+**[docs/gemini-setup.md](../docs/gemini-setup.md)**.
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_AI_BACKEND` | `local` | `local` = Ollama on the Pi (offline) \| `gemini` = Google Gemini (remote — needs network + a key, and camera frames leave the device). |
+| `ROBOT_GEMINI_API_KEY` | *(empty)* | Google AI Studio key — **required** when `gemini`. Keep it secret (don't commit). [How to get one →](../docs/gemini-setup.md) |
+| `ROBOT_GEMINI_MODEL` | `gemini-2.5-flash` | Remote **text/intent** model. |
+| `ROBOT_GEMINI_VISION_MODEL` | *(empty)* | Remote **vision** model; empty → reuse `ROBOT_GEMINI_MODEL` (Gemini is multimodal). |
+| `ROBOT_GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta` | API base; override for a proxy/region. |
+
+The remote path reuses the existing call timeouts (`ROBOT_LLM_TIMEOUT_S` for text, `ROBOT_VISION_TIMEOUT_S`
+for vision).
+
 ## AI stack (models, binaries, mic)
+
+`ROBOT_MODEL` / `ROBOT_OLLAMA_URL` (and **Model orchestration** below) apply when
+`ROBOT_AI_BACKEND=local`; whisper/piper/mic are local regardless.
 
 | Key | Default | What it does |
 |---|---|---|

@@ -67,6 +67,7 @@ tools/wakeword-training/ # PC workspace to train a custom wake word — see its 
 docs/assembly.md         # phased build + calibration reference (start here to build it)
 docs/wiring/pwm-esc-servo-wiring.md  # pin-by-pin drive+steering wiring: ESC/PWM/servo → Pi (+ diagrams)
 docs/wiring/ultrasonic-sensors-wiring.md  # pin-by-pin 3x HC-SR04P sensors → Pi GPIO (direct)
+docs/gemini-setup.md     # OPTIONAL: run the brain on remote Google Gemini instead of local Ollama
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
 
@@ -171,6 +172,15 @@ arecord -l                      # find your mic → plughw:x,y ;  aplay -l → t
 `ROBOT_MIC`, and the sensor pins. Camera/face/explore/memory plus the wake-word/audio-cue/warmup
 knobs have working defaults (the wake word is **on** by default). (If playback is silent, make the
 USB sound card the default ALSA output.)
+
+> ☁️ **Optional — remote brain (Google Gemini).** The LLM + vision run **locally by default** (offline).
+> To run them on Gemini instead (faster, but online + an API key — camera frames leave the device):
+> 1. **Get a key** → **[docs/gemini-setup.md](docs/gemini-setup.md)** (AI Studio → create a project → *API Keys → Create API key*).
+> 2. In [`config/robot.env`](config/robot.env): paste it into **`ROBOT_GEMINI_API_KEY=`** and set **`ROBOT_AI_BACKEND=gemini`**.
+> 3. **Restart** `./scripts/run_me.sh --live` (it re-reads the config) — the banner then shows `AI brain: REMOTE Gemini …`.
+>
+> Flip back to fully-offline anytime with `ROBOT_AI_BACKEND=local`. Only the LLM/vision switch; speech,
+> sensors, motors and the wake word stay local.
 
 **4. 🧪 Bench bring-up FIRST (no chassis, no motor) — watch the model→hardware mapping.**
 ```bash

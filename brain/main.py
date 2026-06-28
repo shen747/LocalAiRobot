@@ -45,6 +45,14 @@ def env(key, default):
 def load_config():
     home = os.path.expanduser("~")
     return {
+        # Brain backend: 'local' = Ollama on the Pi (default, offline) | 'gemini' = remote Google
+        # Gemini. The switch is read in inference.py; both text-intent and vision follow it. STT
+        # (whisper), TTS (piper), sensors, motors and the wake word are always local.
+        "ai_backend": env("ROBOT_AI_BACKEND", "local").strip().lower(),
+        "gemini_api_key": env("ROBOT_GEMINI_API_KEY", ""),
+        "gemini_model": env("ROBOT_GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini_vision_model": env("ROBOT_GEMINI_VISION_MODEL", ""),
+        "gemini_url": env("ROBOT_GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta"),
         "ollama_url": env("ROBOT_OLLAMA_URL", "http://localhost:11434/api/generate"),
         "model": env("ROBOT_MODEL", "gemma4:e4b-it-qat"),
         "whisper_bin": env("ROBOT_WHISPER_BIN", os.path.join(home, "whisper.cpp/build/bin/whisper-cli")),
@@ -328,6 +336,15 @@ def main():
     if getattr(driver, "hw_failed", False):
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
+    if cfg.get("ai_backend") == "gemini":
+        if cfg.get("gemini_api_key"):
+            print(f"AI brain: REMOTE Gemini ({cfg.get('gemini_model')}) — text + vision (needs network).")
+        else:
+            print("AI brain: ROBOT_AI_BACKEND=gemini but ROBOT_GEMINI_API_KEY is EMPTY — commands will "
+                  "fail. Set the key (see docs/gemini-setup.md) or switch back to local.", file=sys.stderr)
+            log.error("ROBOT_AI_BACKEND=gemini with no ROBOT_GEMINI_API_KEY — model calls will fail-safe")
+    else:
+        print(f"AI brain: LOCAL Ollama ({cfg.get('model')}) — fully offline.")
     if wake.dry_run:
         print("Dry-run: press ENTER to talk, 'r' to simulate the wake word, 'q' to quit.")
     else:
