@@ -66,6 +66,7 @@ scripts/robot.service    # systemd unit for boot autostart (install: ./scripts/r
 tools/wakeword-training/ # PC workspace to train a custom wake word — see its README + docs/opnewakeword/
 docs/assembly.md         # phased build + calibration reference (start here to build it)
 docs/wiring/pwm-esc-servo-wiring.md  # pin-by-pin drive+steering wiring: ESC/PWM/servo → Pi (+ diagrams)
+docs/wiring/ultrasonic-sensors-wiring.md  # pin-by-pin 3x HC-SR04P sensors → Pi GPIO (direct)
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
 
@@ -128,8 +129,9 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC (Electronic Speed Control
 
 ## Wiring at a glance
 
-Full build + calibration in [docs/assembly.md](docs/assembly.md); pin-by-pin drive & steering wiring in
-[docs/wiring/pwm-esc-servo-wiring.md](docs/wiring/pwm-esc-servo-wiring.md).
+Full build + calibration in [docs/assembly.md](docs/assembly.md); pin-by-pin wiring in
+[docs/wiring/pwm-esc-servo-wiring.md](docs/wiring/pwm-esc-servo-wiring.md) (drive & steering) and
+[docs/wiring/ultrasonic-sensors-wiring.md](docs/wiring/ultrasonic-sensors-wiring.md) (3× HC-SR04P sensors).
 
 ![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (Electronic Speed Controller) (which carries a 6V BEC) and the drive motor; the ESC (Electronic Speed Controller)'s 3-wire plug goes to PCA9685 ch0 (signal + V+ 6V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Pi Camera V2 NoIR connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
 

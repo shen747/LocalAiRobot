@@ -301,35 +301,21 @@ you see brownouts under hard steering load, add a separate servo BEC on the V+ r
 Three **HC-SR04P** (the 3.3 V variant) in a shallow semi-hex across the front: one facing **forward**,
 one angled **~45–60° left**, one **~45–60° right**. Splaying them reduces beam-cone overlap. The forward
 one drives the FORWARD-cut safety gate; the side ones keep the explore behaviour from steering into a
-near wall. Powered from **3.3 V**, every ECHO stays at 3.3 V and wires **straight to GPIO — no divider**.
+near wall. They wire **straight to the Pi's GPIO** — powered from **3.3 V** so every ECHO is Pi-safe
+(no level shifter). Pins (BCM): **front TRIG/ECHO 23/24, left 5/6, right 20/21**.
 
-| Sensor | `VCC` | `GND` | `TRIG` | `ECHO` |
-|---|---|---|---|---|
-| **front** | Pi 3.3V | Pi GND | **GPIO23** | **GPIO24** |
-| **left**  | Pi 3.3V | Pi GND | **GPIO5**  | **GPIO6**  |
-| **right** | Pi 3.3V | Pi GND | **GPIO20** | **GPIO21** |
+> 📐 **Full pin-by-pin wiring** — every sensor's VCC/GND/TRIG/ECHO with the **physical** header pins, the
+> Pi-pinout diagram, the bare-5 V-HC-SR04 divider fallback, and the two by-design sensing limits — is the
+> dedicated guide **[ultrasonic sensor wiring](wiring/ultrasonic-sensors-wiring.md)**.
 
 Pins are set in `config/robot.env` (`ROBOT_TRIG_PIN`/`ROBOT_ECHO_PIN` and `ROBOT_LEFT_*`/`ROBOT_RIGHT_*`).
 These BCM pins avoid I2C (2/3), SPI0 (7–11) and UART (14/15); alternates if you need them: `16/26`,
 `22/27`, `19/25`. gpiozero serialises the three pings internally (so they don't hear each other), giving
 ~4–6 Hz per sensor — the forward gate reads the latest cached value, never blocking the control loop.
 
-> ⚠️ **Bare HC-SR04 fallback.** A non-P **HC-SR04** wants **5 V** on `VCC` and then drives its **ECHO at
-> 5 V** — and the Pi's GPIO is **NOT 5 V-tolerant**. If that's all you have, power `VCC` from Pi **5V** and
-> add a divider on each `ECHO` only: **1 kΩ** from ECHO → the GPIO pin, **2 kΩ** from that pin → GND
-> (5 V → ~3.3 V). `TRIG` driven by the Pi's 3.3 V output is fine either way.
-
 **Check:** read all three live with **`./scripts/test_sensors.sh`** — cover each beam in turn and watch
 *its* number drop. This is how you prove front/left/right aren't swapped; the brain itself only logs the
 **front** beam (on a gate trip).
-
-**Two known sensing limits (by design):**
-- The forward gate **fails closed on a read error** (a sensor exception blocks FORWARD), but a *dead/
-  silent* sensor that saturates at max range reads as "clear" — software can't tell that apart from a
-  genuinely open path. Bench-test that covering the forward sensor stops the car before trusting it.
-- **REVERSE is unsensed** — there is no rear sensor, so reverse moves are bounded only by the throttle
-  cap and the move deadline. Keep `ROBOT_MAX_THROTTLE` low and reverse commands short, or add a rear
-  HC-SR04P later.
 
 ---
 
