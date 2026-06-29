@@ -1,5 +1,0 @@
-1.If stuck in the initialization Interface，try the following:
-	Open the code.ini file in the directory, change 64 to 0 or 8192, save the Settings, and restart the software
-2.net component is missing:
-	download and install:
-	https://lgb123-1253504678.cos.ap-beijing.myqcloud.com/dotnetfx45_full_x86_x64.rar

@@ -24,6 +24,11 @@ The Pi has **no electrical feedback** from the motor, servo, or speaker — so t
 the script performs the action, then asks `did it work? [y/n]`. Everything with a real signal (I²C, sensors,
 camera, mic level, panel presence) is checked automatically.
 
+Each confirm prompt **auto-skips after 8 s** (override with `ROBOT_DIAG_TIMEOUT=<seconds>`), so a check
+never blocks — an unanswered actuation is marked *unconfirmed* (counts as **skipped**, not failed) and the
+run always reaches the summary. The sensor checks watch for a ~3 s window each, so **wave a hand in front
+of each sensor** when prompted.
+
 ## Flags
 | Flag | Effect |
 |---|---|

@@ -17,6 +17,7 @@
 
 import argparse
 import os
+import select
 import subprocess
 import sys
 import time
@@ -48,6 +49,11 @@ class Diag:
     def __init__(self, args):
         self.args = args
         self.passed, self.failed, self.skipped = [], [], []
+        # Confirm prompts auto-skip after this many seconds so a check can never block the run.
+        try:
+            self.timeout = float(os.environ.get("ROBOT_DIAG_TIMEOUT", "8") or 8)
+        except ValueError:
+            self.timeout = 8.0
 
     # ---- result emitters (also print a live line) ----
     def ok(self, label, detail=""):
@@ -64,14 +70,34 @@ class Diag:
 
     # ---- prompts ----
     def confirm(self, question):
-        """Interactive [y/N]; auto-YES under --yes."""
+        """Ask y/n. Returns True / False, or None if there's no answer within self.timeout seconds
+        (so a check NEVER blocks the run). Auto-True under --yes."""
         if self.args.yes:
             print(dim(f"    (--yes) {question} -> assumed yes"))
             return True
+        sys.stdout.write(f"    {bold(question)} [y/N] {dim(f'(auto-skip in {int(self.timeout)}s)')} ")
+        sys.stdout.flush()
         try:
-            return input(f"    {bold(question)} [y/N] ").strip().lower() in ("y", "yes")
-        except EOFError:
-            return False
+            ready, _, _ = select.select([sys.stdin], [], [], self.timeout)
+        except Exception:
+            ready = [sys.stdin]      # stdin not selectable (rare) -> fall back to a blocking read
+        if not ready:
+            print(dim("-> no answer, moving on"))
+            return None
+        try:
+            return sys.stdin.readline().strip().lower() in ("y", "yes")
+        except Exception:
+            return None
+
+    def confirm_step(self, label, question, fail_reason, doc):
+        """Confirm an actuation and emit ok / bad / skip (skip = unconfirmed within the timeout)."""
+        res = self.confirm(question)
+        if res is True:
+            self.ok(label)
+        elif res is False:
+            self.bad(label, fail_reason, doc)
+        else:
+            self.skip(label, f"unconfirmed (no answer in {int(self.timeout)}s)")
 
     def motors_allowed(self):
         """Decide whether the motor/servo spin may run. Never auto-spins under --yes."""
@@ -164,10 +190,8 @@ class Diag:
             return self.bad(label, f"missing binary: {e} -- run ./scripts/install_stack.sh", DOC_ASM)
         except Exception as e:
             return self.bad(label, f"{e}", DOC_ASM)
-        if self.confirm("Did you HEAR the greeting?"):
-            self.ok(label)
-        else:
-            self.bad(label, "not heard -- set the USB speaker as the ALSA default (./scripts/setup_audio.sh)", DOC_ASM)
+        self.confirm_step(label, "Did you HEAR the greeting?",
+                          "not heard -- set the USB speaker as the ALSA default (./scripts/setup_audio.sh)", DOC_ASM)
 
     def check_camera(self):
         # 11: still
@@ -280,10 +304,13 @@ class Diag:
             for state in ("happy", "thinking", "talking", "idle"):
                 fc.set_expression(state)
                 time.sleep(0.6)
-            if self.confirm(f"Do you SEE the face on the {detail.split('(')[0].strip()}?"):
+            res = self.confirm(f"Do you SEE the face on the {detail.split('(')[0].strip()}?")
+            if res is True:
                 self.ok(label, detail)
-            else:
+            elif res is False:
                 self.bad(label, f"panel detected ({detail}) but nothing shown -- check the revision (ROBOT_FACE_REVISION)", DOC_ASM)
+            else:
+                self.skip(label, f"{detail}; unconfirmed (no answer in {int(self.timeout)}s)")
         finally:
             try:
                 fc.close()
@@ -319,18 +346,14 @@ class Diag:
             for la, drive in (("Motor FORWARD spin", "FORWARD"), ("Motor REVERSE spin", "REVERSE")):
                 d.command(drive, "CENTER", 30, 1500)
                 time.sleep(2.0)
-                if self.confirm(f"Did the wheels spin {drive}?"):
-                    self.ok(la)
-                else:
-                    self.bad(la, "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch", DOC_PWM)
+                self.confirm_step(la, f"Did the wheels spin {drive}?",
+                                  "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch", DOC_PWM)
             # steering
             for la, steer in (("Servo steer RIGHT", "RIGHT"), ("Servo steer LEFT", "LEFT"), ("Servo steer CENTER", "CENTER")):
                 d.command("STOP", steer, 0, 500)
                 time.sleep(1.2)
-                if self.confirm(f"Did the front wheels steer {steer}?"):
-                    self.ok(la)
-                else:
-                    self.bad(la, "no/!wrong steer -- check the servo plug on ch1 and ROBOT_STEER_* angles", DOC_PWM)
+                self.confirm_step(la, f"Did the front wheels steer {steer}?",
+                                  "no/!wrong steer -- check the servo plug on ch1 and ROBOT_STEER_* angles", DOC_PWM)
         except Exception as e:
             for la in labels:
                 if la not in self.passed:

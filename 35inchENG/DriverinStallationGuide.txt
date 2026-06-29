@@ -1,4 +1,0 @@
-no need to install driver on win10 
-
-for some win7 system:
-right click the computor--device manager--right click the device with yellow question mark--update driver--browse computer to search driver--find out the driver on the software catalog-install
