@@ -102,6 +102,8 @@ fi
 # LIVE, foreground (default) -> attached + interactive; Ctrl-C neutralises the motor on the way out.
 if [ "$detach" = 0 ]; then
   echo ">> LIVE (foreground) -- REAL hardware.  Say the wake word to talk · q=quit · Ctrl-C=stop."
+  echo "   ESC blinking / motor silent? The brain holds NEUTRAL at startup -- power-cycle the ESC (LiPo)"
+  echo "   once this is running so it sees neutral and arms (its safety lockout needs that)."
   exec env ROBOT_DRY_RUN=0 "$PY" "$MAIN"
 fi
 

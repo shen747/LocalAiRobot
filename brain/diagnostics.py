@@ -69,16 +69,17 @@ class Diag:
         self.skipped.append(label)
 
     # ---- prompts ----
-    def confirm(self, question):
-        """Ask y/n. Returns True / False, or None if there's no answer within self.timeout seconds
-        (so a check NEVER blocks the run). Auto-True under --yes."""
+    def confirm(self, question, timeout=None):
+        """Ask y/n. Returns True / False, or None if there's no answer within the timeout (so a check
+        NEVER blocks the run). Auto-True under --yes. timeout defaults to self.timeout."""
         if self.args.yes:
             print(dim(f"    (--yes) {question} -> assumed yes"))
             return True
-        sys.stdout.write(f"    {bold(question)} [y/N] {dim(f'(auto-skip in {int(self.timeout)}s)')} ")
+        to = self.timeout if timeout is None else timeout
+        sys.stdout.write(f"    {bold(question)} [y/N] {dim(f'(auto-skip in {int(to)}s)')} ")
         sys.stdout.flush()
         try:
-            ready, _, _ = select.select([sys.stdin], [], [], self.timeout)
+            ready, _, _ = select.select([sys.stdin], [], [], to)
         except Exception:
             ready = [sys.stdin]      # stdin not selectable (rare) -> fall back to a blocking read
         if not ready:
@@ -338,7 +339,7 @@ class Diag:
 
     # ===================== checks (motor/servo; builds the driver) =====================
     def check_motors_and_servo(self):
-        labels = ["Motor FORWARD spin", "Motor REVERSE spin",
+        labels = ["ESC arm (neutral)", "Motor FORWARD spin", "Motor REVERSE spin",
                   "Servo steer RIGHT", "Servo steer LEFT", "Servo steer CENTER"]
         allowed, why = self.motors_allowed()
         if not allowed:
@@ -361,6 +362,19 @@ class Diag:
                 for la in labels:
                     self.bad(la, "PCA9685 not driving (faked) -- fix the I2C check above first", DOC_PWM)
                 return
+            # ESC arm: the driver now holds NEUTRAL (1500us) on ch0. An ESC that powered on BEFORE seeing a
+            # valid neutral latches a safety lockout (rapid blink); power-cycling it now, WHILE this neutral
+            # is held, is what makes it arm. Confirm the blink stopped before testing motion.
+            print(dim("    Holding NEUTRAL on the ESC -- if it's BLINKING, power-cycle it now (unplug + replug"
+                      " the LiPo) and watch it go solid / beep."))
+            ares = self.confirm("ESC armed? (blinking stopped / it beeped its tune)", timeout=25)
+            if ares is True:
+                self.ok("ESC arm (neutral)")
+            elif ares is False:
+                self.bad("ESC arm (neutral)", "won't arm -- power-cycle it while neutral is held; check the "
+                         "F/R + LIPO jumpers, the ch0 signal lead, and LiPo voltage (>7V)", DOC_PWM)
+            else:
+                self.skip("ESC arm (neutral)", "unconfirmed (no answer in 25s)")
             # forward / reverse (direction-specific fixes: if FORWARD passed, a REVERSE fail is the ESC mode)
             motor_fix = {
                 "FORWARD": "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch",
