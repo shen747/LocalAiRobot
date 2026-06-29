@@ -93,17 +93,29 @@ drives no hardware at all).
      Check it worked: `grep whisper config/robot.env` should now show `/home/<your name>/whisper.cpp/...`
      (no literal `YOUR_USER` left).
    - **`ROBOT_DRY_RUN=1`** — bench mode: fakes the motor + sensors so nothing needs wiring yet.
+     ```bash
+     sed -i "s|^ROBOT_DRY_RUN=.*|ROBOT_DRY_RUN=1|" config/robot.env
+     ```
    - **`ROBOT_MIC`** → your USB mic, written as `plughw:CARD,DEVICE`. Run `arecord -l` and find your mic's
      line, e.g.:
      ```
      card 2: Device [USB PnP Sound Device], device 0: USB Audio [USB Audio]
      ```
-     Read its **card** and **device** numbers (here **2** and **0**) → set the line to
-     **`ROBOT_MIC=plughw:2,0`**. (`plughw` = "plug + hardware": ALSA's wrapper that auto-resamples to the
-     16 kHz the app records at; plain `hw` would be rejected.) Your numbers may differ — use yours.
+     Read its **card** and **device** numbers (here **2** and **0**), then set it with `sed` — **swap in
+     YOUR numbers** (the `|` delimiter avoids clashing with the value, and `^…=.*` replaces the whole line):
+     ```bash
+     sed -i "s|^ROBOT_MIC=.*|ROBOT_MIC=plughw:2,0|" config/robot.env
+     ```
+     (`plughw` = "plug + hardware": ALSA's wrapper that auto-resamples to the 16 kHz the app records at;
+     plain `hw` would be rejected.) **More robust by name** (survives card-renumbering) — use the bracketed
+     name from `arecord -l` (here `Device`):
+     ```bash
+     sed -i "s|^ROBOT_MIC=.*|ROBOT_MIC=plughw:CARD=Device,DEV=0|" config/robot.env
+     ```
 
-   Set the last two (`ROBOT_DRY_RUN`, `ROBOT_MIC`) with **`nano config/robot.env`**; save and exit with
-   **Ctrl-O, ENTER, Ctrl-X**.
+   Check the edits stuck: `grep -E '^ROBOT_(DRY_RUN|MIC)=' config/robot.env`. (Prefer an editor?
+   `nano config/robot.env` → Ctrl-O, ENTER, Ctrl-X.) After **any** edit, reload it into your shell:
+   `set -a; source config/robot.env; set +a`.
 
    > ⚠️ **The brain reads its settings from the shell, not the file.** Good news: the installer added an
    > auto-load line to `~/.bashrc`, so **every new SSH session loads `config/robot.env` for you**, and
@@ -316,6 +328,18 @@ These BCM pins avoid I2C (2/3), SPI0 (7–11) and UART (14/15); alternates if yo
 **Check:** read all three live with **`./scripts/test_sensors.sh`** — cover each beam in turn and watch
 *its* number drop. This is how you prove front/left/right aren't swapped; the brain itself only logs the
 **front** beam (on a gate trip).
+
+**✅ Phase 4 is done when:**
+- `./scripts/test_sensors.sh` prints **three** numbers that track the real distances (roughly your hand /
+  wall positions) — not blank, not stuck at `400.0 cm`, and with **no** `no echo received` warnings.
+- Covering each beam in turn drops **only that sensor's** number (so front/left/right are **not swapped**),
+  and it springs back when you uncover it.
+- *(Optional, once the chassis is built in Phase 7)* `./scripts/run_diagnostics.sh` shows ✓ for all three.
+
+`test_sensors.sh` covers the **wiring** (all three read + correct mapping) — that's all of Phase 4. It does
+**not** exercise the in-brain obstacle *gate*; that's verified later in
+[Phase 8](#phase-8--live-calibration--bring-up-wheels-off-the-ground) step 4 (say *"go forward"* + a hand
+~20 cm ahead of the **front** beam → the motor cuts and it says *"Obstacle ahead. Stopping."*).
 
 ---
 
