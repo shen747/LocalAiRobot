@@ -25,6 +25,13 @@ exec "$PY" - "$@" <<'PYEOF'
 import os, sys, time
 from gpiozero import DigitalOutputDevice, DigitalInputDevice
 
+# This script is fed to python on STDIN (the heredoc), so sys.stdin is the script text, not the
+# keyboard -- input() would hit EOF instantly. Reconnect stdin to the terminal so --step can prompt.
+try:
+    sys.stdin = open("/dev/tty")
+except OSError:
+    pass
+
 g = lambda n, d: int(os.environ.get(n, d) or d)
 SENSORS = [
     ("front", g("ROBOT_TRIG_PIN", 23),       g("ROBOT_ECHO_PIN", 24)),
