@@ -164,7 +164,16 @@ drives no hardware at all).
    *default* ALSA output and the robot's **voice depends on that default**. Run **`./scripts/setup_audio.sh`**
    to point it at your USB speaker (it writes `~/.asoundrc`); the 🔊 callout at the end of this phase
    explains what that does and the card-renumbering trap. **`arecord` errored or the file is silent?** That's the mic — fix
-   `ROBOT_MIC`. Once you hear yourself back, start the brain in dry-run:
+   `ROBOT_MIC`.
+
+   **Test the speaker on its own** (do this after `setup_audio.sh`) — `speaker-test` plays a known sample
+   through the ALSA **default**, which is the exact output the robot's TTS voice uses:
+   ```bash
+   speaker-test -D default -t wav -l 1     # you should hear a voice say "Front Left"; Ctrl-C to stop
+   ```
+   (`-D default` = the speaker `setup_audio.sh` set as default · `-t wav` = play a spoken sample · `-l 1`
+   = one loop.) `aplay /tmp/test.wav` (note: **no** `-D`, so it also uses the default) plays your own
+   recording through the same speaker. Once you hear it, start the brain in dry-run:
    ```bash
    ./scripts/run_me.sh --dry
    ```
