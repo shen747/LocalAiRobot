@@ -132,10 +132,14 @@ class Diag:
         return self.bad(label, "0x40 NOT on the bus -- check VCC(3.3V)/SDA/SCL/GND and that I2C is enabled", DOC_PWM)
 
     def check_sensors(self):
+        import warnings
         try:
             from gpiozero import DistanceSensor
         except Exception as e:
             return self.bad("Ultrasonic sensors (gpiozero)", f"import failed: {e}", DOC_SENS)
+        # Silence gpiozero's software-PWM spam; the no-echo warning we CAPTURE per sensor (below) to tell a
+        # truly unwired sensor from one just aimed at open space.
+        warnings.filterwarnings("ignore", message=".*PWMSoftwareFallback.*")
         pins = {
             "front": (os.environ.get("ROBOT_TRIG_PIN", "23"), os.environ.get("ROBOT_ECHO_PIN", "24")),
             "left": (os.environ.get("ROBOT_LEFT_TRIG_PIN", "5"), os.environ.get("ROBOT_LEFT_ECHO_PIN", "6")),
@@ -145,21 +149,36 @@ class Diag:
             label = f"Ultrasonic sensor {name.upper()} (TRIG {tp} / ECHO {ep})"
             s = None
             try:
-                s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=5)
-                base = s.distance * 100.0
-                if self.args.yes:
-                    self.ok(label, f"reading {base:.1f} cm (response not tested under --yes)")
-                    continue
-                print(f"    wave your hand in front of the {bold(name.upper())} sensor...")
-                lo = base
-                t_end = time.time() + 3.0
-                while time.time() < t_end:
-                    lo = min(lo, s.distance * 100.0)
-                    time.sleep(0.1)
-                if base - lo > 5.0:
-                    self.ok(label, f"responded: {base:.1f} cm -> {lo:.1f} cm")
+                # partial=True -> .distance returns immediately (no multi-second queue-fill block on a
+                # dead/no-echo sensor); a small queue keeps it snappy even on older gpiozero (fallback).
+                print(dim(f"    measuring {name.upper()} -- wave a hand in front of it..."))
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    # partial=True -> .distance returns immediately (no multi-second queue-fill block on a
+                    # dead/no-echo sensor); a small queue keeps it snappy on older gpiozero (fallback).
+                    try:
+                        s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=3, partial=True)
+                    except TypeError:
+                        s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=3)
+                    time.sleep(0.5)                   # let one ping land before sampling
+                    hi = lo = s.distance * 100.0
+                    t_end = time.time() + (0.0 if self.args.yes else 2.5)
+                    while time.time() < t_end:
+                        d = s.distance * 100.0
+                        hi, lo = max(hi, d), min(lo, d)
+                        time.sleep(0.1)
+                    cur = s.distance * 100.0
+                    no_echo = any("echo" in str(w.message).lower() for w in caught)
+                if not self.args.yes and hi - lo > 5.0:
+                    self.ok(label, f"responded: {hi:.0f} -> {lo:.0f} cm")
+                elif no_echo:
+                    self.bad(label, "NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring", DOC_SENS)
+                elif self.args.yes:
+                    self.ok(label, f"reading {cur:.0f} cm (response not tested under --yes)")
+                elif lo >= 395.0:
+                    self.bad(label, "reads ~400cm (max) & nothing changed -- wave closer, or check aim/wiring", DOC_SENS)
                 else:
-                    self.bad(label, f"reading never changed ({base:.1f} cm) -- pins swapped / not wired?", DOC_SENS)
+                    self.bad(label, f"steady {lo:.0f}cm, didn't change when waved -- wave during the window, or check wiring", DOC_SENS)
             except Exception as e:
                 self.bad(label, f"read failed: {e}", DOC_SENS)
             finally:
