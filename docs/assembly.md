@@ -444,6 +444,11 @@ switch in hand**. Every `ROBOT_*` value below is a line in `config/robot.env`: e
 launch) — repeat until it's dialled in. If a board isn't found, the brain now **logs which device failed
 and runs degraded** (motors off) instead of crashing — read that line, fix the wiring, and relaunch.
 
+> 🔧 **First, verify the wiring (live self-test).** Before the throttle steps below, run
+> **`./scripts/run_diagnostics.sh`** — it checks the ESC/PWM board, motor, servo, 3 sensors, camera,
+> speaker, mic and face and points to the exact fix for anything wrong (wheels OFF the ground; the motor
+> spin is gated). Full reference: [docs/diagnostics.md](diagnostics.md).
+
 > 🪑 **Test voice/vision without driving.** Set **`ROBOT_MOTORS_OFF=1`** (keep `ROBOT_DRY_RUN=0`) to run
 > fully live — wake word, camera, sensors, face — with the **ESC/steering getting no signal** (wheels
 > won't move). Ideal for desk-testing the brain on the assembled car before the throttle steps below.
@@ -502,6 +507,10 @@ lsusb | grep -i 1a86            # USB-C face panel
 # Read all three HC-SR04P sensors live -- cover each beam in turn and watch ITS number drop
 # (confirms front/left/right aren't swapped). Uses the pins from config/robot.env; Ctrl-C to stop.
 ./scripts/test_sensors.sh
+
+# Full live wiring self-test: green/red per peripheral + fix pointers (run before the first drive).
+# Wheels OFF the ground -- the motor spin is gated behind a confirmation. See docs/diagnostics.md.
+./scripts/run_diagnostics.sh
 ```
 
 ### Safety note — software failsafe, not hardware

@@ -1,0 +1,164 @@
+﻿[2026-06-28 19:42:04.144] [INFO] [Form1] ========== Application Start ==========
+[2026-06-28 19:42:04.144] [INFO] [Form1] Version.mode=0, Version.brand=0, StartupPath=C:\Users\shen7\Downloads\35inchENG\35inchENG
+[2026-06-28 19:42:04.175] [INFO] [Form1] InitializeComponent done
+[2026-06-28 19:42:04.185] [INFO] [Monitor] ReadAppConfig from C:\Users\shen7\Downloads\35inchENG\35inchENG\config\AppConfig.data
+[2026-06-28 19:42:04.185] [INFO] [Monitor] AppConfig loaded successfully
+[2026-06-28 19:42:18.597] [INFO] [Form1] ========== Application Start ==========
+[2026-06-28 19:42:18.597] [INFO] [Form1] Version.mode=0, Version.brand=0, StartupPath=C:\Users\shen7\Downloads\35inchENG\35inchENG
+[2026-06-28 19:42:18.620] [INFO] [Form1] InitializeComponent done
+[2026-06-28 19:42:18.628] [INFO] [Monitor] ReadAppConfig from C:\Users\shen7\Downloads\35inchENG\35inchENG\config\AppConfig.data
+[2026-06-28 19:42:18.628] [INFO] [Monitor] AppConfig loaded successfully
+[2026-06-28 19:42:18.643] [INFO] [Form1] SetCurrentDirectory done
+[2026-06-28 19:42:18.649] [INFO] [Form1] Calling M_Data.IniteDataList...
+[2026-06-28 19:42:18.649] [INFO] [Form1] M_Data.IniteDataList done
+[2026-06-28 19:42:18.690] [INFO] [Form1] Starting WeaHelper.Inite in background task...
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] ========== Sensor Inite Start ==========
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] Environment Info: OS=Microsoft Windows NT 6.2.9200.0, ProcessArchitecture=x64
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] Application Path: C:\Users\shen7\Downloads\35inchENG\35inchENG
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] Current initeCode=0x40, useDedicated=False
+[2026-06-28 19:42:18.690] [DEBUG] [WeaHelper] Checking initeCode file at: C:\Users\shen7\Downloads\35inchENG\35inchENG\code.ini
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] Successfully read initeCode from file: 0x40
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] After CheckIniteCode, initeCode=0x40
+[2026-06-28 19:42:18.690] [INFO] [WeaHelper] Calling HWi32_Init...
+[2026-06-28 19:42:18.711] [INFO] [Monitor] Monitor constructor start
+[2026-06-28 19:42:18.711] [INFO] [Monitor] LCD created, deviceIndex=1
+[2026-06-28 19:42:18.977] [INFO] [Monitor] NIC config not found, using first NIC: Local Area Connection* 1
+[2026-06-28 19:42:18.979] [INFO] [Monitor] Monitor constructor done
+[2026-06-28 19:42:19.088] [INFO] [Form1] Waiting for sensor initialization (msgForm.WaitReadingInfo)...
+[2026-06-28 19:42:19.088] [INFO] [MsgForm] WaitReadingInfo started, timeout=120s
+[2026-06-28 19:42:20.555] [INFO] [WeaHelper] HWi32_Init returned 0, elapsed time: 1864.51ms
+[2026-06-28 19:42:20.555] [INFO] [WeaHelper] Initializing queues and lists...
+[2026-06-28 19:42:20.555] [INFO] [WeaHelper] Calling IniteSensorIndex...
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] ----- IniteSensorIndex start -----
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] Calling HWi32_GetNumberOfDetectedSensors...
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] HWi32_GetNumberOfDetectedSensors returned n=13
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] Calling HWi32_GetMemoryTotalSize...
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] MemoryTotalSize=32768 MB
+[2026-06-28 19:42:20.567] [INFO] [WeaHelper] Enumerating sensors to find GPU...
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] Found GPU sensor[10]: GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] GpuNameList.Count=1, config GpuName=GPU [#0]: AMD Radeon 680M
+[2026-06-28 19:42:20.607] [WARN] [WeaHelper] Configured GPU 'GPU [#0]: AMD Radeon 680M' not found in sensor list, resetting
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] Auto-selected default GPU: GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] Parsing GPU index from GpuName, index=0
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] VIDEO_mem_SIZE=3072 MB
+[2026-06-28 19:42:20.607] [INFO] [WeaHelper] Starting full sensor enumeration...
+[2026-06-28 19:42:20.607] [DEBUG] [WeaHelper] Sensor[0] DeviceName=System: Bosgame EffiZen Series
+[2026-06-28 19:42:20.613] [DEBUG] [WeaHelper] Sensor[1] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX
+[2026-06-28 19:42:20.613] [DEBUG] [WeaHelper] Sensor[2] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX: C-State Residency
+[2026-06-28 19:42:20.623] [DEBUG] [WeaHelper] Sensor[3] DeviceName=Memory Timings
+[2026-06-28 19:42:20.623] [DEBUG] [WeaHelper] Sensor[4] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX: Enhanced
+[2026-06-28 19:42:20.623] [DEBUG] [WeaHelper] Sensor[5] DeviceName=ACPI: Bosgame EffiZen Series
+[2026-06-28 19:42:20.623] [DEBUG] [WeaHelper] Sensor[6] DeviceName=S.M.A.R.T.: KINGSTON OM8TAP41024K1-A00 (50026B7383F11C67) [C:]
+[2026-06-28 19:42:20.623] [DEBUG] [WeaHelper] Sensor[7] DeviceName=S.M.A.R.T.: KBG30ZMS256G NVMe TOSHIBA 256GB (98IPC43CPWFP) [D:]
+[2026-06-28 19:42:20.633] [DEBUG] [WeaHelper] Sensor[8] DeviceName=Drive: KINGSTON OM8TAP41024K1-A00 (50026B7383F11C67) [C:]
+[2026-06-28 19:42:20.633] [DEBUG] [WeaHelper] Sensor[9] DeviceName=Drive: KBG30ZMS256G NVMe TOSHIBA 256GB (98IPC43CPWFP) [D:]
+[2026-06-28 19:42:20.638] [DEBUG] [WeaHelper] Sensor[10] DeviceName=GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:42:20.638] [DEBUG] [WeaHelper] Sensor[11] DeviceName=Network: Intel Wi-Fi 6E AX210 160MHz
+[2026-06-28 19:42:20.643] [DEBUG] [WeaHelper] Sensor[12] DeviceName=Windows Hardware Errors (WHEA)
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] Sensor enumeration done. cpuPowerSet=True, gpuPowerList.Count=2, fan_index=0, hdd_index=3
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] Final CpuTempSensorSubName=CPU SOC
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] Final CpuFanSensorSubName=
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] Final CpuPumpSensorSubName=
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] ----- IniteSensorIndex end -----
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] IniteSensorIndex completed successfully
+[2026-06-28 19:42:20.643] [INFO] [WeaHelper] ========== Sensor Inite SUCCESS ==========
+[2026-06-28 19:42:20.734] [INFO] [MsgForm] WaitReadingInfo succeeded after 1.6 seconds
+[2026-06-28 19:42:20.734] [INFO] [Form1] msgForm.WaitReadingInfo returned True, WeaHelper.inite=True
+[2026-06-28 19:42:20.736] [INFO] [Form1] Sensor initialization OK, msgForm hidden
+[2026-06-28 19:42:26.508] [INFO] [Monitor] StartMonitor called
+[2026-06-28 19:42:26.512] [INFO] [Monitor] Monitor loop started
+[2026-06-28 19:42:26.546] [INFO] [QWeather] 使用直接 Ed25519 DPAPI 凭据
+[2026-06-28 19:42:27.542] [INFO] [QWeather] [SearchCity] 响应长度: 381 字节
+[2026-06-28 19:42:27.577] [DEBUG] [QWeather] Hong Kong 101320101
+[2026-06-28 19:42:27.585] [INFO] [WeatherService] 城市码 101320101 验证通过，已缓存
+[2026-06-28 19:42:28.101] [INFO] [QWeather] [GetWeather] 响应长度: 454 字节
+[2026-06-28 19:42:28.103] [INFO] [QWeather] Moderate Rain S3level  28°
+[2026-06-28 19:44:53.757] [INFO] [Form1] ========== Application Start ==========
+[2026-06-28 19:44:53.757] [INFO] [Form1] Version.mode=0, Version.brand=0, StartupPath=C:\Users\shen7\Downloads\35inchENG\35inchENG
+[2026-06-28 19:44:53.780] [INFO] [Form1] InitializeComponent done
+[2026-06-28 19:44:53.791] [INFO] [Monitor] ReadAppConfig from C:\Users\shen7\Downloads\35inchENG\35inchENG\config\AppConfig.data
+[2026-06-28 19:44:53.793] [INFO] [Monitor] AppConfig loaded successfully
+[2026-06-28 19:44:53.810] [INFO] [Form1] SetCurrentDirectory done
+[2026-06-28 19:44:53.811] [INFO] [Form1] Calling M_Data.IniteDataList...
+[2026-06-28 19:44:53.818] [INFO] [Form1] M_Data.IniteDataList done
+[2026-06-28 19:44:53.869] [INFO] [Form1] Starting WeaHelper.Inite in background task...
+[2026-06-28 19:44:53.874] [INFO] [WeaHelper] ========== Sensor Inite Start ==========
+[2026-06-28 19:44:53.875] [INFO] [WeaHelper] Environment Info: OS=Microsoft Windows NT 6.2.9200.0, ProcessArchitecture=x64
+[2026-06-28 19:44:53.875] [INFO] [WeaHelper] Application Path: C:\Users\shen7\Downloads\35inchENG\35inchENG
+[2026-06-28 19:44:53.875] [INFO] [WeaHelper] Current initeCode=0x40, useDedicated=False
+[2026-06-28 19:44:53.876] [DEBUG] [WeaHelper] Checking initeCode file at: C:\Users\shen7\Downloads\35inchENG\35inchENG\code.ini
+[2026-06-28 19:44:53.876] [INFO] [WeaHelper] Successfully read initeCode from file: 0x40
+[2026-06-28 19:44:53.876] [INFO] [WeaHelper] After CheckIniteCode, initeCode=0x40
+[2026-06-28 19:44:53.876] [INFO] [WeaHelper] Calling HWi32_Init...
+[2026-06-28 19:44:53.897] [INFO] [Monitor] Monitor constructor start
+[2026-06-28 19:44:53.897] [INFO] [Monitor] LCD created, deviceIndex=1
+[2026-06-28 19:44:54.182] [INFO] [Monitor] NIC config not found, using first NIC: Local Area Connection* 1
+[2026-06-28 19:44:54.182] [INFO] [Monitor] Monitor constructor done
+[2026-06-28 19:44:54.297] [INFO] [Form1] Waiting for sensor initialization (msgForm.WaitReadingInfo)...
+[2026-06-28 19:44:54.298] [INFO] [MsgForm] WaitReadingInfo started, timeout=120s
+[2026-06-28 19:44:55.761] [INFO] [WeaHelper] HWi32_Init returned 0, elapsed time: 1884.44ms
+[2026-06-28 19:44:55.761] [INFO] [WeaHelper] Initializing queues and lists...
+[2026-06-28 19:44:55.762] [INFO] [WeaHelper] Calling IniteSensorIndex...
+[2026-06-28 19:44:55.770] [INFO] [WeaHelper] ----- IniteSensorIndex start -----
+[2026-06-28 19:44:55.770] [INFO] [WeaHelper] Calling HWi32_GetNumberOfDetectedSensors...
+[2026-06-28 19:44:55.771] [INFO] [WeaHelper] HWi32_GetNumberOfDetectedSensors returned n=13
+[2026-06-28 19:44:55.771] [INFO] [WeaHelper] Calling HWi32_GetMemoryTotalSize...
+[2026-06-28 19:44:55.771] [INFO] [WeaHelper] MemoryTotalSize=32768 MB
+[2026-06-28 19:44:55.772] [INFO] [WeaHelper] Enumerating sensors to find GPU...
+[2026-06-28 19:44:55.807] [INFO] [WeaHelper] Found GPU sensor[10]: GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:44:55.808] [INFO] [WeaHelper] GpuNameList.Count=1, config GpuName=GPU [#0]: AMD Radeon 680M
+[2026-06-28 19:44:55.808] [WARN] [WeaHelper] Configured GPU 'GPU [#0]: AMD Radeon 680M' not found in sensor list, resetting
+[2026-06-28 19:44:55.809] [INFO] [WeaHelper] Auto-selected default GPU: GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:44:55.809] [INFO] [WeaHelper] Parsing GPU index from GpuName, index=0
+[2026-06-28 19:44:55.810] [INFO] [WeaHelper] VIDEO_mem_SIZE=3072 MB
+[2026-06-28 19:44:55.810] [INFO] [WeaHelper] Starting full sensor enumeration...
+[2026-06-28 19:44:55.810] [DEBUG] [WeaHelper] Sensor[0] DeviceName=System: Bosgame EffiZen Series
+[2026-06-28 19:44:55.812] [DEBUG] [WeaHelper] Sensor[1] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX
+[2026-06-28 19:44:55.816] [DEBUG] [WeaHelper] Sensor[2] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX: C-State Residency
+[2026-06-28 19:44:55.816] [DEBUG] [WeaHelper] Sensor[3] DeviceName=Memory Timings
+[2026-06-28 19:44:55.816] [DEBUG] [WeaHelper] Sensor[4] DeviceName=CPU [#0]: AMD Ryzen 9 6900HX: Enhanced
+[2026-06-28 19:44:55.828] [DEBUG] [WeaHelper] Sensor[5] DeviceName=ACPI: Bosgame EffiZen Series
+[2026-06-28 19:44:55.830] [DEBUG] [WeaHelper] Sensor[6] DeviceName=S.M.A.R.T.: KINGSTON OM8TAP41024K1-A00 (50026B7383F11C67) [C:]
+[2026-06-28 19:44:55.831] [DEBUG] [WeaHelper] Sensor[7] DeviceName=S.M.A.R.T.: KBG30ZMS256G NVMe TOSHIBA 256GB (98IPC43CPWFP) [D:]
+[2026-06-28 19:44:55.833] [DEBUG] [WeaHelper] Sensor[8] DeviceName=Drive: KINGSTON OM8TAP41024K1-A00 (50026B7383F11C67) [C:]
+[2026-06-28 19:44:55.834] [DEBUG] [WeaHelper] Sensor[9] DeviceName=Drive: KBG30ZMS256G NVMe TOSHIBA 256GB (98IPC43CPWFP) [D:]
+[2026-06-28 19:44:55.837] [DEBUG] [WeaHelper] Sensor[10] DeviceName=GPU [#0]: AMD Radeon 600M series
+[2026-06-28 19:44:55.842] [DEBUG] [WeaHelper] Sensor[11] DeviceName=Network: Intel Wi-Fi 6E AX210 160MHz
+[2026-06-28 19:44:55.842] [DEBUG] [WeaHelper] Sensor[12] DeviceName=Windows Hardware Errors (WHEA)
+[2026-06-28 19:44:55.844] [INFO] [WeaHelper] Sensor enumeration done. cpuPowerSet=True, gpuPowerList.Count=2, fan_index=0, hdd_index=3
+[2026-06-28 19:44:55.848] [INFO] [WeaHelper] Final CpuTempSensorSubName=CPU SOC
+[2026-06-28 19:44:55.848] [INFO] [WeaHelper] Final CpuFanSensorSubName=
+[2026-06-28 19:44:55.848] [INFO] [WeaHelper] Final CpuPumpSensorSubName=
+[2026-06-28 19:44:55.848] [INFO] [WeaHelper] ----- IniteSensorIndex end -----
+[2026-06-28 19:44:55.849] [INFO] [WeaHelper] IniteSensorIndex completed successfully
+[2026-06-28 19:44:55.849] [INFO] [WeaHelper] ========== Sensor Inite SUCCESS ==========
+[2026-06-28 19:44:55.928] [INFO] [MsgForm] WaitReadingInfo succeeded after 1.6 seconds
+[2026-06-28 19:44:55.929] [INFO] [Form1] msgForm.WaitReadingInfo returned True, WeaHelper.inite=True
+[2026-06-28 19:44:55.932] [INFO] [Form1] Sensor initialization OK, msgForm hidden
+[2026-06-28 19:45:01.749] [INFO] [Monitor] StartMonitor called
+[2026-06-28 19:45:01.753] [INFO] [Monitor] Monitor loop started
+[2026-06-28 19:45:01.773] [INFO] [QWeather] 使用直接 Ed25519 DPAPI 凭据
+[2026-06-28 19:45:03.014] [INFO] [QWeather] [SearchCity] 响应长度: 381 字节
+[2026-06-28 19:45:03.051] [DEBUG] [QWeather] Hong Kong 101320101
+[2026-06-28 19:45:03.051] [INFO] [WeatherService] 城市码 101320101 验证通过，已缓存
+[2026-06-28 19:45:03.570] [INFO] [QWeather] [GetWeather] 响应长度: 454 字节
+[2026-06-28 19:45:03.575] [INFO] [QWeather] Moderate Rain S3level  28°
+[2026-06-28 19:45:23.209] [ERROR] [Monitor] InvalidOperationException in monitor loop
+[2026-06-28 19:45:23.257] [ERROR] [Monitor] Exception: System.InvalidOperationException
+Message: The port is closed.
+Source: System
+TargetSite: Void Write(Byte[], Int32, Int32)
+StackTrace:    at System.IO.Ports.SerialPort.Write(Byte[] buffer, Int32 offset, Int32 count)
+   at ꣫.ꪨ(Byte[] A_0, Boolean A_1)
+   at ꪨ.ꪨ(Int32 A_0, Int32 A_1, Int32 A_2, Int32 A_3, Int32 A_4, Byte[] A_5, Int32 A_6)
+   at ꪨ.ꪨ(Byte[] A_0, Int32 A_1, Int32 A_2, Int32 A_3, Int32 A_4, Int32 A_5)
+   at usb_hid.TItem.ꞇ(Int32 A_0, Int32 A_1)
+   at usb_hid.TGroup.꠹(Int32 A_0)
+   at ꧶.둤(Int32 A_0)
+   at ꧶.꟠.ꞇ.ꢒ()
+
+[2026-06-28 19:46:23.939] [INFO] [Monitor] StartMonitor called
+[2026-06-28 19:46:23.939] [INFO] [Monitor] Monitor loop started
+[2026-06-28 19:52:49.554] [ERROR] [SettingForm] CreateShortcutBtn exception: Bad use of Runtime Impl attribute.
+[2026-06-28 19:53:13.365] [INFO] [Monitor] StartMonitor called
+[2026-06-28 19:53:13.366] [INFO] [Monitor] Monitor loop started

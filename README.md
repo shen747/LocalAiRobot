@@ -57,6 +57,7 @@ scripts/run_me.sh        # run the brain: --dry/--live (foreground), --detach (b
 scripts/shutdown.sh      # stop the brain gracefully; --poweroff also halts the Pi
 scripts/setup_audio.sh   # point ALSA's default output at your USB speaker (writes ~/.asoundrc)
 scripts/test_sensors.sh  # read the 3 HC-SR04P sensors live (bench check before trusting the gate)
+scripts/run_diagnostics.sh # live wiring self-test: green/red per peripheral + fix pointers (pre-first-run)
 scripts/host_setup.sh    # install the asset-authoring toolkit on YOUR PC (WSL/macOS/Linux) for sounds/faces
 scripts/generate_sounds.sh # speak the earcon WAVs with Piper, on your PC (spoken cues)
 scripts/generate_faces.sh  # render procedural face PNG templates to customize (run on your PC)
@@ -68,6 +69,7 @@ docs/assembly.md         # phased build + calibration reference (start here to b
 docs/wiring/pwm-esc-servo-wiring.md  # pin-by-pin drive+steering wiring: ESC/PWM/servo → Pi (+ diagrams)
 docs/wiring/ultrasonic-sensors-wiring.md  # pin-by-pin 3x HC-SR04P sensors → Pi GPIO (direct)
 docs/gemini-setup.md     # OPTIONAL: run the brain on remote Google Gemini instead of local Ollama
+docs/diagnostics.md      # pre-first-run live wiring self-test (run_diagnostics.sh) — what each ✓/✗ means
 docs/images/*.puml       # editable PlantUML sources for the diagrams (render in place)
 ```
 
@@ -202,6 +204,13 @@ and say *"find the sofa"* to dry-run the whole explore loop with no camera.
 > `ROBOT_DRY_RUN=0`) and run `--live`: wake word, voice, camera, sensors and face all work for real, but
 > the ESC + steering get **no signal**, so it **can't drive off the table** — the console still shows the
 > throttle/steer commands. Back to driving: `ROBOT_MOTORS_OFF=0`.
+
+**4½. Verify the wiring (live self-test).** Once it's built, wired and powered, run a one-shot diagnostic
+that checks every peripheral and tells you exactly what's miswired:
+```bash
+./scripts/run_diagnostics.sh     # green ✓ / red ✗ per device + fix pointers; wheels OFF the ground
+```
+Full reference: [docs/diagnostics.md](docs/diagnostics.md).
 
 **5. Calibrate on a stand — wheels OFF the ground** (LIVE now, ESC (Electronic Speed Controller) powered). Run the brain and:
 - say *"center" / "turn left" / "turn right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT`;
