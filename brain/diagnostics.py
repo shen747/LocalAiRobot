@@ -361,12 +361,17 @@ class Diag:
                 for la in labels:
                     self.bad(la, "PCA9685 not driving (faked) -- fix the I2C check above first", DOC_PWM)
                 return
-            # forward / reverse
+            # forward / reverse (direction-specific fixes: if FORWARD passed, a REVERSE fail is the ESC mode)
+            motor_fix = {
+                "FORWARD": "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch",
+                "REVERSE": ("no reverse -- if FORWARD worked this is the ESC's mode, not wiring: it's in "
+                            "Forward/Brake (no reverse) or wants a double-tap. Switch it to Forward/Reverse "
+                            "in the ESC's own programming (SET button / program card -- see its manual)"),
+            }
             for la, drive in (("Motor FORWARD spin", "FORWARD"), ("Motor REVERSE spin", "REVERSE")):
                 d.command(drive, "CENTER", 30, 1500)
                 time.sleep(2.0)
-                self.confirm_step(la, f"Did the wheels spin {drive}?",
-                                  "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch", DOC_PWM)
+                self.confirm_step(la, f"Did the wheels spin {drive}?", motor_fix[drive], DOC_PWM)
             # steering
             for la, steer in (("Servo steer RIGHT", "RIGHT"), ("Servo steer LEFT", "LEFT"), ("Servo steer CENTER", "CENTER")):
                 d.command("STOP", steer, 0, 500)
