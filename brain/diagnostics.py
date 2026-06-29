@@ -214,43 +214,32 @@ class Diag:
                           "not heard -- set the USB speaker as the ALSA default (./scripts/setup_audio.sh)", DOC_ASM)
 
     def check_camera(self):
-        # 11: still
         if os.environ.get("ROBOT_CAMERA_ENABLE", "1") == "0":
-            self.skip("Camera picture", "ROBOT_CAMERA_ENABLE=0")
-            self.skip("Camera video clip", "ROBOT_CAMERA_ENABLE=0")
-            self.skip("Camera live feed", "ROBOT_CAMERA_ENABLE=0")
+            for la in ("Camera picture", "Camera video clip", "Camera live feed"):
+                self.skip(la, "ROBOT_CAMERA_ENABLE=0")
             return
-        label = "Camera picture (still)"
-        try:
-            from camera import Camera
-            cam = Camera()
-            jpg = cam.capture_jpeg()
-            cam.close()
-            if jpg:
-                path = os.path.join(OUTDIR, "diag_picture.jpg")
-                with open(path, "wb") as f:
-                    f.write(jpg)
-                self.ok(label, f"{len(jpg)} bytes -> {path}")
-            else:
-                self.bad(label, "no frame -- reseat the CSI ribbon; `rpicam-hello --list-cameras`", DOC_ASM)
-        except Exception as e:
-            self.bad(label, f"{e}", DOC_ASM)
-        # 12: short video clip (camera.py is still-only, so use rpicam-vid)
-        label = "Camera video clip (3 s)"
-        vid = os.path.join(OUTDIR, "diag_video.h264")
-        try:
-            vc = subprocess.run(["rpicam-vid", "-n", "-t", "3000", "-o", vid],
-                                timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-            if vc.returncode == 0 and os.path.exists(vid) and os.path.getsize(vid) > 0:
-                self.ok(label, f"{os.path.getsize(vid)} bytes -> {vid}")
-            else:
-                self.bad(label, f"rpicam-vid failed: {vc.stderr.strip()[-120:]}", DOC_ASM)
-        except FileNotFoundError:
-            self.bad(label, "rpicam-vid not found (libcamera apps missing)", DOC_ASM)
-        except Exception as e:
-            self.bad(label, f"{e}", DOC_ASM)
-        # 13: live feed -- not viewable over headless SSH
-        self.skip("Camera live feed", "not viewable over headless SSH; the saved clip above covers the pipeline")
+        # Use the libcamera CLI tools (subprocess + timeout) so a detected-but-undelivering camera (bad CSI
+        # ribbon -> "Failed to queue buffer") can't HANG the run -- it times out and fails cleanly.
+        for label, cmd, fname, t in (
+            ("Camera picture (still)", ["rpicam-jpeg", "-n", "-t", "2000", "-o"], "diag_picture.jpg", 20),
+            ("Camera video clip (3 s)", ["rpicam-vid", "-n", "-t", "3000", "-o"], "diag_video.h264", 30),
+        ):
+            path = os.path.join(OUTDIR, fname)
+            try:
+                r = subprocess.run(cmd + [path], timeout=t,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                if r.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+                    self.ok(label, f"{os.path.getsize(path)} bytes -> {path}")
+                else:
+                    self.bad(label, f"{cmd[0]} failed: {(r.stderr or '').strip()[-160:]}", DOC_ASM)
+            except subprocess.TimeoutExpired:
+                self.bad(label, f"{cmd[0]} timed out -- camera detected but no frames: reseat the CSI ribbon /"
+                                " 22->15 adapter (contacts the right way, latches closed)", DOC_ASM)
+            except FileNotFoundError:
+                self.bad(label, f"{cmd[0]} not found (libcamera apps missing)", DOC_ASM)
+            except Exception as e:
+                self.bad(label, f"{e}", DOC_ASM)
+        self.skip("Camera live feed", "not viewable over headless SSH; the saved clip covers the pipeline")
 
     def check_mic(self):
         label = "Microphone input (say 'hey jarvis')"
@@ -362,25 +351,30 @@ class Diag:
                 for la in labels:
                     self.bad(la, "PCA9685 not driving (faked) -- fix the I2C check above first", DOC_PWM)
                 return
-            # ESC arm: the driver now holds NEUTRAL (1500us) on ch0. An ESC that powered on BEFORE seeing a
-            # valid neutral latches a safety lockout (rapid blink); power-cycling it now, WHILE this neutral
-            # is held, is what makes it arm. Confirm the blink stopped before testing motion.
-            print(dim("    Holding NEUTRAL on the ESC -- if it's BLINKING, power-cycle it now (unplug + replug"
-                      " the LiPo) and watch it go solid / beep."))
+            esc_ch, steer_ch = d.esc_ch, d.steer_ch
+            print(dim(f"    ESC on ch{esc_ch}, steering servo on ch{steer_ch} (ROBOT_ESC_CHANNEL / "
+                      f"ROBOT_STEER_CHANNEL). BOTH need the LiPo connected + CHARGED -- the servo is powered by "
+                      f"the ESC's BEC, so no/low battery = no motor AND no steering."))
+            # ESC arm: the driver now holds NEUTRAL (1500us) on the ESC channel. An ESC that powered on BEFORE
+            # seeing a valid neutral latches a safety lockout (rapid blink); power-cycling it now, WHILE this
+            # neutral is held, is what makes it arm. Confirm the blink stopped before testing motion.
+            print(dim(f"    Holding NEUTRAL on ch{esc_ch} -- if the ESC is BLINKING, power-cycle it now"
+                      " (unplug + replug the LiPo) and watch it go solid / beep."))
             ares = self.confirm("ESC armed? (blinking stopped / it beeped its tune)", timeout=25)
             if ares is True:
                 self.ok("ESC arm (neutral)")
             elif ares is False:
-                self.bad("ESC arm (neutral)", "won't arm -- power-cycle it while neutral is held; check the "
-                         "F/R + LIPO jumpers, the ch0 signal lead, and LiPo voltage (>7V)", DOC_PWM)
+                self.bad("ESC arm (neutral)", f"won't arm -- power-cycle it while neutral is held; check the "
+                         f"F/R + LIPO jumpers, the ch{esc_ch} signal lead, and a CHARGED LiPo (>7V)", DOC_PWM)
             else:
                 self.skip("ESC arm (neutral)", "unconfirmed (no answer in 25s)")
             # forward / reverse (direction-specific fixes: if FORWARD passed, a REVERSE fail is the ESC mode)
             motor_fix = {
-                "FORWARD": "no spin -- check ESC 3-wire on ch0, ESC<->motor leads, LiPo + kill switch",
+                "FORWARD": f"no spin -- check the ESC signal on ch{esc_ch}, the ESC<->motor leads, and a "
+                           f"CHARGED LiPo via the kill switch (a flat pack just beeps and won't drive)",
                 "REVERSE": ("no reverse -- if FORWARD worked this is the ESC's mode, not wiring: it's in "
                             "Forward/Brake (no reverse) or wants a double-tap. Switch it to Forward/Reverse "
-                            "in the ESC's own programming (SET button / program card -- see its manual)"),
+                            "via the ESC's jumper / programming (see its manual)"),
             }
             for la, drive in (("Motor FORWARD spin", "FORWARD"), ("Motor REVERSE spin", "REVERSE")):
                 d.command(drive, "CENTER", 30, 1500)
@@ -391,7 +385,8 @@ class Diag:
                 d.command("STOP", steer, 0, 500)
                 time.sleep(1.2)
                 self.confirm_step(la, f"Did the front wheels steer {steer}?",
-                                  "no/!wrong steer -- check the servo plug on ch1 and ROBOT_STEER_* angles", DOC_PWM)
+                                  f"no/!wrong steer -- check the servo on ch{steer_ch}, that the LiPo is ON "
+                                  f"(its BEC powers the servo), and the ROBOT_STEER_* angles", DOC_PWM)
         except Exception as e:
             for la in labels:
                 if la not in self.passed:
