@@ -124,8 +124,20 @@ class RobotDriver:
         self.steer_left = _envf("ROBOT_STEER_LEFT", 55.0)
         self.steer_right = _envf("ROBOT_STEER_RIGHT", 125.0)
 
-        # --- Throttle: a loaded crawler should stay slow. max_throttle caps the ESC (Electronic Speed Controller) range. ---
-        self.max_throttle = _envf("ROBOT_MAX_THROTTLE", 0.35)   # 0..1 fraction of full ESC (Electronic Speed Controller) range
+        # --- Throttle map (deadband-compensated). This ESC (HobbyWing QuicRun WP-1060, F/R
+        #     "crawler" jumper) has a LARGE forward dead-band: it doesn't start pulling until
+        #     ~1800us. The old `max_throttle 0.35` capped output at 1675us -- INSIDE that dead
+        #     zone -- so the crawler never moved. We now map speed 1..100 onto the ESC's *usable*
+        #     band (skipping the dead zone), keeping 1500us = neutral so the safe-stop path is
+        #     unchanged. Floors/ceils are throttle fractions (0..1); 0.60 ~= 1800us, 1.00 = 2000us.
+        #     Tune ROBOT_ESC_FWD_FLOOR up until speed 1 *just* moves; lower the CEIL to cap top speed.
+        self.fwd_floor = _envf("ROBOT_ESC_FWD_FLOOR", 0.60)   # FORWARD just engages (~1800us)
+        self.fwd_ceil = _envf("ROBOT_ESC_FWD_CEIL", 1.00)     # FORWARD full speed (lower = slower)
+        self.rev_floor = _envf("ROBOT_ESC_REV_FLOOR", 0.60)   # REVERSE just engages (~1200us)
+        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", 1.00)     # REVERSE full (F/R caps reverse ~25% anyway)
+        # Legacy single cap: if ROBOT_MAX_THROTTLE is still set < a floor it would re-create the
+        # "never moves" bug, so it's NO LONGER applied to the map (kept readable for old configs).
+        self._legacy_max = _envf("ROBOT_MAX_THROTTLE", 0.0)
         self.invert = _envi("ROBOT_THROTTLE_INVERT", 0) == 1     # flip if FWD/REV are swapped
         self.arm_secs = _envf("ROBOT_ESC_ARM_SECS", 3.0)
 
@@ -166,8 +178,9 @@ class RobotDriver:
             _mode = "LIVE HARDWARE"
         log.info("*** %s ***", _mode)
         log.info("PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC (Electronic Speed Controller) ch=%d, steer ch=%d | "
-                 "max_throttle=%.2f invert=%d", self.esc_ch, self.steer_ch,
-                 self.max_throttle, int(self.invert))
+                 "FWD throttle %.2f..%.2f  REV %.2f..%.2f  invert=%d  (1500us=neutral)",
+                 self.esc_ch, self.steer_ch, self.fwd_floor, self.fwd_ceil,
+                 self.rev_floor, self.rev_ceil, int(self.invert))
         log.info("HC-SR04P x3: front TRIG=GPIO%d/ECHO=GPIO%d  left TRIG=GPIO%d/ECHO=GPIO%d  "
                  "right TRIG=GPIO%d/ECHO=GPIO%d", trig, echo, left_trig, left_echo, right_trig, right_echo)
         log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
@@ -263,7 +276,7 @@ class RobotDriver:
         # --- Shared state (guarded by _lock) ---
         self._drive = "STOP"
         self._steer = "CENTER"
-        self._throttle = 0.0          # target magnitude, 0..max_throttle
+        self._throttle = 0.0          # target magnitude (positive); loop applies FWD/REV sign
         self._deadline = 0.0          # time.monotonic() after which we coast to neutral
         self._closed = False
         self.on_obstacle = None       # optional callback(distance_cm); dispatched on a daemon thread
@@ -284,9 +297,9 @@ class RobotDriver:
         steer = steer if steer in VALID_STEER else "CENTER"
         speed = max(0, min(100, int(speed)))
         duration_ms = max(0, min(self.max_move_ms, int(duration_ms)))
-        throttle = (speed / 100.0) * self.max_throttle
+        throttle = self._speed_to_throttle(drive, speed) if drive != "STOP" else 0.0
         log.info("CMD drive=%s steer=%s speed=%d -> throttle=%.3f dur=%dms",
-                 drive, steer, speed, throttle if drive != "STOP" else 0.0, duration_ms)
+                 drive, steer, speed, throttle, duration_ms)
         with self._lock:
             self._drive = drive
             self._steer = steer
@@ -356,6 +369,19 @@ class RobotDriver:
                 self._write_throttle(0.0)
             except Exception:
                 pass
+
+    def _speed_to_throttle(self, drive, speed):
+        """Map a 0..100 speed onto the ESC's usable throttle band, SKIPPING the dead-band this ESC
+        has around neutral (small offsets from 1500us produce no motion). Returns a POSITIVE
+        magnitude (the control loop applies the FORWARD/REVERSE sign); speed 0 -> 0.0 (neutral)."""
+        if speed <= 0:
+            return 0.0
+        s = max(0.0, min(1.0, speed / 100.0))
+        floor, ceil = ((self.rev_floor, self.rev_ceil) if drive == "REVERSE"
+                       else (self.fwd_floor, self.fwd_ceil))
+        floor = max(0.0, min(1.0, floor))
+        ceil = max(floor, min(1.0, ceil))
+        return floor + s * (ceil - floor)
 
     def _esc_pulse_us(self, value):
         lo, hi = self._esc_pulse
