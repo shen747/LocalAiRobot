@@ -141,15 +141,14 @@ class RobotDriver:
         self.invert = _envi("ROBOT_THROTTLE_INVERT", 0) == 1     # flip if FWD/REV are swapped
         self.arm_secs = _envf("ROBOT_ESC_ARM_SECS", 3.0)
 
-        # --- Reverse "double-tap" (HobbyWing QuicRun in F/B/R mode). In F/B/R the FIRST reverse
-        #     push only BRAKES; reverse engages on the SECOND push after passing through neutral.
-        #     So a single -throttle never reverses -- the driver must tap reverse -> neutral ->
-        #     reverse itself. The control loop sequences this over rev_brake_ms (tap1=brake) +
-        #     rev_gap_ms (neutral) before holding sustained reverse. Set DOUBLETAP=0 for an ESC in
-        #     F/R "direct reverse" mode (then a single -throttle reverses immediately). ---
-        self.rev_doubletap = _envi("ROBOT_ESC_REVERSE_DOUBLETAP", 1) == 1
-        self.rev_brake_ms = _envi("ROBOT_ESC_REV_BRAKE_MS", 400)   # tap1 duration (F/B/R reads as brake)
-        self.rev_gap_ms = _envi("ROBOT_ESC_REV_GAP_MS", 300)       # neutral gap between the two taps
+        # --- Reverse mode. DEFAULT is F/R "direct reverse": a single -throttle reverses immediately
+        #     (this tested reliable on the WP-1060; the F/B/R double-click proved finicky). Set
+        #     ROBOT_ESC_REVERSE_DOUBLETAP=1 ONLY for the F/B/R jumper, where the FIRST reverse push
+        #     only brakes and reverse engages on the SECOND push after neutral -- the loop then
+        #     auto-taps reverse -> neutral -> reverse. F/R has no brake (STOP coasts). ---
+        self.rev_doubletap = _envi("ROBOT_ESC_REVERSE_DOUBLETAP", 0) == 1
+        self.rev_brake_ms = _envi("ROBOT_ESC_REV_BRAKE_MS", 400)   # (F/B/R only) tap1 the ESC reads as brake
+        self.rev_gap_ms = _envi("ROBOT_ESC_REV_GAP_MS", 300)       # (F/B/R only) neutral gap between taps
 
         # --- Obstacle sensing: forward FORWARD-cut gate + side-awareness (semi-hex 3-sensor array) ---
         self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD)
