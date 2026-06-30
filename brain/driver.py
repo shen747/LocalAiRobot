@@ -263,8 +263,12 @@ class RobotDriver:
                 try:
                     if DistanceSensor is None:
                         raise RuntimeError("gpiozero unavailable")
+                    # partial=True is CRITICAL: without it gpiozero's .distance/.value BLOCKS until
+                    # the sample queue fills, and a dead/unwired sensor (no echo) never fills it -- which
+                    # HANGS the 20 Hz safety loop the first time the FORWARD gate reads it. partial=True
+                    # returns whatever's available immediately, so a bad sensor can never stall the loop.
                     self._sensors[name] = DistanceSensor(
-                        echo=e_pin, trigger=t_pin, max_distance=4.0, queue_len=3)
+                        echo=e_pin, trigger=t_pin, max_distance=4.0, queue_len=3, partial=True)
                 except Exception as e:
                     log.error("HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
                               "-> faked; its obstacle gate is DISABLED.", name, t_pin, e_pin, e)
