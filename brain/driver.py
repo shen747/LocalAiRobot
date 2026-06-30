@@ -425,19 +425,25 @@ class RobotDriver:
         if self.invert:
             value = -value
         value = max(-1.0, min(1.0, value))
-        if round(value, 3) != self._log_throttle:
-            self._log_throttle = round(value, 3)
-            log.info("I2C->PCA9685 ESC (Electronic Speed Controller)   ch=%d throttle=%+.3f pulse_us=%.0f",
-                     self.esc_ch, value, self._esc_pulse_us(value))
+        rv = round(value, 3)
+        # WRITE-ON-CHANGE: only push to the PCA9685 when the value actually changes. Re-writing the same
+        # neutral 20x/sec can disturb the dead-steady signal a cheap ESC needs to arm; once written, the
+        # PCA9685 holds the pulse in hardware. A STOP/obstacle still changes the value -> still writes.
+        if rv == self._log_throttle:
+            return
+        self._log_throttle = rv
+        log.info("I2C->PCA9685 ESC (Electronic Speed Controller)   ch=%d throttle=%+.3f pulse_us=%.0f",
+                 self.esc_ch, value, self._esc_pulse_us(value))
         self.kit.continuous_servo[self.esc_ch].throttle = value
 
     def _write_steer(self, steer):       # caller MUST hold self._io
         angle = {"LEFT": self.steer_left, "RIGHT": self.steer_right}.get(steer, self.steer_center)
         angle = max(0.0, min(180.0, angle))
-        if steer != self._log_steer:
-            self._log_steer = steer
-            log.info("I2C->PCA9685 SERVO ch=%d steer=%-6s angle=%.1fdeg pulse_us=%.0f",
-                     self.steer_ch, steer, angle, self._steer_pulse_us(angle))
+        if steer == self._log_steer:     # write-on-change (same reasoning as _write_throttle)
+            return
+        self._log_steer = steer
+        log.info("I2C->PCA9685 SERVO ch=%d steer=%-6s angle=%.1fdeg pulse_us=%.0f",
+                 self.steer_ch, steer, angle, self._steer_pulse_us(angle))
         self.kit.servo[self.steer_ch].angle = angle
 
     def _control_loop(self):
