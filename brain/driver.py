@@ -141,6 +141,16 @@ class RobotDriver:
         self.invert = _envi("ROBOT_THROTTLE_INVERT", 0) == 1     # flip if FWD/REV are swapped
         self.arm_secs = _envf("ROBOT_ESC_ARM_SECS", 3.0)
 
+        # --- Reverse "double-tap" (HobbyWing QuicRun in F/B/R mode). In F/B/R the FIRST reverse
+        #     push only BRAKES; reverse engages on the SECOND push after passing through neutral.
+        #     So a single -throttle never reverses -- the driver must tap reverse -> neutral ->
+        #     reverse itself. The control loop sequences this over rev_brake_ms (tap1=brake) +
+        #     rev_gap_ms (neutral) before holding sustained reverse. Set DOUBLETAP=0 for an ESC in
+        #     F/R "direct reverse" mode (then a single -throttle reverses immediately). ---
+        self.rev_doubletap = _envi("ROBOT_ESC_REVERSE_DOUBLETAP", 1) == 1
+        self.rev_brake_ms = _envi("ROBOT_ESC_REV_BRAKE_MS", 400)   # tap1 duration (F/B/R reads as brake)
+        self.rev_gap_ms = _envi("ROBOT_ESC_REV_GAP_MS", 300)       # neutral gap between the two taps
+
         # --- Obstacle sensing: forward FORWARD-cut gate + side-awareness (semi-hex 3-sensor array) ---
         self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD)
         self.side_obstacle_cm = _envf("ROBOT_SIDE_OBSTACLE_CM", 25.0)  # explore steering-avoid
@@ -278,6 +288,7 @@ class RobotDriver:
         self._steer = "CENTER"
         self._throttle = 0.0          # target magnitude (positive); loop applies FWD/REV sign
         self._deadline = 0.0          # time.monotonic() after which we coast to neutral
+        self._rev_prime_start = 0.0   # monotonic time the reverse double-tap began (0 = not priming)
         self._closed = False
         self.on_obstacle = None       # optional callback(distance_cm); dispatched on a daemon thread
                                       # (see _trip_obstacle) so its I/O can't stall the safety loop
@@ -301,16 +312,29 @@ class RobotDriver:
         log.info("CMD drive=%s steer=%s speed=%d -> throttle=%.3f dur=%dms",
                  drive, steer, speed, throttle, duration_ms)
         with self._lock:
+            now = time.monotonic()
+            prev_drive, prev_deadline = self._drive, self._deadline
             self._drive = drive
             self._steer = steer
             self._throttle = throttle if drive != "STOP" else 0.0
-            self._deadline = time.monotonic() + duration_ms / 1000.0
+            # Re-prime the double-tap on a FRESH reverse: either we weren't reversing, or the
+            # previous reverse already expired (the ESC is back at neutral, so a new push would
+            # only brake again). Keep priming state while an active reverse continues.
+            extra = 0.0
+            if drive == "REVERSE" and self.rev_doubletap and (
+                    prev_drive != "REVERSE" or now > prev_deadline):
+                self._rev_prime_start = now
+                extra = (self.rev_brake_ms + self.rev_gap_ms) / 1000.0   # so reverse keeps its full duration
+            elif drive != "REVERSE":
+                self._rev_prime_start = 0.0
+            self._deadline = now + extra + duration_ms / 1000.0
 
     def stop(self):
         with self._lock:
             self._drive = "STOP"
             self._throttle = 0.0
             self._deadline = 0.0
+            self._rev_prime_start = 0.0   # next reverse re-primes the double-tap
         self._neutral()   # don't wait up to one loop tick to cut throttle
 
     def distance_cm(self, side="front"):
@@ -338,6 +362,7 @@ class RobotDriver:
             self._closed = True
             self._drive = "STOP"      # so any in-flight control tick computes out=0, not a stale throttle
             self._throttle = 0.0
+            self._rev_prime_start = 0.0
         if self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._neutral()
@@ -420,6 +445,7 @@ class RobotDriver:
                     break
                 drive, throttle, steer, deadline = (
                     self._drive, self._throttle, self._steer, self._deadline)
+                rev_prime_start = self._rev_prime_start
 
             out = 0.0
             if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
@@ -439,8 +465,15 @@ class RobotDriver:
                         self._gate_blocked = False
                         out = throttle
                 else:
-                    out = -throttle   # NOTE: REVERSE is UNSENSED (no rear sensor) -- bounded only by
-                                      # the move deadline + throttle cap. Keep reverse moves short.
+                    # REVERSE is UNSENSED (no rear sensor) -- bounded only by the move deadline +
+                    # throttle cap. Keep reverse moves short.
+                    out = -throttle
+                    if rev_prime_start:
+                        # Double-tap an F/B/R ESC: tap1 (brake) -> neutral gap -> sustained reverse.
+                        el_ms = (time.monotonic() - rev_prime_start) * 1000.0
+                        if self.rev_brake_ms <= el_ms < self.rev_brake_ms + self.rev_gap_ms:
+                            out = 0.0          # neutral gap between the two taps
+                        # el < brake_ms: tap1 (out=-throttle, ESC brakes); past the gap: real reverse
 
             try:
                 with self._io:
