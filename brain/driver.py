@@ -134,7 +134,9 @@ class RobotDriver:
         self.fwd_floor = _envf("ROBOT_ESC_FWD_FLOOR", 0.60)   # FORWARD just engages (~1800us)
         self.fwd_ceil = _envf("ROBOT_ESC_FWD_CEIL", 1.00)     # FORWARD full speed (lower = slower)
         self.rev_floor = _envf("ROBOT_ESC_REV_FLOOR", 0.60)   # REVERSE just engages (~1200us)
-        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", 1.00)     # REVERSE full (F/R caps reverse ~25% anyway)
+        # This ESC's reverse only engages in a BAND (~-0.6..-0.8 / 1200..1100us); deeper (-0.88/1060us)
+        # overshoots it and does NOTHING. So cap reverse at 0.80, NOT 1.0. Raise/lower if reverse drops out.
+        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", 0.80)     # REVERSE full -- capped to the working band
         # Legacy single cap: if ROBOT_MAX_THROTTLE is still set < a floor it would re-create the
         # "never moves" bug, so it's NO LONGER applied to the map (kept readable for old configs).
         self._legacy_max = _envf("ROBOT_MAX_THROTTLE", 0.0)
