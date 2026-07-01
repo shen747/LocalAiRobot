@@ -10,7 +10,7 @@
 Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
-2. **Install it** — `chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh` grabs the offline AI stack and sets your username; then `sudo reboot` and SSH back in.
+2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack and sets your username; then `sudo reboot` and SSH back in.
 3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
@@ -163,7 +163,7 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md); pin-by-pin wir
 **1. Install (needs internet once).**
 ```bash
 git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # put your GitHub username in place of YOUR_GITHUB_USER
-cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
+cd ~/LocalAiRobot && ./scripts/install_stack.sh
 ```
 Installs Ollama + `gemma4:e4b-it-qat`, whisper.cpp + `base.en`, Piper + voice, **picamera2** (apt) and the
 **USB-C face-panel library**, enables I2C, adds you to the `i2c`/`gpio`/`dialout`/`audio`/`video`

@@ -100,8 +100,6 @@ if [ -f "${REPO}/config/robot.env" ]; then
   sed -i "s/YOUR_USER/$(whoami)/g" "${REPO}/config/robot.env"
   echo ">> config: whisper/piper paths set to /home/$(whoami)/...  (YOUR_USER -> $(whoami))"
 fi
-# Make every helper script (incl. the ESC patches under scripts/patches/) executable so ./scripts/... works.
-chmod +x "${REPO}"/scripts/*.sh "${REPO}"/scripts/patches/*.sh 2>/dev/null || true
 
 # Auto-load config/robot.env in every NEW interactive shell, so you never have to
 # 'set -a; source config/robot.env; set +a' by hand again. Idempotent (appended once); run_me.sh and

@@ -65,7 +65,7 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
 4. **Install the stack and reboot:**
    ```bash
    git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # your GitHub username
-   cd ~/LocalAiRobot && chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh
+   cd ~/LocalAiRobot && ./scripts/install_stack.sh
    sudo reboot
    ```
 5. **Plug in the USB mic + speaker, then set up `config/robot.env`** — **three** things (leave the rest):
@@ -465,8 +465,7 @@ process is killed, the PCA9685 keeps emitting the last pulse and nothing in hard
 
 ## Appendix — Run it day-to-day (`run_me.sh` / `shutdown.sh`)
 
-Two wrappers in `scripts/` source `config/robot.env` for you (and skip silently if it's missing). Make
-them executable once: `chmod +x scripts/*.sh`.
+Two wrappers in `scripts/` source `config/robot.env` for you (and skip silently if it's missing).
 
 | Command | What it does |
 |---|---|
