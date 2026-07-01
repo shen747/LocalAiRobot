@@ -94,6 +94,15 @@ PY
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/wake_word_ack" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
 
+# Fill YOUR_USER in config/robot.env with the current Linux user -- whisper (STT) + piper (TTS) run from
+# these exact /home/<user>/... paths. Idempotent: once replaced there's no YOUR_USER left (re-run = no-op).
+if [ -f "${REPO}/config/robot.env" ]; then
+  sed -i "s/YOUR_USER/$(whoami)/g" "${REPO}/config/robot.env"
+  echo ">> config: whisper/piper paths set to /home/$(whoami)/...  (YOUR_USER -> $(whoami))"
+fi
+# Make every helper script (incl. the ESC patches under scripts/patches/) executable so ./scripts/... works.
+chmod +x "${REPO}"/scripts/*.sh "${REPO}"/scripts/patches/*.sh 2>/dev/null || true
+
 # Auto-load config/robot.env in every NEW interactive shell, so you never have to
 # 'set -a; source config/robot.env; set +a' by hand again. Idempotent (appended once); run_me.sh and
 # shutdown.sh also source it themselves. cleanup_pi.sh removes this block again on a reset.
@@ -116,30 +125,17 @@ fi
 echo ">> audio: pointing ALSA's default output at your USB speaker (if one is plugged in)"
 bash "${REPO}/scripts/setup_audio.sh" || true
 
-echo ">> DONE -- the offline AI stack is installed:"
-echo "   Ollama + the gemma4:e4b-it-qat (text) and moondream (vision) models, whisper.cpp (speech-to-text),"
-echo "   Piper (text-to-speech), the camera + face-screen libraries, and the Python environment."
+echo ">> DONE -- offline AI stack installed (Ollama + gemma4/moondream, whisper.cpp, Piper, camera + face"
+echo "   libs, the Python venv) and your username is set in config/robot.env."
 echo
-echo "What to do next  (full, explained walkthrough: docs/assembly.md -> Phase 1, from step 5):"
+echo "Next -- finish the 5-step setup at the top of the README (full walkthrough: docs/assembly.md):"
 echo
-echo "   1. Reboot now, so the settings this installer switched on and your new device permissions"
-echo "      take effect:        sudo reboot"
-echo "      ...then SSH back in and:   cd ~/LocalAiRobot"
-echo "      (new SSH sessions now auto-load config/robot.env -- no more 'source' by hand.)"
+echo "   * Reboot so I2C + your new device groups take effect:   sudo reboot"
+echo "     ...then SSH back in:   cd ~/LocalAiRobot        (new shells auto-load config/robot.env)"
 echo
-echo "   2. Tell the robot who you are and which microphone to use:   nano config/robot.env"
-echo "        - set your username in the whisper/piper paths:   sed -i \"s/YOUR_USER/\$(whoami)/g\" config/robot.env"
-echo "        - set ROBOT_MIC to your USB microphone (the doc shows how to find it)"
-echo "        - point the VOICE at your USB speaker:   ./scripts/setup_audio.sh   (writes ~/.asoundrc)"
-echo "        - for the bench, set ROBOT_DRY_RUN=1   (nothing drives)"
+echo "   3. Patch in your ESC's tested defaults:   ./scripts/patches/<your-esc>.sh   (e.g. hb_qr_1060.sh)"
+echo "   4. Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
+echo "   5. Drive it:   ./scripts/run_me.sh         (live: say 'hey jarvis' | bench: ./scripts/run_me.sh --dry)"
 echo
-echo "   3. Check the AI brain answers, entirely on the Pi (no internet):"
-echo "        ollama run gemma4:e4b-it-qat \"reply with one word: ready\""
-echo
-echo "   4. Dry-run the brain -- nothing moves, it just prints what it WOULD do:"
-echo "        ./scripts/run_me.sh --dry"
-echo
-echo "   The wake word is ON by default -- in live, say 'hey jarvis' to talk (ENTER works in --dry)."
-echo
-echo "   Inspect the robot's memory (taught people/things, recent sightings) any time:"
-echo "        ./scripts/rag.sh        (also: --seen | --all | --forget <name> | --query \"<SQL>\")"
+echo "   Diagnostics (step 4) flags anything wrong -- e.g. audio: ./scripts/setup_audio.sh + set ROBOT_MIC."
+echo "   Inspect the robot's memory any time:   ./scripts/rag.sh   (--seen | --all | --forget <name>)"

@@ -383,6 +383,9 @@ class Diag:
                          f"ch{esc_ch} signal lead, a CHARGED LiPo, and ROBOT_ESC_NEUTRAL (some ESCs need ~0.25)", DOC_PWM)
             else:
                 self.skip("ESC arm (neutral)", "unconfirmed (no answer in 15s)")
+            # Let the ESC finish its arm tones before the first throttle command -- the long "ready" beep
+            # can land a couple seconds after neutral is first held, so a too-eager FORWARD would no-op.
+            time.sleep(2.0)
             # forward / reverse (direction-specific fixes: if FORWARD passed, a REVERSE fail is the ESC mode)
             motor_fix = {
                 "FORWARD": f"no spin -- check the ESC signal on ch{esc_ch}, the ESC<->motor leads, and a "

@@ -5,6 +5,16 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
+## Quickstart — 5 steps to a talking robot
+
+Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
+
+1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
+2. **Install it** — `chmod +x scripts/install_stack.sh && ./scripts/install_stack.sh` grabs the offline AI stack and sets your username; then `sudo reboot` and SSH back in.
+3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
+4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
+5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
+
 ![LocalAiRobot voice + vision control flow: a voice command — started by a wake word (openWakeWord; ENTER push-to-talk survives in --dry only) — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the gemma4:e4b-it-qat text model (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a Pi Camera V2 NoIR frame, asks the moondream VLM what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama server behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
 The Pi 5 does everything: captures voice, transcribes it (**whisper.cpp**), turns it into a small JSON
