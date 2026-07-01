@@ -142,6 +142,13 @@ class RobotDriver:
         self._legacy_max = _envf("ROBOT_MAX_THROTTLE", 0.0)
         self.invert = _envi("ROBOT_THROTTLE_INVERT", 0) == 1     # flip if FWD/REV are swapped
         self.arm_secs = _envf("ROBOT_ESC_ARM_SECS", 3.0)
+        # --- ESC neutral: the throttle the driver RESTS + STOPS at, and holding it also ARMS the ESC.
+        #     Most ESCs use 0.0 (1500us). But some are OFFSET: on one bench ESC 0.0/1500us was a slow
+        #     reverse (it crept), and it only truly stopped -- and armed (long "ready" beep, wheels dead
+        #     still) -- at 0.25/1625us. Set ROBOT_ESC_NEUTRAL to that value. Forward/reverse floors+ceils
+        #     stay ABSOLUTE (an ESC's forward still engages at its own ~1800us wherever we call neutral).
+        #     Keep the ESC powered when the brain starts so it sees this and arms. 0.0 = standard. ---
+        self.neutral = _envf("ROBOT_ESC_NEUTRAL", 0.0)
 
         # --- Reverse mode. DEFAULT is F/R "direct reverse": a single -throttle reverses immediately
         #     (this tested reliable on the WP-1060; the F/B/R double-click proved finicky). Set
@@ -189,9 +196,10 @@ class RobotDriver:
             _mode = "LIVE HARDWARE"
         log.info("*** %s ***", _mode)
         log.info("PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC (Electronic Speed Controller) ch=%d, steer ch=%d | "
-                 "FWD throttle %.2f..%.2f  REV %.2f..%.2f  invert=%d  (1500us=neutral)",
+                 "FWD throttle %.2f..%.2f  REV %.2f..%.2f  invert=%d  neutral=%.2f(%.0fus)",
                  self.esc_ch, self.steer_ch, self.fwd_floor, self.fwd_ceil,
-                 self.rev_floor, self.rev_ceil, int(self.invert))
+                 self.rev_floor, self.rev_ceil, int(self.invert),
+                 self.neutral, 1500.0 + self.neutral * 500.0)
         log.info("HC-SR04P x3: front TRIG=GPIO%d/ECHO=GPIO%d  left TRIG=GPIO%d/ECHO=GPIO%d  "
                  "right TRIG=GPIO%d/ECHO=GPIO%d", trig, echo, left_trig, left_echo, right_trig, right_echo)
         log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
@@ -390,13 +398,15 @@ class RobotDriver:
 
     # ---------- internals ----------
     def _arm(self):
+        # Holding neutral is what arms the ESC. For an offset ESC, ROBOT_ESC_NEUTRAL (e.g. 0.25) is that
+        # rest value -- holding it arms + keeps the wheels still. Keep the ESC powered at brain start.
         self._neutral()
         time.sleep(self.arm_secs)
 
     def _neutral(self):
         with self._io:
             try:
-                self._write_throttle(0.0)
+                self._write_throttle(self.neutral)
             except Exception:
                 pass
 
@@ -458,7 +468,7 @@ class RobotDriver:
                     self._drive, self._throttle, self._steer, self._deadline)
                 rev_prime_start = self._rev_prime_start
 
-            out = 0.0
+            out = self.neutral
             if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
                 if drive == "FORWARD":
                     d = self.distance_cm()
@@ -466,7 +476,7 @@ class RobotDriver:
                     # sensor that saturates at max range still reads "clear" -- not distinguishable
                     # in software from a genuinely open path; documented as a limitation.)
                     if d < self.obstacle_cm:
-                        out = 0.0
+                        out = self.neutral
                         if not self._gate_blocked:
                             self._gate_blocked = True
                             log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error)",
@@ -483,7 +493,7 @@ class RobotDriver:
                         # Double-tap an F/B/R ESC: tap1 (brake) -> neutral gap -> sustained reverse.
                         el_ms = (time.monotonic() - rev_prime_start) * 1000.0
                         if self.rev_brake_ms <= el_ms < self.rev_brake_ms + self.rev_gap_ms:
-                            out = 0.0          # neutral gap between the two taps
+                            out = self.neutral  # neutral gap between the two taps
                         # el < brake_ms: tap1 (out=-throttle, ESC brakes); past the gap: real reverse
 
             try:
@@ -494,7 +504,7 @@ class RobotDriver:
                     # _lock; no other path holds _lock while acquiring _io, so there's no deadlock.)
                     with self._lock:
                         if self._closed or self._drive == "STOP":
-                            out = 0.0
+                            out = self.neutral
                     self._write_throttle(out)
                     self._write_steer(steer)
             except Exception:

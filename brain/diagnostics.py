@@ -101,7 +101,8 @@ class Diag:
             self.skip(label, f"unconfirmed (no answer in {int(self.timeout)}s)")
 
     def motors_allowed(self):
-        """Decide whether the motor/servo spin may run. Never auto-spins under --yes."""
+        """Decide whether the motor/servo spin may run. Never auto-spins under --yes, and the safety
+        prompt is TIMEOUT-BOUNDED so an unanswered run can never hang here (no answer -> skip, safe)."""
         if self.args.no_motors:
             return False, "skipped (--no-motors)"
         if self.args.wheels_off:
@@ -109,11 +110,13 @@ class Diag:
         if self.args.yes:
             return False, "skipped (--yes needs --wheels-off to spin the motor unattended)"
         print(f"\n  {bold('SAFETY')}: the motor test SPINS THE WHEELS.")
-        try:
-            ans = input("    Are the wheels OFF the ground (or the motor unplugged)? [y/N] ").strip().lower()
-        except EOFError:
-            ans = "n"
-        return (ans in ("y", "yes")), ("" if ans in ("y", "yes") else "skipped (wheels-off not confirmed)")
+        res = self.confirm("Are the wheels OFF the ground (or the motor unplugged)?",
+                           timeout=max(self.timeout, 15.0))
+        if res is True:
+            return True, ""
+        if res is False:
+            return False, "skipped (wheels-off declined)"
+        return False, "skipped (no answer -- pass --wheels-off to run the motor test unattended)"
 
     # ===================== checks (harmless; no driver) =====================
     def check_pca9685(self):
@@ -163,7 +166,10 @@ class Diag:
                         s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=3)
                     time.sleep(0.5)                   # let one ping land before sampling
                     hi = lo = s.distance * 100.0
-                    t_end = time.time() + (0.0 if self.args.yes else 2.5)
+                    # A sensor already reporting NO ECHO is unwired -- don't wait the full wave window for
+                    # it (fails in ~0.5s instead of ~3s), so an unplugged array can't drag the run out.
+                    early_dead = any("echo" in str(w.message).lower() for w in caught)
+                    t_end = time.time() + (0.0 if (self.args.yes or early_dead) else 2.5)
                     while time.time() < t_end:
                         d = s.distance * 100.0
                         hi, lo = max(hi, d), min(lo, d)
@@ -184,8 +190,16 @@ class Diag:
                 self.bad(label, f"read failed: {e}", DOC_SENS)
             finally:
                 if s is not None:
+                    # Stop gpiozero's background queue thread FIRST, then close -- close() alone can race
+                    # that thread and hang/traceback. MUST free the GPIO pin for the driver to re-open later.
                     try:
-                        s.close()      # MUST free the GPIO pin before the driver re-opens it later
+                        q = getattr(s, "_queue", None)
+                        if q is not None:
+                            q.stop()
+                    except Exception:
+                        pass
+                    try:
+                        s.close()
                     except Exception:
                         pass
 
@@ -221,8 +235,8 @@ class Diag:
         # Use the libcamera CLI tools (subprocess + timeout) so a detected-but-undelivering camera (bad CSI
         # ribbon -> "Failed to queue buffer") can't HANG the run -- it times out and fails cleanly.
         for label, cmd, fname, t in (
-            ("Camera picture (still)", ["rpicam-jpeg", "-n", "-t", "2000", "-o"], "diag_picture.jpg", 20),
-            ("Camera video clip (3 s)", ["rpicam-vid", "-n", "-t", "3000", "-o"], "diag_video.h264", 30),
+            ("Camera picture (still)", ["rpicam-jpeg", "-n", "-t", "2000", "-o"], "diag_picture.jpg", 10),
+            ("Camera video clip (3 s)", ["rpicam-vid", "-n", "-t", "3000", "-o"], "diag_video.h264", 12),
         ):
             path = os.path.join(OUTDIR, fname)
             try:
@@ -335,8 +349,9 @@ class Diag:
             for la in labels:
                 self.skip(la, why)
             return
-        # Don't let a benchtop obstacle within 30cm gate the forward spin during the test.
-        os.environ["ROBOT_OBSTACLE_CM"] = "0"
+        # Fully disable the forward obstacle gate for the spin test: a benchtop wall -- OR an UNPLUGGED
+        # front sensor reading an error (-1) -- must not block the motor. -1000 => the gate never trips.
+        os.environ["ROBOT_OBSTACLE_CM"] = "-1000"
         try:
             import driver
         except Exception as e:
@@ -355,19 +370,19 @@ class Diag:
             print(dim(f"    ESC on ch{esc_ch}, steering servo on ch{steer_ch} (ROBOT_ESC_CHANNEL / "
                       f"ROBOT_STEER_CHANNEL). BOTH need the LiPo connected + CHARGED -- the servo is powered by "
                       f"the ESC's BEC, so no/low battery = no motor AND no steering."))
-            # ESC arm: the driver now holds NEUTRAL (1500us) on the ESC channel. An ESC that powered on BEFORE
-            # seeing a valid neutral latches a safety lockout (rapid blink); power-cycling it now, WHILE this
-            # neutral is held, is what makes it arm. Confirm the blink stopped before testing motion.
-            print(dim(f"    Holding NEUTRAL on ch{esc_ch} -- if the ESC is BLINKING, power-cycle it now"
-                      " (unplug + replug the LiPo) and watch it go solid / beep."))
-            ares = self.confirm("ESC armed? (blinking stopped / it beeped its tune)", timeout=25)
+            # ESC arm: the driver holds NEUTRAL (throttle ROBOT_ESC_NEUTRAL) on the ESC channel -- with the
+            # ESC powered ON, holding that is what arms it (cell-count tones, then a long "ready" beep). If
+            # it doesn't beep, power-cycle the ESC now WHILE this neutral is held.
+            print(dim(f"    Holding NEUTRAL on ch{esc_ch} (throttle {d.neutral:+.2f}) with the ESC powered ON"
+                      " -- listen for cell tones + a long 'ready' beep. No beep? Power-cycle the ESC now."))
+            ares = self.confirm("ESC armed? (heard the long 'ready' beep)", timeout=15)
             if ares is True:
                 self.ok("ESC arm (neutral)")
             elif ares is False:
                 self.bad("ESC arm (neutral)", f"won't arm -- power-cycle it while neutral is held; check the "
-                         f"F/R + LIPO jumpers, the ch{esc_ch} signal lead, and a CHARGED LiPo (>7V)", DOC_PWM)
+                         f"ch{esc_ch} signal lead, a CHARGED LiPo, and ROBOT_ESC_NEUTRAL (some ESCs need ~0.25)", DOC_PWM)
             else:
-                self.skip("ESC arm (neutral)", "unconfirmed (no answer in 25s)")
+                self.skip("ESC arm (neutral)", "unconfirmed (no answer in 15s)")
             # forward / reverse (direction-specific fixes: if FORWARD passed, a REVERSE fail is the ESC mode)
             motor_fix = {
                 "FORWARD": f"no spin -- check the ESC signal on ch{esc_ch}, the ESC<->motor leads, and a "
