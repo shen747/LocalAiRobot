@@ -1,8 +1,8 @@
 # Wiring Steps — PWM · Servo · ESC · Battery → Pi (last)
 
-This build: brushed **540 35T** motor, **QuicRun brushed ESC**, **one front steering servo**, a
-**PCA9685** PWM board (@0x40), and a **Raspberry Pi 5**. Wire the motor side first (steps 1–4); the Pi
-I²C goes on **last** (step 5).
+This build: brushed **540 35T** motor, a **brushed crawler ESC** (this build uses a SURPASS HOBBY 60A with
+a program card; any 2–3S crawler ESC works), **one front steering servo**, a **PCA9685** PWM board (@0x40),
+and a **Raspberry Pi 5**. Wire the motor side first (steps 1–4); the Pi I²C goes on **last** (step 5).
 
 > In code: ESC = **ch0**, steering = **ch1** ([config/robot.env:22-23](../../config/robot.env#L22-L23));
 > board = I²C **0x40**, **SDA=GPIO2 / SCL=GPIO3** ([brain/driver.py:152](../../brain/driver.py#L152));
@@ -28,8 +28,8 @@ timing while it's busy running the LLM, but the PCA9685 never misses a beat. Tha
 
 Two power domains — **never bridge their positives, but tie all grounds into one common bus**:
 
-- **Motor:** LiPo → kill switch → ESC → motor. The ESC's **6 V BEC** also feeds the PCA9685 **V+ rail**,
-  which powers the servo.
+- **Motor:** LiPo → kill switch → ESC → motor. The ESC's **7.4 V BEC** also feeds the PCA9685 **V+ rail**,
+  which powers the servo (⚠️ 7.4 V — see the servo-voltage note in step 2).
 - **Brain:** Pi 5 → PCA9685 **logic** (3.3 V) + I²C.
 
 PWM only registers if **Pi GND ↔ PCA9685 GND ↔ ESC GND are common**.
@@ -74,14 +74,19 @@ unplugged.
 
 ## Step 2 — ESC 3-wire lead → PCA9685 **ch0**
 
-The ESC's 3-pin jumper is **white = signal, red = +6 V (BEC), black = ground**. Looking at the top side
+The ESC's 3-pin jumper is **white = signal, red = +7.4 V (BEC), black = ground**. Looking at the top side
 (POWER terminal up, output pins along the bottom), push it onto the **first column from the left (ch0)**:
 
 - **white (signal)** → **TOP** pin (PWM, yellow row)
-- **red (+6 V)** → **MIDDLE** pin (V+, red row) — this energises the whole V+ rail
+- **red (+7.4 V)** → **MIDDLE** pin (V+, red row) — this energises the whole V+ rail
 - **black (ground)** → **BOTTOM** pin (GND, black row)
 
 That red wire is what powers the servo in step 3 — you don't need the green POWER terminal.
+
+> ⚠️ **This BEC is 7.4 V, and it feeds the steering servo directly.** Fine for an **HV servo**, but a
+> standard DS3225 is rated only to ~6.8 V — confirm yours takes 7.4 V, or **don't** run the ESC's red wire
+> into the V+ rail: feed V+ from a separate **5–6 V BEC** instead (the servo's signal on ch1 still comes
+> from the PCA9685).
 
 ---
 
@@ -124,8 +129,8 @@ This short-end header has **6 pins**. What each one is for:
 - **`SCL`** — I²C clock line. **Connect.**
 - **`SDA`** — I²C data line. **Connect.**
 - **`VCC`** — 3.3 V power for the chip's logic + I²C. **Connect.**
-- **`V+`** — the **servo power rail** (the 6 V that drives the servos). **Skip on the Pi side** — it's
-  already fed by the ESC's 6 V BEC through ch0 (step 2); the Pi must never power it.
+- **`V+`** — the **servo power rail** (the 7.4 V that drives the servo). **Skip on the Pi side** — it's
+  already fed by the ESC's BEC through ch0 (step 2); the Pi must never power it.
 
 **We skip `OE` and `V+`.** Wire the remaining four — PCA9685 pin → Raspberry Pi pin:
 
@@ -175,9 +180,10 @@ It prints a grid of every address `00`–`77`. A detected PCA9685 shows as **`40
 
 1. **Continuity (LiPo still out):** Pi GND ↔ PCA9685 GND ↔ ESC GND all common.
 2. Power the Pi; confirm `i2cdetect -y 1` → **0x40**.
-3. **Wheels OFF the ground**, kill switch in hand, plug in the LiPo. The ESC should **beep its arming
-   tones** ([brain/driver.py:247](../../brain/driver.py#L247)). No beep → recheck ch0 signal + GND and
-   the red BEC on V+.
+3. **Wheels OFF the ground**, kill switch in hand, plug in the LiPo. While the brain holds neutral the ESC
+   should beep its **cell-count tones then one long "ready" beep**. No long beep = it didn't arm:
+   power-cycle the ESC (its switch off/on) while neutral is held and wait for it — cheap ESCs can need a
+   couple of tries. Still nothing → recheck ch0 signal + GND and the red BEC on V+.
 4. Calibrate per [assembly Phase 8](../assembly.md#phase-8--live-calibration--bring-up-wheels-off-the-ground).
 
 ---
@@ -191,7 +197,7 @@ It prints a grid of every address `00`–`77`. A detected PCA9685 shows as **`40
 | Steering PWM | front servo 3-pin (yellow / red / brown) | PCA9685 **ch1** (PWM / V+ / GND) |
 | Battery | LiPo red / black (via kill switch) | ESC red / black |
 | I²C / logic | PCA9685 VCC / SDA / SCL / GND | Pi 3.3V(1) / GPIO2(3) / GPIO3(5) / GND(6) |
-| 6 V servo power | ESC BEC red (on ch0 V+) | whole V+ rail → ch1 servo |
+| 7.4 V servo power | ESC BEC red (on ch0 V+) | whole V+ rail → ch1 servo |
 | Common ground | Pi GND ↔ PCA9685 GND ↔ ESC GND | one bus |
 
 ---

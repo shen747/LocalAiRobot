@@ -76,11 +76,21 @@ for vision).
 
 ## Throttle (ESC)
 
+Deadband-compensated map — values are throttle fractions of the 1000–2000 µs range (0.00 = 1500 µs neutral,
+0.60 ≈ 1800 µs, 1.00 = 2000 µs). Many brushed ESCs ignore small offsets from neutral, so `speed` 0–100 is
+mapped onto floor→ceil (not 0→cap), skipping the dead zone.
+
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MAX_THROTTLE` | `0.35` | Hard cap (0–1) on motor power; the `speed` 0–100 from the LLM scales into this. Keep low on a heavy crawler. |
+| `ROBOT_ESC_FWD_FLOOR` | `0.60` | Throttle where FORWARD first engages (~1800 µs); raise until "speed 1" just creeps. |
+| `ROBOT_ESC_FWD_CEIL` | `1.00` | Max FORWARD throttle — lower = slower top speed. |
+| `ROBOT_ESC_REV_FLOOR` | `0.60` | Throttle where REVERSE first engages. |
+| `ROBOT_ESC_REV_CEIL` | `0.80` | Max REVERSE throttle — some ESCs only reverse in a band, so cap it here. |
+| `ROBOT_ESC_REVERSE_DOUBLETAP` | `0` | `0` = direct reverse (crawler / F-R ESC). `1` = F/B/R "double-click" — the driver auto-taps reverse→neutral→reverse. |
+| `ROBOT_ESC_REV_BRAKE_MS` | `400` | (double-tap only) length of the first reverse tap the ESC reads as a brake. |
+| `ROBOT_ESC_REV_GAP_MS` | `300` | (double-tap only) neutral gap between the two taps. |
 | `ROBOT_THROTTLE_INVERT` | `0` | `1` swaps FORWARD/REVERSE if the motor runs backwards (alternative to swapping motor wires). |
-| `ROBOT_ESC_ARM_SECS` | `3` | Neutral hold at startup so the ESC arms (it beeps). |
+| `ROBOT_ESC_ARM_SECS` | `3` | Neutral hold at startup so the ESC arms (cell beeps, then a long "ready" beep). |
 
 ## Forward obstacle gate (front HC-SR04P)
 

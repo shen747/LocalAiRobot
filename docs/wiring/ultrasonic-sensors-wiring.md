@@ -136,7 +136,8 @@ beam, on a gate trip.)
   sensor that saturates at max range reads as "clear" — software can't tell that from a genuinely open
   path. **Bench-test that covering the front sensor stops the car** before trusting it.
 - **REVERSE is unsensed** — no rear sensor, so reverse moves are bounded only by the throttle cap and the
-  move deadline. Keep `ROBOT_MAX_THROTTLE` low and reverse commands short (or add a rear HC-SR04P later).
+  move deadline. Keep reverse throttle low (`ROBOT_ESC_REV_CEIL`) and reverse commands short (or add a rear
+  HC-SR04P later).
 
 Pins are configurable in [`config/robot.env`](../../config/robot.env) (`ROBOT_TRIG_PIN`/`ROBOT_ECHO_PIN`,
 `ROBOT_LEFT_*`, `ROBOT_RIGHT_*`); these BCM pins avoid I²C (2/3), SPI0 (7–11) and UART (14/15). Alternates

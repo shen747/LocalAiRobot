@@ -37,7 +37,7 @@ skinparam rectangle {
 ' ---- motor / LiPo domain (high current; the steering servo's power lives here too) ----
 rectangle "Motor power  (LiPo)" as motorbox <<motordomain>> {
   rectangle "2S 7.4V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(+ 6V BEC)" as esc <<motor>>
+  rectangle "ESC\n(+ 7.4V BEC)" as esc <<motor>>
   rectangle "drive motor" as motor <<motor>>
   rectangle "steering servo\n(DS3225)" as servo <<motor>>
 }
@@ -59,7 +59,7 @@ rectangle "PCA9685\n(I2C PWM bridge, 0x40)" as pca <<model>>
 ' ---- connections (each label = what's on that wire) ----
 lipo --> esc : 7.4 V
 esc --> motor : motor drive
-esc --> pca : ch0: signal + V+ (6V BEC) + GND
+esc --> pca : ch0: signal + V+ (7.4V BEC) + GND
 pca --> servo : ch1: signal / V+ / GND
 pca --> pi : VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND
 ups --> pi : 5V (its own battery)
@@ -72,6 +72,6 @@ face --> pi : USB-C -> /dev/ttyACM0
 note bottom of pca
   **Two isolated power domains** (LiPo -> motor/servo, UPS/PSU -> Pi): never bridge the battery positives,
   but tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC) or the PWM won't register.
-  **PCA9685 V+ rail = the ESC's 6V BEC**, not the Pi. All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
+  **PCA9685 V+ rail = the ESC's 7.4V BEC**, not the Pi (use an HV servo, or feed V+ from a separate 5-6V BEC). All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
 end note
 @enduml

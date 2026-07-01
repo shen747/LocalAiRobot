@@ -50,9 +50,9 @@ pi --> face : USB-C (serial)
 ' ---- motor domain: LiPo high-current path (servo power stays in here) ----
 rectangle "Motor power  (LiPo, high current)" as motorbox <<motordomain>> {
   rectangle "2S 7.4V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(battery input + 6V/3A BEC)" as esc <<motor>>
+  rectangle "ESC\n(battery input + 7.4V/2A BEC)" as esc <<motor>>
   rectangle "drive motor" as dmotor <<motor>>
-  rectangle "steering servo\n(DS3225, on the 6V BEC rail)" as servo <<motor>>
+  rectangle "steering servo\n(DS3225 HV, on the 7.4V BEC rail)" as servo <<motor>>
 }
 lipo --> esc : 7.4 V
 esc --> dmotor : motor drive
@@ -63,8 +63,8 @@ rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC)" as gnd <<store>>
 
 pi  --> pca   : 3.3V logic (VCC) + I2C SDA/SCL
 esc --> pca   : ch0 throttle PWM (signal)
-esc --> pca   : 6V/3A BEC -> V+ rail (servo power, LiPo domain)
-pca --> servo : ch1: 6V + PWM
+esc --> pca   : 7.4V/2A BEC -> V+ rail (servo power, LiPo domain)
+pca --> servo : ch1: 7.4V + PWM
 
 esc ..> gnd : GND
 pi  ..> gnd : GND
@@ -72,8 +72,9 @@ pca ..> gnd : GND
 
 note bottom of gnd
   **Never bridge LiPo + and UPS/PSU +.** The domains meet ONLY at shared **GND** and the 3.3V logic / PWM signals.
-  The **ESC 6V BEC -> PCA9685 V+ rail** is internal to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
-  Bench bring-up: power the Pi from the **27W PSU first** (UPS later). DS3225 stall ~2.5-3A — the 6V/3A BEC is fine;
-  add a separate servo BEC on V+ if it browns out. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe, no divider).
+  The **ESC 7.4V BEC -> PCA9685 V+ rail** is internal to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
+  **7.4V BEC = use an HV servo, or feed V+ from a separate 5-6V BEC** (a 6V-only servo can be damaged).
+  Bench bring-up: power the Pi from the **27W PSU first** (UPS later). DS3225 stall ~2.5-3A — a 2A BEC may
+  brown out under hard steering; add a separate servo BEC on V+ if so. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe).
 end note
 @enduml
