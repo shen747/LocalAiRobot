@@ -26,6 +26,9 @@ for arg in "$@"; do
   esac
 done
 
+# Green colour for the final success banner (only when writing to a real terminal).
+if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
+
 echo ">> [1/8] system packages"
 sudo apt update
 sudo apt install -y git build-essential cmake alsa-utils curl \
@@ -133,7 +136,7 @@ fi
 # play -- otherwise `aplay` hits the wrong card and errors ("audio open error: Unknown error 524"). This
 # is best-effort + non-interactive: if no USB speaker is plugged in yet it just prints how to run it
 # later. cleanup_pi.sh removes the ~/.asoundrc it writes.
-echo ">> audio: pointing ALSA's default output at your USB speaker (if one is plugged in)"
+echo ">> audio: pointing ALSA's default output at your USB speaker + writing the device names into config/robot.env"
 bash "${REPO}/scripts/setup_audio.sh" || true
 
 # --bootstrap: enable boot autostart. Reuses run_me.sh --install-boot (single source of truth for the
@@ -155,7 +158,7 @@ if [ "$BOOTSTRAP" = 1 ]; then
 fi
 
 echo ">> DONE -- offline AI stack installed (Ollama + gemma4/moondream, whisper.cpp, Piper, camera + face"
-echo "   libs, the Python venv) and your username is set in config/robot.env."
+echo "   libs, the Python venv); your username + USB audio devices are set in config/robot.env."
 echo
 echo "Next -- finish the 5-step setup at the top of the README (full walkthrough: docs/assembly.md):"
 echo
@@ -172,5 +175,15 @@ if [ "$BOOTSTRAP" = 1 ]; then
 else
   echo "   Auto-start the brain on every boot?   ./scripts/install_stack.sh --bootstrap   (or run_me.sh --install-boot)"
 fi
-echo "   Diagnostics (step 4) flags anything wrong -- e.g. audio: ./scripts/setup_audio.sh + set ROBOT_MIC."
+echo "   Diagnostics (step 4) flags anything wrong -- audio not right? just re-run ./scripts/setup_audio.sh."
 echo "   Inspect the robot's memory any time:   ./scripts/rag.sh   (--seen | --all | --forget <name>)"
+echo
+echo ">> Quick checks -- verify, don't fret (fix only if something's actually off):"
+echo "     audio:      speaker-test -D default -t wav -l 1     (hear it now = the VOICE is ready)"
+echo "     PWM board:  i2cdetect -y 1                          (after reboot + PCA9685 wired: expect 0x40;"
+echo "                 0x70 is the same board's all-call alias).  run_diagnostics.sh (step 4) checks it all."
+echo "   Audio silent/wrong? devices are auto-set -- if your hardware differs, re-run ./scripts/setup_audio.sh."
+echo
+echo "${GRN}==============================================================${RST}"
+echo "${GRN}   ✓  LocalAiRobot Brain Successfully Installed !!!${RST}"
+echo "${GRN}==============================================================${RST}"
