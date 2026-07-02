@@ -13,6 +13,19 @@ TURING_REPO="https://github.com/mathoudebine/turing-smart-screen-python.git"
 H="${HOME}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+# --bootstrap: after installing the stack, also enable the systemd boot service so the brain auto-starts
+# on every boot (see scripts/robot.service + run_me.sh --install-boot). Off by default -- a plain install
+# never touches boot behaviour.
+BOOTSTRAP=0
+for arg in "$@"; do
+  case "$arg" in
+    --bootstrap) BOOTSTRAP=1 ;;
+    -h|--help)   echo "usage: $(basename "$0") [--bootstrap]"; \
+                 echo "  --bootstrap  also install the systemd boot service (brain auto-starts on boot)"; exit 0 ;;
+    *) echo "unknown option: $arg (use --bootstrap)" >&2; exit 2 ;;
+  esac
+done
+
 echo ">> [1/8] system packages"
 sudo apt update
 sudo apt install -y git build-essential cmake alsa-utils curl \
@@ -123,6 +136,24 @@ fi
 echo ">> audio: pointing ALSA's default output at your USB speaker (if one is plugged in)"
 bash "${REPO}/scripts/setup_audio.sh" || true
 
+# --bootstrap: enable boot autostart. Reuses run_me.sh --install-boot (single source of truth for the
+# systemd unit), then makes network-online.target a REAL wait so the brain starts AFTER Wi-Fi/SSH (and
+# Comitup) are up. The brain is offline-capable, so that wait is convenience, not a requirement.
+if [ "$BOOTSTRAP" = 1 ]; then
+  echo
+  echo ">> [bootstrap] enabling boot autostart (systemd) so the brain launches on every boot..."
+  if bash "${REPO}/scripts/run_me.sh" --install-boot; then
+    if sudo systemctl enable NetworkManager-wait-online.service 2>/dev/null; then
+      echo "   network wait enabled -- brain starts after the network is up."
+      echo "   (offline robot: if booting away from known Wi-Fi is slow, 'sudo systemctl disable NetworkManager-wait-online.service')"
+    else
+      echo "   (NetworkManager-wait-online not enabled -- NetworkManager may be inactive; the After= ordering still applies.)"
+    fi
+  else
+    echo "   (bootstrap: boot-service install failed -- run './scripts/run_me.sh --install-boot' by hand.)"
+  fi
+fi
+
 echo ">> DONE -- offline AI stack installed (Ollama + gemma4/moondream, whisper.cpp, Piper, camera + face"
 echo "   libs, the Python venv) and your username is set in config/robot.env."
 echo
@@ -135,5 +166,11 @@ echo "   3. Patch in your ESC's tested defaults:   ./scripts/patches/<your-esc>.
 echo "   4. Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
 echo "   5. Drive it:   ./scripts/run_me.sh         (live: say 'hey jarvis' | bench: ./scripts/run_me.sh --dry)"
 echo
+if [ "$BOOTSTRAP" = 1 ]; then
+  echo "   Boot autostart is ENABLED (--bootstrap): the brain starts on the next boot. Watch it with"
+  echo "   'journalctl -u robot.service -f'; undo with './scripts/run_me.sh --disable-boot'."
+else
+  echo "   Auto-start the brain on every boot?   ./scripts/install_stack.sh --bootstrap   (or run_me.sh --install-boot)"
+fi
 echo "   Diagnostics (step 4) flags anything wrong -- e.g. audio: ./scripts/setup_audio.sh + set ROBOT_MIC."
 echo "   Inspect the robot's memory any time:   ./scripts/rag.sh   (--seen | --all | --forget <name>)"

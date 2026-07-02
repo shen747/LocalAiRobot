@@ -115,13 +115,16 @@ The **Quickstart** above is the whole happy path; the full phased build + calibr
   move. On the *built* car, `ROBOT_MOTORS_OFF=1` runs everything live but sends the ESC/steering no signal
   — talk to it on a desk without it driving off.
 - **Day-to-day launcher:** `./scripts/run_me.sh` runs foreground (`--dry` / `--live`, Ctrl-C to stop);
-  `--detach` backgrounds it, `--install-boot` auto-starts it on every boot, `--reload` re-applies an edited
-  `config/robot.env`.
+  `--detach` backgrounds it, `--install-boot` (or `install_stack.sh --bootstrap`) auto-starts it on every
+  boot, `--reload` re-applies an edited `config/robot.env`.
 - ☁️ **Optional — remote brain (Gemini).** The LLM + vision run **locally/offline by default**. To use
   Google Gemini instead (faster, but online + an API key, and camera frames leave the device): get a key
   ([docs/gemini-setup.md](docs/gemini-setup.md)), set `ROBOT_GEMINI_API_KEY=` + `ROBOT_AI_BACKEND=gemini`,
   and restart. Flip back with `ROBOT_AI_BACKEND=local` — only the LLM/vision switch; speech, sensors,
   motors and the wake word stay local.
+- 📶 **Switch Wi-Fi in the field — no monitor/keyboard.** Move the robot onto a new network, or recover
+  SSH access, from just your phone (a phone-hotspot fallback + a Comitup captive portal, plus passwordless
+  Ed25519 SSH): [docs/change-pi-wifi.md](docs/change-pi-wifi.md).
 
 ---
 
@@ -155,8 +158,8 @@ procedural face, or your PNG frames in `brain/faces/<state>/`. It auto-selects a
 → simulated) and is optional; a missing panel never blocks driving. Design your own on your PC
 (`./scripts/host_setup.sh` installs the tools): [`brain/faces/README.md`](brain/faces/README.md), [`sounds/README.md`](sounds/README.md).
 
-**Wake word & warmup.** Control is the wake word (*"hey jarvis"*, or train your own:
-[`tools/wakeword-training/`](tools/wakeword-training/README.md)) — always-listening, the only *live* trigger
+**Wake word & warmup.** Control is the wake word (*"hey jarvis"*, shipped in [`models/`](models/README.md);
+or train your own: [`tools/wakeword-training/`](tools/wakeword-training/README.md)) — always-listening, the only *live* trigger
 (ENTER stays in `--dry`), and what lets the brain run headless. Short earcons ([`sounds/`](sounds/README.md))
 + a boot warmup (`ROBOT_WARMUP`, keep-alive) mask the slow first load, and a `model_lock` serialises the
 text-intent and vision calls.

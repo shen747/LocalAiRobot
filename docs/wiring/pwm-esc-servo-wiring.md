@@ -208,4 +208,5 @@ the ESC / motor / LiPo last in [Phase 7](../assembly.md#phase-7--mechanical-buil
 This page is the pin-by-pin reference for all of them.
 
 *Diagrams:* PlantUML sources in [`diagrams/`](diagrams/); render into [`images/`](images/) with
-`plantuml -o ../images docs/wiring/diagrams/*.puml`.
+`plantuml -o ../images docs/wiring/diagrams/*.puml` — see [`images/README.md`](images/README.md) for the
+part-photo list and the exact render command.

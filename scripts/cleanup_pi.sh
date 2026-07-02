@@ -71,7 +71,7 @@ for p in "$H/whisper.cpp" "$H/piper" "$H/turing-smart-screen-python" "$H/openwak
 done
 
 if [ -f /etc/systemd/system/robot.service ]; then
-  SVC=1; PLAN+=("reset    stop + disable + remove  /etc/systemd/system/robot.service")
+  SVC=1; PLAN+=("reset    stop + disable + remove  /etc/systemd/system/robot.service  (+ disable the NetworkManager-wait-online boot wait)")
 fi
 
 if command -v ollama >/dev/null 2>&1 || [ -e /usr/local/bin/ollama ]; then
@@ -145,6 +145,8 @@ if [ "$SVC" = 1 ]; then
   echo ">> remove robot.service"
   sudo systemctl disable --now robot.service 2>/dev/null || true
   sudo rm -f /etc/systemd/system/robot.service
+  # undo the network wait that install_stack.sh --bootstrap enables alongside the boot service
+  sudo systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
   sudo systemctl daemon-reload 2>/dev/null || true
 fi
 

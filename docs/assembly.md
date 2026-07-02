@@ -49,7 +49,9 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
      `config/robot.env`'s whisper/piper paths. You replace it **only in `config/robot.env`** (step 5).
      `scripts/robot.service` also has `YOUR_USER` but **don't edit it** — `./scripts/run_me.sh
      --install-boot` fills in your username + repo path automatically.
-   - **Enable SSH**, set **Wi-Fi** SSID/password + locale so the Pi joins headless.
+   - **Enable SSH**, set **Wi-Fi** SSID/password + locale so the Pi joins headless. *(Need to switch Wi-Fi
+     later without a monitor? [docs/change-pi-wifi.md](change-pi-wifi.md) sets up a phone-hotspot fallback
+     + a Comitup captive portal + passwordless mobile SSH.)*
 
    Insert the card into the Pi.
 3. **Power from the official 27 W USB-C PSU only — no UPS HAT yet.** It negotiates 5 V/5 A, so there's no
@@ -486,16 +488,25 @@ Two wrappers in `scripts/` source `config/robot.env` for you (and skip silently 
 echo '[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAiRobot/config/robot.env"; set +a; }' >> ~/.bashrc
 ```
 
-**Start the brain automatically on boot (no SSH).** Install the systemd service — auto-starts on every
-boot, relaunches it if it crashes:
+**Start the brain automatically on boot (no SSH).** A systemd service (`scripts/robot.service`) auto-starts
+the brain every boot and relaunches it if it crashes. Two ways to install it:
 ```bash
-./scripts/run_me.sh --install-boot     # fills in your user + repo path, installs + enables robot.service
-sudo systemctl start robot.service     # (optional) start it now without rebooting
-journalctl -u robot.service -f         # watch its log
-./scripts/run_me.sh --disable-boot     # stop auto-starting on boot
+./scripts/install_stack.sh --bootstrap   # one-shot: install the AI stack AND enable boot autostart
+./scripts/run_me.sh --install-boot        # OR just the service, on an already-installed stack
+sudo systemctl start robot.service        # (optional) start it now without rebooting
+journalctl -u robot.service -f            # watch its log live (the unit logs to journal; Ctrl-C to exit)
+./scripts/run_me.sh --disable-boot        # stop auto-starting on boot
 ```
+The unit uses **absolute paths** and runs the brain through the **venv Python** with `config/robot.env`
+sourced first (exactly like `run_me.sh`), and is ordered **`After=network-online.target`** so Wi-Fi/SSH
+(and the [Comitup portal](change-pi-wifi.md)) come up first. `--bootstrap` also enables
+`NetworkManager-wait-online.service` to make that wait real. The brain is **fully offline**, so this is
+convenience, not a requirement — if booting away from known Wi-Fi feels slow,
+`sudo systemctl disable NetworkManager-wait-online.service`.
+
 Set `ROBOT_DRY_RUN=0` first — a service has no terminal, so the **wake word is the only way to talk to
-it**; without a working wake model it starts, finds no trigger, and exits. The same 🔴 kill-switch note applies.
+it**; without a working wake model it starts, finds no trigger, and exits. The same 🔴 kill-switch note
+applies. `./scripts/cleanup_pi.sh` removes the service (and that network wait) again.
 
 ---
 
