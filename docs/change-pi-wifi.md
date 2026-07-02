@@ -31,6 +31,39 @@ Now, **anywhere**: flip on your phone hotspot → the Pi auto-joins → SSH stra
 
 ---
 
+## Seeing & switching Wi-Fi by hand (`nmcli`)
+
+NetworkManager knows two things — the networks **in range right now** and the networks it has **saved**
+(and will auto-join). Your **home Wi-Fi is already saved** (you set it when flashing the card), and the
+hotspot command above saved *that* too — so hopping between them never needs the password again.
+
+```bash
+# See what's in range right now  (add a rescan first if the list looks stale)
+sudo nmcli device wifi rescan ; nmcli device wifi list
+
+# See which networks are already SAVED, and what you're connected to right now
+nmcli connection show            # all saved profiles (the NAME is usually the SSID)
+nmcli device status              # what each interface is on  (wlan0 -> SSID)
+
+# Go BACK to a saved network (e.g. home) — no password needed, it's already stored
+sudo nmcli connection up "YourHomeSSID"
+
+# Join a BRAND-NEW network (first time only; this saves it for next time)
+sudo nmcli device wifi connect "NewSSID" password "ThePassword"
+
+# Forget a network so it stops auto-joining
+sudo nmcli connection delete "SomeSSID"
+```
+
+> 🔁 **Both home and the hotspot in range?** The simplest switch back is to just **turn the phone hotspot
+> off** — the Pi falls back to home on its own. To make home *always* win, give it a higher priority:
+> `sudo nmcli connection modify "YourHomeSSID" connection.autoconnect-priority 10` (higher = preferred).
+
+> 💡 Prefer a menu over typing? **`sudo nmtui`** does all of the above with arrow keys — *Activate a
+> connection* to switch networks, *Edit a connection* to set priority or delete one.
+
+---
+
 ## Tier 2 — Captive portal: Comitup
 
 Comitup hooks into NetworkManager. When it finds **no known network** (neither your home Wi-Fi nor your
@@ -62,8 +95,8 @@ stays out of the way otherwise — the AP only appears when you're stranded.
 5. Pick the local Wi-Fi and enter its password. The Pi joins it and **drops its own AP**.
 6. Open your terminal app → `ssh you@<hostname>.local` → you're in.
 
-> 🔧 From any shell you can also change Wi-Fi directly, no portal needed:
-> `sudo nmtui` (arrow-key menu) or `sudo nmcli device wifi connect "SSID" password "PASS"`.
+> 🔧 Already have a shell (via the hotspot or SSH)? You don't need the portal at all — use the
+> **`nmcli`/`nmtui` cheat-sheet above** to list and switch networks directly.
 
 ---
 
