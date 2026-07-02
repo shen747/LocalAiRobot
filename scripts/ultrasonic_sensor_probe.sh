@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# ultrasonic_sensor_probe.sh -- live HC-SR04 monitor for ONE sensor at a time (bypasses gpiozero's
-# DistanceSensor).
+# ultrasonic_sensor_probe.sh -- live HC-SR04 monitor (bypasses gpiozero's DistanceSensor).
 #
 # Drives a raw ~10 us TRIG pulse and reads ECHO directly, printing the distance live (updating in place)
 # until Ctrl-C. Use it to confirm a sensor + its wiring respond, and to reseat jumpers while watching the
 # number track your hand.
 #
-#   ./scripts/ultrasonic_sensor_probe.sh --front     # live-read the front sensor (Ctrl-C to stop)
+#   ./scripts/ultrasonic_sensor_probe.sh             # live-read ALL three at once (default; Ctrl-C to stop)
+#   ./scripts/ultrasonic_sensor_probe.sh --front     # isolate just the front sensor
 #   ./scripts/ultrasonic_sensor_probe.sh --left
 #   ./scripts/ultrasonic_sensor_probe.sh --right
 #
@@ -65,10 +65,42 @@ def monitor(name, tp, ep):
         trig.close(); echo.close()
 
 
-pick = next((n for n in SENSORS if f"--{n}" in sys.argv[1:]), None)
+def monitor_all():
+    """Default view: live-read ALL three sensors at once -- ping each in turn, print them on one line
+    (updating in place). Sequential pinging (not simultaneous) avoids the beams hearing each other."""
+    order = ("front", "left", "right")
+    devs = {}
+    try:
+        for n in order:
+            tp, ep = SENSORS[n]
+            devs[n] = (DigitalOutputDevice(tp), DigitalInputDevice(ep))
+        hdr = "   ".join(f"{n.upper()} GPIO{SENSORS[n][0]}/{SENSORS[n][1]}" for n in order)
+        print(f"Live ALL sensors ({hdr})  --  Ctrl-C to stop.\n")
+        while True:
+            cells = []
+            for n in order:
+                trig, echo = devs[n]
+                d = ping(trig, echo)
+                cells.append(f"{n.upper()}:" + (f"{d:6.1f}cm" if d is not None else " no echo"))
+            print("  " + "    ".join(cells) + "   ", end="\r", flush=True)
+            time.sleep(0.15)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    finally:
+        for trig, echo in devs.values():
+            try: trig.close()
+            except Exception: pass
+            try: echo.close()
+            except Exception: pass
+
+
+argv = sys.argv[1:]
+if any(a in ("-h", "--help") for a in argv):
+    print("usage: ultrasonic_sensor_probe.sh [--front|--left|--right]   (no option = live-read ALL three; Ctrl-C to stop)")
+    sys.exit(0)
+pick = next((n for n in SENSORS if f"--{n}" in argv), None)
 if pick:
-    monitor(pick, *SENSORS[pick])
+    monitor(pick, *SENSORS[pick])       # isolate one sensor
 else:
-    print("usage: ultrasonic_sensor_probe.sh --front | --left | --right   (live read one sensor; Ctrl-C to stop)")
-    sys.exit(2)
+    monitor_all()                        # default: all three at once
 PYEOF
