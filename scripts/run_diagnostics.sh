@@ -25,6 +25,10 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
+# Re-apply the USB-speaker default + volume (USB audio volume resets across reboots) so the speaker check is
+# audible. --audio-only skips the config rewrite + sudo; best-effort (a laptop with no speaker just no-ops).
+bash "$REPO/scripts/setup_audio.sh" --audio-only || true
+
 # Force LIVE hardware: a stray ROBOT_DRY_RUN=1 / ROBOT_MOTORS_OFF=1 in the env must not fake the very
 # devices we're trying to test. Flags pass straight through to the Python.
 exec env ROBOT_DRY_RUN=0 ROBOT_MOTORS_OFF=0 "$PY" "$REPO/brain/diagnostics.py" "$@"

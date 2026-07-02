@@ -14,7 +14,8 @@
 # ANIMATION: drop PNG sequences in <ROBOT_FACE_FRAMES_DIR>/<state>/NN.png (default brain/faces).
 # A state with >=2 frames animates on a background daemon thread (talking is fast + random-frame
 # to fake a moving mouth, like the reference); 1 frame = a static still; 0 frames = the procedural
-# drawing. With NO faces/ directory present, behaviour is identical to the old procedural face.
+# drawing. Even with NO PNGs, the procedural TALKING face animates its mouth open/closed so speech
+# looks alive (see _PROC_ANIMATED); every other state stays a static procedural drawing.
 #
 # EVERYTHING here is best-effort and never raises into the caller: a missing panel, missing Pillow,
 # or an unreadable asset degrades to simulated / procedural and the robot runs on. The face is
@@ -65,6 +66,12 @@ _TIMING = {
 }
 _DEFAULT_TIMING = (2.0, False)
 
+# States that ANIMATE PROCEDURALLY even with no PNG frames -- re-rendered with an advancing frame counter
+# so the drawing itself moves (currently just the talking mouth). A >=2-frame PNG set overrides this.
+_PROC_ANIMATED = frozenset({"talking"})
+# talking mouth openness cycle (0 = nearly closed, 1 = wide) -> a mouth-like flap when re-rendered per frame.
+_TALK_OPEN = (0.15, 0.55, 1.0, 0.6, 0.25, 0.85, 0.45)
+
 
 def _frame_key(name):
     """Sort frames by the integer in the filename: tolerates 'thinking 04.png' and '04.png'."""
@@ -72,8 +79,9 @@ def _frame_key(name):
     return (int(m.group(1)) if m else 0, name)
 
 
-def _render(state, w, h):
-    """Procedural cartoon face -> PIL.Image, or None if Pillow is unavailable."""
+def _render(state, w, h, frame=0):
+    """Procedural cartoon face -> PIL.Image, or None if Pillow is unavailable. `frame` advances the
+    animated bits (the talking mouth); it's ignored for the static moods."""
     try:
         from PIL import Image, ImageDraw
     except Exception:
@@ -118,7 +126,10 @@ def _render(state, w, h):
         r = mw * 0.45
         d.ellipse([mx - r, my - r, mx + r, my + r], outline=eye, width=line)
     elif style == "open":
-        d.ellipse([mx - mw * 0.6, my - mw * 0.5, mx + mw * 0.6, my + mw * 0.7], fill=(20, 12, 16), outline=eye, width=line)
+        # talking VARIES the openness by frame (fakes a moving mouth); other 'open' moods stay wide.
+        amt = _TALK_OPEN[frame % len(_TALK_OPEN)] if state == "talking" else 1.0
+        d.ellipse([mx - mw * 0.6, my - mw * 0.5 * amt, mx + mw * 0.6, my + mw * 0.7 * amt],
+                  fill=(20, 12, 16), outline=eye, width=line)
     elif style == "wavy":
         pts, n = [], 6
         for i in range(n + 1):
@@ -359,6 +370,17 @@ class Face:
                 with self._anim_lock:
                     if self._state == state:   # don't clobber a state change that just landed
                         self._frame_index = self._next_index(state, idx, len(frames), loop)
+                if self._wake.wait(1.0 / max(0.5, fps)):
+                    self._wake.clear()
+            elif state in _PROC_ANIMATED:
+                # No >=2-frame PNG set, but this state animates PROCEDURALLY (e.g. the talking mouth):
+                # re-render the procedural face with an advancing frame counter at the state's fps, so it
+                # moves with ZERO art files. (A single static PNG here is ignored in favour of the animation.)
+                self._show(state, _render(state, self.backend.width, self.backend.height, idx))
+                fps, _ = self._timing(state)
+                with self._anim_lock:
+                    if self._state == state:
+                        self._frame_index = idx + 1
                 if self._wake.wait(1.0 / max(0.5, fps)):
                     self._wake.clear()
             else:

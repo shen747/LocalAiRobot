@@ -110,6 +110,10 @@ if [ "$reload" != 1 ] && { pgrep -f 'python.*brain/main\.py' >/dev/null 2>&1 \
   "$REPO/scripts/shutdown.sh" || true
 fi
 
+# Re-apply the USB-speaker default + volume before launching: USB audio volume often resets to 0/low across
+# a reboot, and re-running setup_audio.sh fixes it. --audio-only skips the config rewrite + sudo; best-effort.
+bash "$REPO/scripts/setup_audio.sh" --audio-only || true
+
 # DRY RUN -> foreground, interactive.
 if [ "$DRY" = 1 ]; then
   echo ">> DRY RUN -- no hardware will be driven.   ENTER=talk · 'r'=simulate wake · q=quit"
