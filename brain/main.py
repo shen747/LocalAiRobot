@@ -106,6 +106,17 @@ def is_remember_command(text):
     return any(t in low for t in REMEMBER_TRIGGERS)
 
 
+# Crawl by default: a normal move ("come forward", "follow me") stays SLOW. Speed only climbs when the
+# user EXPLICITLY asks for it -- detected on the RAW transcript, so the model can't decide to floor it on
+# its own. The crawl cap is ROBOT_DRIVE_CRAWL_SPEED (config). Any of these words lets speed climb to 100:
+FAST_WORDS = ("fast", "faster", "quick", "quickly", "hurry", "speed up", "full speed",
+              "full throttle", "top speed", "floor it", "step on it", "zoom", "race", "sprint")
+
+
+def wants_speed(text):
+    return any(w in text.lower() for w in FAST_WORDS)
+
+
 # audio_lock makes the physical audio path half-duplex: at most one of {record, playback}
 # at a time. Kills the self-listening feedback loop AND concurrent-aplay garbling.
 audio_lock = threading.Lock()
@@ -174,7 +185,8 @@ SYSTEM_PROMPT = (
     '- "note": for REMEMBER, the relationship or description the user gave (e.g. "my wife"); otherwise omit.\n'
     '- "drive": EXACTLY one of FORWARD, REVERSE, STOP (used when action is DRIVE).\n'
     '- "steer": EXACTLY one of LEFT, CENTER, RIGHT.\n'
-    '- "speed": integer 0-100 (throttle; keep it low unless asked to go fast).\n'
+    '- "speed": integer 0-100. Use a SLOW crawl (about 10-15) for normal moves like "come forward" or '
+    '"follow me"; use a HIGH speed (60-100) ONLY when the user explicitly asks to go fast/quick/hurry.\n'
     '- "duration_ms": integer 300-5000 (how long to move; use 0 only for STOP).\n'
     '- "reply": the spoken response. For SAY, a natural, helpful answer (max ~30 words); '
     "for movement, a brief confirmation (max 12 words). Plain text only.\n"
@@ -468,8 +480,12 @@ def main():
                 speed = _as_int(resp.get("speed"), 0)
                 dur = _as_int(resp.get("duration_ms"), 0)
                 if drive != "STOP":
-                    if speed < 5:      # a model 0/blank shouldn't mean "don't move"
-                        speed = 40
+                    crawl = _as_int(os.environ.get("ROBOT_DRIVE_CRAWL_SPEED"), 15)
+                    if speed < 5:      # model gave 0/blank -> a gentle crawl, not a lurch
+                        speed = crawl
+                    if not wants_speed(text) and speed > crawl:   # CRAWL unless the user asked for speed
+                        log.info("crawl default: capping speed %d -> %d (say 'fast' to override)", speed, crawl)
+                        speed = crawl
                     if dur < 300:      # clamp tiny/zero durations up to a usable move
                         dur = 1500
                 print(f"action=DRIVE drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
