@@ -133,10 +133,11 @@ class RobotDriver:
         #     Tune ROBOT_ESC_FWD_FLOOR up until speed 1 *just* moves; lower the CEIL to cap top speed.
         self.fwd_floor = _envf("ROBOT_ESC_FWD_FLOOR", 0.60)   # FORWARD just engages (~1800us)
         self.fwd_ceil = _envf("ROBOT_ESC_FWD_CEIL", 1.00)     # FORWARD full speed (lower = slower)
-        self.rev_floor = _envf("ROBOT_ESC_REV_FLOOR", 0.60)   # REVERSE just engages (~1200us)
-        # This ESC's reverse only engages in a BAND (~-0.6..-0.8 / 1200..1100us); deeper (-0.88/1060us)
-        # overshoots it and does NOTHING. So cap reverse at 0.80, NOT 1.0. Raise/lower if reverse drops out.
-        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", 0.80)     # REVERSE full -- capped to the working band
+        # REVERSE is a SIGNED absolute throttle BELOW neutral (like forward is above it), NOT a magnitude:
+        # rev_floor = the slowest reverse (just below neutral, e.g. 0.20/1600us when neutral is 0.35),
+        # rev_ceil = fastest reverse (deeper below neutral -- LOWER than floor, e.g. 0.10 or negative).
+        self.rev_floor = _envf("ROBOT_ESC_REV_FLOOR", 0.0)    # REVERSE crawl -- just below neutral
+        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", -0.60)    # REVERSE full -- deeper below neutral
         # Legacy single cap: if ROBOT_MAX_THROTTLE is still set < a floor it would re-create the
         # "never moves" bug, so it's NO LONGER applied to the map (kept readable for old configs).
         self._legacy_max = _envf("ROBOT_MAX_THROTTLE", 0.0)
@@ -299,7 +300,7 @@ class RobotDriver:
         # --- Shared state (guarded by _lock) ---
         self._drive = "STOP"
         self._steer = "CENTER"
-        self._throttle = 0.0          # target magnitude (positive); loop applies FWD/REV sign
+        self._throttle = 0.0          # target SIGNED throttle to write (fwd > neutral, rev < neutral)
         self._deadline = 0.0          # time.monotonic() after which we coast to neutral
         self._rev_prime_start = 0.0   # monotonic time the reverse double-tap began (0 = not priming)
         self._closed = False
@@ -411,16 +412,18 @@ class RobotDriver:
                 pass
 
     def _speed_to_throttle(self, drive, speed):
-        """Map a 0..100 speed onto the ESC's usable throttle band, SKIPPING the dead-band this ESC
-        has around neutral (small offsets from 1500us produce no motion). Returns a POSITIVE
-        magnitude (the control loop applies the FORWARD/REVERSE sign); speed 0 -> 0.0 (neutral)."""
+        """Map a 0..100 speed onto the ESC's usable band for `drive`, returning the ACTUAL SIGNED throttle
+        to write (NOT a magnitude): FORWARD sits ABOVE the (possibly offset) neutral, REVERSE BELOW it.
+        FLOOR = the slowest end (just engages), CEIL = fastest. On an offset-neutral ESC the reverse
+        floor/ceil are the throttles just-below-neutral (slow) down to deep reverse (fast) -- e.g. neutral
+        0.35, rev floor 0.20 (1600us crawl), rev ceil 0.10 (faster). speed 0 -> neutral (no motion)."""
         if speed <= 0:
-            return 0.0
+            return self.neutral
         s = max(0.0, min(1.0, speed / 100.0))
         floor, ceil = ((self.rev_floor, self.rev_ceil) if drive == "REVERSE"
                        else (self.fwd_floor, self.fwd_ceil))
-        floor = max(0.0, min(1.0, floor))
-        ceil = max(floor, min(1.0, ceil))
+        floor = max(-1.0, min(1.0, floor))
+        ceil = max(-1.0, min(1.0, ceil))
         return floor + s * (ceil - floor)
 
     def _esc_pulse_us(self, value):
@@ -486,15 +489,15 @@ class RobotDriver:
                         self._gate_blocked = False
                         out = throttle
                 else:
-                    # REVERSE is UNSENSED (no rear sensor) -- bounded only by the move deadline +
-                    # throttle cap. Keep reverse moves short.
-                    out = -throttle
+                    # REVERSE is UNSENSED (no rear sensor) -- bounded only by the move deadline + throttle
+                    # cap. `throttle` is already the SIGNED reverse value (below neutral); write it directly.
+                    out = throttle
                     if rev_prime_start:
                         # Double-tap an F/B/R ESC: tap1 (brake) -> neutral gap -> sustained reverse.
                         el_ms = (time.monotonic() - rev_prime_start) * 1000.0
                         if self.rev_brake_ms <= el_ms < self.rev_brake_ms + self.rev_gap_ms:
                             out = self.neutral  # neutral gap between the two taps
-                        # el < brake_ms: tap1 (out=-throttle, ESC brakes); past the gap: real reverse
+                        # el < brake_ms: tap1 (reverse pulse = brake on F/B/R); past the gap: real reverse
 
             try:
                 with self._io:

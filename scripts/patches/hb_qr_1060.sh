@@ -3,12 +3,12 @@
 # ESC in F/R ("crawler") mode (Mode jumper cap OFF entirely; LIPO cap ON). Rewrites the ESC keys in
 # config/robot.env in place (incl. ROBOT_ESC_CHANNEL=14 for this build). Re-runnable (idempotent).
 #
-# WHY these values (all learned on the bench -- see docs/wiring/pwm-esc-servo-wiring.md):
-#   ROBOT_ESC_NEUTRAL=0.25   this ESC's TRUE neutral is 1625us, not 1500us. At 0.0/1500us it slow-reverses
-#                            (creeps) and won't arm; at 0.25 it sits dead still, stops clean, and arms
-#                            (cell tones + a long "ready" beep). Holding it is also what arms the ESC.
-#   ROBOT_ESC_FWD_FLOOR=0.60 big forward dead-band -- nothing pulls until ~1800us, so speed maps onto 0.60..
-#   ROBOT_ESC_REV_CEIL=0.80  reverse only engages in a band (~-0.6..-0.8); deeper (-0.88) overshoots + does nothing.
+# WHY these values (all bench-tested -- see docs/wiring/pwm-esc-servo-wiring.md):
+#   ROBOT_ESC_NEUTRAL=0.35   this ESC's neutral is OFFSET (~1675us, not 1500us). Holding it arms + stops
+#                            (cell tones + a long "ready" beep). It DRIFTS -- re-sweep if arming stops.
+#   ROBOT_ESC_FWD_FLOOR=0.45 forward crawls at 0.45 (1725us), just above neutral; speed maps 0.45..1.00.
+#   ROBOT_ESC_REV_FLOOR=0.20 reverse is a throttle just BELOW neutral (0.20=1600us crawl), NOT a negative;
+#   ROBOT_ESC_REV_CEIL=0.10  it gets faster the LOWER you go, so ceil (fast) is below floor (crawl).
 #   ROBOT_ESC_REVERSE_DOUBLETAP=0   F/R jumper = direct reverse (no F/B/R "double-click").
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -28,11 +28,11 @@ set_kv() {   # set_kv KEY VALUE -> replace the whole line (adds a [hb_qr_1060] p
 }
 
 echo ">> Patching config/robot.env for a HobbyWing QuicRun WP-1060 (F/R direct reverse):"
-set_kv ROBOT_ESC_NEUTRAL           0.25
-set_kv ROBOT_ESC_FWD_FLOOR         0.60
+set_kv ROBOT_ESC_NEUTRAL           0.35
+set_kv ROBOT_ESC_FWD_FLOOR         0.45
 set_kv ROBOT_ESC_FWD_CEIL          1.00
-set_kv ROBOT_ESC_REV_FLOOR         0.60
-set_kv ROBOT_ESC_REV_CEIL          0.80
+set_kv ROBOT_ESC_REV_FLOOR         0.20
+set_kv ROBOT_ESC_REV_CEIL          0.10
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0
 set_kv ROBOT_ESC_CHANNEL           14
