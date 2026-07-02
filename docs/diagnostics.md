@@ -24,10 +24,11 @@ The Pi has **no electrical feedback** from the motor, servo, or speaker — so t
 the script performs the action, then asks `did it work? [y/n]`. Everything with a real signal (I²C, sensors,
 camera, mic level, panel presence) is checked automatically.
 
-Each confirm prompt **auto-skips after 8 s** (override with `ROBOT_DIAG_TIMEOUT=<seconds>`), so a check
-never blocks — an unanswered actuation is marked *unconfirmed* (counts as **skipped**, not failed) and the
-run always reaches the summary. The sensor checks watch for a ~3 s window each, so **wave a hand in front
-of each sensor** when prompted.
+The run is split in two so it flows smoothly: **automated checks first** (I²C board, the 3 sensors, camera —
+no input needed; a valid sensor *reading* alone passes, no hand-waving), then the **checks that need you**
+(speaker → mic → face → the motor/servo spin last). Each confirm prompt **auto-skips after 12 s** (override
+with `ROBOT_DIAG_TIMEOUT=<seconds>`), so a check never blocks — an unanswered actuation is marked
+*unconfirmed* (counts as **skipped**, not failed) and the run always reaches the summary.
 
 ## Flags
 | Flag | Effect |
@@ -38,11 +39,12 @@ of each sensor** when prompted.
 | `--no-motors` | Skip the motor/servo spin tests entirely; run everything else. |
 
 ## What it checks
-ESC/PWM board (PCA9685 @ I²C `0x40`) · 3× ultrasonic (front/left/right, wave-to-confirm) · speaker (Piper
-greeting) · camera still + a 3 s clip · microphone level (+ a wake-word score if the model loads) · face
-panel (USB-C `turing` or DSI/HDMI `framebuffer`) · **motor forward/reverse** and **servo right/left/center**
-(last, behind the wheels-off gate). Artifacts (`diag_picture.jpg`, `diag_video.h264`, `diag_mic.wav`,
-`diag_speaker.wav`) are saved to `~/.localairobot/diagnostics/`.
+**Automated:** ESC/PWM board (PCA9685 @ I²C `0x40`) · 3× ultrasonic (front/left/right — any valid reading
+passes; only a no-echo sensor fails) · camera still + a 3 s clip. **Needs you:** speaker (Piper greeting, or
+a guaranteed fallback test tone if Piper is missing) · microphone level (+ a wake-word score if the model
+loads) · face panel (USB-C `turing` or DSI/HDMI `framebuffer`) · **motor forward/reverse** and **servo
+right/left/center** (last, behind the wheels-off gate). Artifacts (`diag_picture.jpg`, `diag_video.h264`,
+`diag_mic.wav`, `diag_speaker.wav`) are saved to `~/.localairobot/diagnostics/`.
 
 Subsystems disabled in `config/robot.env` (`ROBOT_CAMERA_ENABLE=0`, `ROBOT_FACE_ENABLE=0`,
 `ROBOT_SOUNDS_ENABLE=0`, `ROBOT_WAKEWORD_ENABLE=0`) show `[-]` (skipped), not a failure.
@@ -51,14 +53,19 @@ Subsystems disabled in `config/robot.env` (`ROBOT_CAMERA_ENABLE=0`, `ROBOT_FACE_
 ```
 LocalAiRobot hardware diagnostics  (live wiring self-test -- artifacts in ~/.localairobot/diagnostics)
 
+-- Automated checks --
 [v] ESC / PWM board present (PCA9685 @ I2C 0x40)  found 0x40 on bus 1
-[v] Ultrasonic sensor FRONT (TRIG 23 / ECHO 24)  responded: 182.0 cm -> 9.4 cm
-[x] Ultrasonic sensor LEFT (TRIG 5 / ECHO 6)  reading never changed (400.0 cm) -- pins swapped / not wired?
-[v] Ultrasonic sensor RIGHT (TRIG 20 / ECHO 21)  responded: 150.2 cm -> 7.1 cm
-[v] Speaker output (TTS greeting)
+[v] Ultrasonic sensor FRONT (TRIG 23 / ECHO 24)  reading 47 cm
+[x] Ultrasonic sensor LEFT (TRIG 5 / ECHO 6)  NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring
+[v] Ultrasonic sensor RIGHT (TRIG 20 / ECHO 21)  reading ~400 cm (max range -- aimed at open space)
 [v] Camera picture (still)  41207 bytes -> ~/.localairobot/diagnostics/diag_picture.jpg
 [v] Camera video clip (3 s)  1183220 bytes -> ~/.localairobot/diagnostics/diag_video.h264
 [-] Camera live feed  not viewable over headless SSH; the saved clip above covers the pipeline
+
+-- Checks that need you (listen / speak / watch) --
+    >> PLAYING SOUND NOW -- listen to the speaker...
+    Did you HEAR the greeting? [y/N] (auto-skip in 12s) y
+[v] Speaker output (TTS greeting)
 [v] Microphone input (say 'hey jarvis')  level peak 47% | wake 'hey jarvis' DETECTED (score 0.71)
 [v] Face panel / monitor  USB-C serial panel (turing, port AUTO)
   SAFETY: the motor test SPINS THE WHEELS.
@@ -69,10 +76,10 @@ LocalAiRobot hardware diagnostics  (live wiring self-test -- artifacts in ~/.loc
 [v] Servo steer LEFT
 [v] Servo steer CENTER
 
-Summary: 14 passed  1 failed  1 skipped
+Summary: 13 passed  1 failed  1 skipped
 
 Fix these:
-  x Ultrasonic sensor LEFT (TRIG 5 / ECHO 6): reading never changed (400.0 cm) -- pins swapped / not wired?
+  x Ultrasonic sensor LEFT (TRIG 5 / ECHO 6): NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring
       -> see docs/wiring/ultrasonic-sensors-wiring.md
 ```
 

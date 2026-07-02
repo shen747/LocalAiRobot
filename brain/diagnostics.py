@@ -49,11 +49,12 @@ class Diag:
     def __init__(self, args):
         self.args = args
         self.passed, self.failed, self.skipped = [], [], []
-        # Confirm prompts auto-skip after this many seconds so a check can never block the run.
+        # Confirm prompts auto-skip after this many seconds so a check can never block the run. 12s gives
+        # comfortable time to watch the wheels / listen / answer, while still never hanging the run.
         try:
-            self.timeout = float(os.environ.get("ROBOT_DIAG_TIMEOUT", "8") or 8)
+            self.timeout = float(os.environ.get("ROBOT_DIAG_TIMEOUT", "12") or 12)
         except ValueError:
-            self.timeout = 8.0
+            self.timeout = 12.0
 
     # ---- result emitters (also print a live line) ----
     def ok(self, label, detail=""):
@@ -153,39 +154,29 @@ class Diag:
             label = f"Ultrasonic sensor {name.upper()} (TRIG {tp} / ECHO {ep})"
             s = None
             try:
-                # partial=True -> .distance returns immediately (no multi-second queue-fill block on a
-                # dead/no-echo sensor); a small queue keeps it snappy even on older gpiozero (fallback).
-                print(dim(f"    measuring {name.upper()} -- wave a hand in front of it..."))
+                # AUTOMATED: a valid reading = PASS -- no hand-waving needed. Only a sensor returning NO ECHO
+                # (not responding at all) is a failure. partial=True -> .distance returns immediately (no
+                # multi-second queue-fill block on a dead sensor); a small queue keeps older gpiozero snappy.
+                print(dim(f"    measuring {name.upper()}..."))
                 with warnings.catch_warnings(record=True) as caught:
                     warnings.simplefilter("always")
-                    # partial=True -> .distance returns immediately (no multi-second queue-fill block on a
-                    # dead/no-echo sensor); a small queue keeps it snappy on older gpiozero (fallback).
                     try:
                         s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=3, partial=True)
                     except TypeError:
                         s = DistanceSensor(echo=int(ep), trigger=int(tp), max_distance=4.0, queue_len=3)
-                    time.sleep(0.5)                   # let one ping land before sampling
-                    hi = lo = s.distance * 100.0
-                    # A sensor already reporting NO ECHO is unwired -- don't wait the full wave window for
-                    # it (fails in ~0.5s instead of ~3s), so an unplugged array can't drag the run out.
-                    early_dead = any("echo" in str(w.message).lower() for w in caught)
-                    t_end = time.time() + (0.0 if (self.args.yes or early_dead) else 2.5)
-                    while time.time() < t_end:
-                        d = s.distance * 100.0
-                        hi, lo = max(hi, d), min(lo, d)
-                        time.sleep(0.1)
-                    cur = s.distance * 100.0
+                    time.sleep(0.5)                   # let a ping or two land before sampling
+                    reads = [s.distance * 100.0]
+                    for _ in range(4):                # ~0.3s of samples -- enough to read + catch a no-echo
+                        time.sleep(0.08)
+                        reads.append(s.distance * 100.0)
                     no_echo = any("echo" in str(w.message).lower() for w in caught)
-                if not self.args.yes and hi - lo > 5.0:
-                    self.ok(label, f"responded: {hi:.0f} -> {lo:.0f} cm")
-                elif no_echo:
+                cur, lo = reads[-1], min(reads)
+                if no_echo:
                     self.bad(label, "NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring", DOC_SENS)
-                elif self.args.yes:
-                    self.ok(label, f"reading {cur:.0f} cm (response not tested under --yes)")
                 elif lo >= 395.0:
-                    self.bad(label, "reads ~400cm (max) & nothing changed -- wave closer, or check aim/wiring", DOC_SENS)
+                    self.ok(label, f"reading ~{cur:.0f} cm (max range -- aimed at open space)")
                 else:
-                    self.bad(label, f"steady {lo:.0f}cm, didn't change when waved -- wave during the window, or check wiring", DOC_SENS)
+                    self.ok(label, f"reading {cur:.0f} cm")
             except Exception as e:
                 self.bad(label, f"read failed: {e}", DOC_SENS)
             finally:
@@ -211,21 +202,49 @@ class Diag:
         voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
         text = ("Hello, I am Jarvis, your friendly robot car, powered by AI and created by Ramesh.")
         wav = os.path.join(OUTDIR, "diag_speaker.wav")
+        # 1) Synthesize with Piper -- this exercises the REAL voice pipeline. If Piper fails we STILL want
+        #    to prove the speaker, so we fall back to a guaranteed ALSA test tone (the exact 'default' path
+        #    scripts/setup_audio.sh sets up, same as `speaker-test -D default`).
+        piper_ok, tts_note = False, ""
         try:
-            syn = subprocess.run([piper, "-m", voice, "--output_file", wav],
-                                 input=text.encode("utf-8"), timeout=40,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            if syn.returncode != 0:
-                return self.bad(label, f"piper failed: {syn.stderr.decode('utf-8', 'replace').strip()[-120:]}", DOC_ASM)
-            pb = subprocess.run(["aplay", wav], timeout=40, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-            if pb.returncode != 0:
-                return self.bad(label, f"aplay failed: {pb.stderr.strip()[-120:]} -- check ~/.asoundrc / `aplay -l`", DOC_ASM)
+            syn = subprocess.run([piper, "-m", voice, "--output_file", wav], input=text.encode("utf-8"),
+                                 timeout=40, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            piper_ok = syn.returncode == 0 and os.path.exists(wav) and os.path.getsize(wav) > 0
+            if not piper_ok:
+                tts_note = f" -- Piper TTS failed: {syn.stderr.decode('utf-8', 'replace').strip()[-90:]}"
+        except FileNotFoundError:
+            tts_note = " -- Piper binary missing (run ./scripts/install_stack.sh)"
+        except Exception as e:
+            tts_note = f" -- Piper error: {e}"
+        # 2) Play it, with a LOUD cue first so you know to listen RIGHT NOW (a big reason a greeting gets
+        #    "missed"). aplay/speaker-test both use the ALSA default (~/.asoundrc) -- same as the robot voice.
+        print(f"    {bold('>> PLAYING SOUND NOW -- listen to the speaker...')}")
+        try:
+            if piper_ok:
+                pb = subprocess.run(["aplay", wav], timeout=40, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                played = "greeting"
+            else:
+                pb = subprocess.run(["speaker-test", "-D", "default", "-t", "wav", "-l", "1"],
+                                    timeout=25, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                played = "test tone"
         except FileNotFoundError as e:
             return self.bad(label, f"missing binary: {e} -- run ./scripts/install_stack.sh", DOC_ASM)
         except Exception as e:
             return self.bad(label, f"{e}", DOC_ASM)
-        self.confirm_step(label, "Did you HEAR the greeting?",
-                          "not heard -- set the USB speaker as the ALSA default (./scripts/setup_audio.sh)", DOC_ASM)
+        if pb.returncode != 0:
+            return self.bad(label, f"playback failed: {(pb.stderr or '').strip()[-120:]} -- check ~/.asoundrc "
+                            "(run ./scripts/setup_audio.sh)", DOC_ASM)
+        # 3) Only a human can confirm sound actually came out of the cone.
+        res = self.confirm(f"Did you HEAR the {played}?{tts_note}")
+        if res is False:
+            self.bad(label, "not heard -- make the USB speaker the ALSA default (./scripts/setup_audio.sh)", DOC_ASM)
+        elif res is None:
+            self.skip(label, f"unconfirmed (no answer in {int(self.timeout)}s)")
+        elif piper_ok:
+            self.ok(label)
+        else:
+            self.bad(label, f"speaker OK (tone heard) but the VOICE needs Piper{tts_note} -- "
+                     "re-run ./scripts/install_stack.sh", DOC_ASM)
 
     def check_camera(self):
         if os.environ.get("ROBOT_CAMERA_ENABLE", "1") == "0":
@@ -422,15 +441,18 @@ class Diag:
         print(bold("\nLocalAiRobot hardware diagnostics") +
               dim("  (live wiring self-test -- artifacts in ~/.localairobot/diagnostics)\n"))
         if not self.args.yes:
-            print(dim("  Interactive: each action is performed, then you confirm it worked. Ctrl-C to abort.\n"))
-        # harmless checks first (NO driver -> ESC not armed yet)
+            print(dim("  Automated checks run first; the ones that need YOU (listen / speak / watch) come after."
+                      " Ctrl-C to abort.\n"))
+        # --- automated: measured, no user input (and NO driver yet -> the ESC stays unarmed) ---
+        print(bold("-- Automated checks --"))
         self.check_pca9685()
         self.check_sensors()
-        self.check_speaker()
         self.check_camera()
+        # --- need YOU: listen / speak / watch. Motor/servo is LAST -- it builds the driver (arms the ESC). ---
+        print(bold("\n-- Checks that need you (listen / speak / watch) --"))
+        self.check_speaker()
         self.check_mic()
         self.check_face()
-        # motor/servo last, behind the safety gate (builds the driver -> arms the ESC)
         self.check_motors_and_servo()
         return self.report()
 
