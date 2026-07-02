@@ -14,6 +14,11 @@
 #                   if it's installed, else the --detach instance).
 #   --install-boot  install + enable the systemd unit so the brain auto-starts on every boot.
 #   --disable-boot  stop + remove that boot service.
+#
+# ON LAUNCH, run_me.sh first CLEANLY STOPS any brain already running (a prior foreground orphan, a
+# --detach instance, or the boot service) via scripts/shutdown.sh -- so a fresh run always gets the GPIO
+# + mic + ESC to itself (no "GPIO busy" / "no input device" clashes from a leftover process). The stop is
+# graceful (SIGINT neutralises the ESC + releases devices first); it's an instant no-op when nothing runs.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -92,6 +97,18 @@ fi
 DRY="${override:-${ROBOT_DRY_RUN:-0}}"
 PY="$REPO/brain/.venv/bin/python"
 MAIN="$REPO/brain/main.py"
+
+# Clear the field before we launch: cleanly stop ANY brain already running (a prior foreground orphan, a
+# --detach, the boot service, or a stray) so THIS run gets the GPIO + mic + ESC to itself. Without it, a
+# leftover instance keeps the pins/mic and the new one dies with "GPIO busy" / "no input device". Reuses
+# scripts/shutdown.sh (SIGINT -> neutralise the ESC + release devices; SIGKILL only if it won't go). Runs
+# BEFORE the exec/launch below, so it can only ever stop PREVIOUS brains, never the one we're starting.
+# Skipped for --reload (it already ran shutdown.sh above); an instant no-op when nothing is running.
+if [ "$reload" != 1 ] && { pgrep -f 'python.*brain/main\.py' >/dev/null 2>&1 \
+   || { command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet robot.service 2>/dev/null; }; }; then
+  echo ">> A robot brain is already running -- stopping it first (frees the GPIO + mic + ESC)..."
+  "$REPO/scripts/shutdown.sh" || true
+fi
 
 # DRY RUN -> foreground, interactive.
 if [ "$DRY" = 1 ]; then
