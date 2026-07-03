@@ -125,6 +125,10 @@ The **Quickstart** above is the whole happy path; the full phased build + calibr
 - 📶 **Switch Wi-Fi in the field — no monitor/keyboard.** Move the robot onto a new network, or recover
   SSH access, from just your phone (a phone-hotspot fallback + a Comitup captive portal, plus passwordless
   Ed25519 SSH): [docs/change-pi-wifi.md](docs/change-pi-wifi.md).
+- 📱 **Command it from your phone over Wi-Fi.** A tiny token-secured HTTP endpoint (on by default, runs
+  *inside* the brain) turns your phone's keyboard mic into a remote — speak, and it runs the **same** brain
+  as the wake word: it drives/answers, **speaks the reply, and returns it as JSON**. First launch prints a
+  ready URL + auto-generated token. Setup + security: [docs/http_setup.md](docs/http_setup.md).
 
 ---
 

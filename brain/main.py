@@ -19,6 +19,7 @@
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ import time
 
 import behavior
 import inference
+import remote
 import vision
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
@@ -259,6 +261,31 @@ def _as_int(value, default):
         return default
 
 
+def _persist_env(key, value):
+    """Write KEY=value into config/robot.env in place (preserving any trailing '# comment') or append it,
+    like scripts/setup_audio.sh's set_kv. Used to save an auto-generated ROBOT_HTTP_TOKEN. Best-effort."""
+    import re
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "robot.env")
+    try:
+        lines = []
+        if os.path.exists(path):
+            with open(path) as f:
+                lines = f.readlines()
+        hit = False
+        for i, ln in enumerate(lines):
+            m = re.match(rf"^({re.escape(key)}=)([^\s#]*)(.*)$", ln)
+            if m:
+                lines[i] = f"{m.group(1)}{value}{m.group(3)}\n"
+                hit = True
+                break
+        if not hit:
+            lines.append(f"{key}={value}\n")
+        with open(path, "w") as f:
+            f.writelines(lines)
+    except Exception as e:
+        log.warning("could not persist %s to config/robot.env: %s", key, e)
+
+
 def main():
     # Hardware actions (intended PWM/GPIO/I2C) are logged by driver.py on the "robot.hw"
     # logger -- configure logging FIRST so the startup banner + mapping show on the console.
@@ -332,6 +359,114 @@ def main():
 
     driver.on_obstacle = on_obstacle
 
+    turn_lock = threading.Lock()   # one command turn at a time -- voice and HTTP never overlap
+
+    def handle_command(text, source="voice"):
+        """Run ONE command turn: text -> LLM intent JSON -> action (drive/say/remember/find/explore).
+        Shared by the voice loop AND the phone HTTP endpoint; turn_lock keeps the two from overlapping.
+        `source` is "voice" or "http"; over HTTP the CAMERA actions (REMEMBER/FIND/EXPLORE) are blocked
+        unless ROBOT_HTTP_ALLOW_CAMERA=1. Returns (action, reply)."""
+        with turn_lock:
+            fc.set_expression("thinking")
+            snd.start_thinking()           # proof-of-life cue while the (slow) model runs
+            t_think = time.monotonic()
+            try:
+                resp = query_ollama(cfg, text, context=mem.prompt_context())
+            except Exception as e:
+                snd.stop_thinking()
+                snd.play("error")
+                print(f"llm: {e}", file=sys.stderr)
+                log.warning("llm failed after %.1fs: %s", time.monotonic() - t_think, e)
+                driver.stop()  # fail safe
+                fc.set_expression("idle")
+                return "ERROR", "Sorry, I hit an error."
+            snd.stop_thinking()            # stop BEFORE any say() so it doesn't fight TTS
+            log.info("think: model replied in %.1fs", time.monotonic() - t_think)
+
+            action = str(resp.get("action", "DRIVE")).upper()
+            target = resp.get("target")
+            reply = resp.get("reply", "")
+
+            # --- Trigger gate: autonomy must be asked for, on the RAW transcript. ---
+            if action in ("EXPLORE", "FIND") and not is_explore_command(text):
+                print(f"(gate: '{action}' not triggered by an explore phrase -> DRIVE)")
+                log.info("trigger gate: demoting %s -> DRIVE (no explore phrase uttered)", action)
+                action = "DRIVE"
+            if action == "FIND" and not target:
+                action = "EXPLORE"   # asked to find but no object named -> just look around
+            if action == "REMEMBER" and not is_remember_command(text):
+                print("(gate: 'REMEMBER' not triggered by a teach phrase -> SAY)")
+                action = "SAY"       # gemma said REMEMBER but no "this is/remember/..." in the transcript
+            if action == "REMEMBER" and not str(target or "").strip():
+                action = "SAY"       # asked to remember but no name -> just reply, store nothing
+
+            # --- HTTP hardening: over the network, BLOCK the camera-using actions unless explicitly
+            # allowed, so a stolen token can't even get a one-shot photo description. Downgrade to SAY. ---
+            if source == "http" and action in ("REMEMBER", "FIND", "EXPLORE") \
+                    and os.environ.get("ROBOT_HTTP_ALLOW_CAMERA", "0") != "1":
+                log.info("http: blocking camera action %s (ROBOT_HTTP_ALLOW_CAMERA=0) -> SAY", action)
+                action, reply = "SAY", "I can only drive and chat over the phone, not use my camera."
+
+            if action == "STOP":
+                print("action=STOP")
+                driver.stop()
+                say(reply)
+            elif action == "SAY":
+                # Not a movement command -- just speak gemma's conversational reply; don't drive.
+                print(f"action=SAY reply={reply!r}")
+                driver.stop()
+                say(reply)
+            elif action == "REMEMBER":
+                # Teach the robot a person/thing: photograph what the camera sees, describe it with
+                # the VLM, store name + relationship + photo in SQLite -- then it's prompt context.
+                name = str(target).strip()
+                note = str(resp.get("note") or "").strip()
+                print(f"action=REMEMBER name={name!r} note={note!r}")
+                driver.stop()
+                fc.set_expression("capturing")
+                jpeg = cam.capture_jpeg()
+                desc = ""
+                if jpeg:
+                    fc.set_expression("thinking")
+                    snd.start_thinking()
+                    desc = vision.describe(cfg, jpeg).get("description", "")
+                    snd.stop_thinking()
+                img_path = mem.save_photo(jpeg, name)
+                mem.remember_fact(name, note, desc, img_path)
+                reply = reply or f"Okay, I'll remember {name}."
+                say(reply)
+            elif action == "FIND":
+                print(f"action=FIND target={target!r}")
+                say(reply)
+                run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, snd, str(target))
+            elif action == "EXPLORE":
+                print("action=EXPLORE")
+                say(reply)
+                run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say, snd)
+            else:  # DRIVE (and any unknown action falls here as plain teleop)
+                drive = str(resp.get("drive", "STOP")).upper()
+                steer = str(resp.get("steer", "CENTER")).upper()
+                if drive not in VALID_DRIVE:
+                    print(f"invalid drive {drive!r} -> STOP")
+                    drive = "STOP"
+                if steer not in VALID_STEER:
+                    steer = "CENTER"
+                speed = _as_int(resp.get("speed"), 0)
+                dur = _as_int(resp.get("duration_ms"), 0)
+                if drive != "STOP":
+                    crawl = _as_int(os.environ.get("ROBOT_DRIVE_CRAWL_SPEED"), 15)
+                    if speed < 5:      # model gave 0/blank -> a gentle crawl, not a lurch
+                        speed = crawl
+                    if not wants_speed(text) and speed > crawl:   # CRAWL unless the user asked for speed
+                        log.info("crawl default: capping speed %d -> %d (say 'fast' to override)", speed, crawl)
+                        speed = crawl
+                    if dur < 300:      # clamp tiny/zero durations up to a usable move
+                        dur = 1500
+                print(f"action=DRIVE drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
+                driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
+                say(reply)                                 # synchronous; returns after playback
+            return action, reply
+
     # LIVE needs a working wake word -- ENTER push-to-talk was removed from live (it survives only in
     # --dry). With no usable trigger, refuse to start rather than sit there dead.
     if not wake.dry_run and not wake.available:
@@ -376,6 +511,30 @@ def main():
         print(f"Model warmup: {'ready' if ok else 'skipped (will cold-load on first command)'}")
     snd.play("greeting")
 
+    # Phone command endpoint (HTTP; ON BY DEFAULT). A tiny stdlib server runs INSIDE the brain so your
+    # phone can POST text commands over Wi-Fi -> handle_command (same pipeline as the wake word). run_me.sh
+    # is unchanged. First run auto-generates + saves a token and prints the ready URL. See docs/http_setup.md.
+    remote_srv = None
+    if os.environ.get("ROBOT_HTTP_ENABLE", "1") == "1":
+        try:
+            port = _as_int(os.environ.get("ROBOT_HTTP_PORT"), 8080)
+            token = env("ROBOT_HTTP_TOKEN", "").strip()
+            if not token:
+                import secrets
+                token = secrets.token_urlsafe(16)
+                _persist_env("ROBOT_HTTP_TOKEN", token)
+                os.environ["ROBOT_HTTP_TOKEN"] = token
+                log.info("generated ROBOT_HTTP_TOKEN and saved it to config/robot.env")
+            remote_srv = remote.RemoteServer(port, token, on_command=handle_command)
+            remote_srv.start()
+            host = socket.gethostname()
+            print(f">> Phone command endpoint READY:  http://{host}.local:{port}/speak")
+            print(f"   token: {token}   (send as the X-Robot-Token header)  -- Android setup: docs/http_setup.md")
+        except Exception as e:
+            print(f"remote endpoint failed to start: {e}", file=sys.stderr)
+            log.warning("remote endpoint failed to start: %s", e)
+            remote_srv = None
+
     try:
         while True:
             fc.set_expression("idle")
@@ -402,95 +561,7 @@ def main():
             print(f"Heard: {text!r}")
             snd.play("ack")                # command-ack: "got it/on it" -- command accepted, AFTER the noise filter
 
-            fc.set_expression("thinking")
-            snd.start_thinking()           # proof-of-life cue while the (slow) model runs
-            t_think = time.monotonic()
-            try:
-                resp = query_ollama(cfg, text, context=mem.prompt_context())
-            except Exception as e:
-                snd.stop_thinking()
-                snd.play("error")
-                print(f"llm: {e}", file=sys.stderr)
-                log.warning("llm failed after %.1fs: %s", time.monotonic() - t_think, e)
-                driver.stop()  # fail safe
-                continue
-            snd.stop_thinking()            # stop BEFORE any say() so it doesn't fight TTS
-            log.info("think: model replied in %.1fs", time.monotonic() - t_think)
-
-            action = str(resp.get("action", "DRIVE")).upper()
-            target = resp.get("target")
-            reply = resp.get("reply", "")
-
-            # --- Trigger gate: autonomy must be asked for, on the RAW transcript. ---
-            if action in ("EXPLORE", "FIND") and not is_explore_command(text):
-                print(f"(gate: '{action}' not triggered by an explore phrase -> DRIVE)")
-                log.info("trigger gate: demoting %s -> DRIVE (no explore phrase uttered)", action)
-                action = "DRIVE"
-            if action == "FIND" and not target:
-                action = "EXPLORE"   # asked to find but no object named -> just look around
-            if action == "REMEMBER" and not is_remember_command(text):
-                print("(gate: 'REMEMBER' not triggered by a teach phrase -> SAY)")
-                action = "SAY"       # gemma said REMEMBER but no "this is/remember/..." in the transcript
-            if action == "REMEMBER" and not str(target or "").strip():
-                action = "SAY"       # asked to remember but no name -> just reply, store nothing
-
-            if action == "STOP":
-                print("action=STOP")
-                driver.stop()
-                say(reply)
-            elif action == "SAY":
-                # Not a movement command -- just speak gemma's conversational reply; don't drive.
-                print(f"action=SAY reply={reply!r}")
-                driver.stop()
-                say(reply)
-            elif action == "REMEMBER":
-                # Teach the robot a person/thing: photograph what the camera sees, describe it with
-                # the VLM, store name + relationship + photo in SQLite -- then it's prompt context.
-                name = str(target).strip()
-                note = str(resp.get("note") or "").strip()
-                print(f"action=REMEMBER name={name!r} note={note!r}")
-                driver.stop()
-                fc.set_expression("capturing")
-                jpeg = cam.capture_jpeg()
-                desc = ""
-                if jpeg:
-                    fc.set_expression("thinking")
-                    snd.start_thinking()
-                    desc = vision.describe(cfg, jpeg).get("description", "")
-                    snd.stop_thinking()
-                img_path = mem.save_photo(jpeg, name)
-                mem.remember_fact(name, note, desc, img_path)
-                say(reply or f"Okay, I'll remember {name}.")
-            elif action == "FIND":
-                print(f"action=FIND target={target!r}")
-                say(reply)
-                run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, snd, str(target))
-            elif action == "EXPLORE":
-                print("action=EXPLORE")
-                say(reply)
-                run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say, snd)
-            else:  # DRIVE (and any unknown action falls here as plain teleop)
-                drive = str(resp.get("drive", "STOP")).upper()
-                steer = str(resp.get("steer", "CENTER")).upper()
-                if drive not in VALID_DRIVE:
-                    print(f"invalid drive {drive!r} -> STOP")
-                    drive = "STOP"
-                if steer not in VALID_STEER:
-                    steer = "CENTER"
-                speed = _as_int(resp.get("speed"), 0)
-                dur = _as_int(resp.get("duration_ms"), 0)
-                if drive != "STOP":
-                    crawl = _as_int(os.environ.get("ROBOT_DRIVE_CRAWL_SPEED"), 15)
-                    if speed < 5:      # model gave 0/blank -> a gentle crawl, not a lurch
-                        speed = crawl
-                    if not wants_speed(text) and speed > crawl:   # CRAWL unless the user asked for speed
-                        log.info("crawl default: capping speed %d -> %d (say 'fast' to override)", speed, crawl)
-                        speed = crawl
-                    if dur < 300:      # clamp tiny/zero durations up to a usable move
-                        dur = 1500
-                print(f"action=DRIVE drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
-                driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
-                say(reply)                                 # synchronous; returns after playback
+            handle_command(text, source="voice")   # thinking -> LLM intent -> action (shared with HTTP)
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
@@ -505,6 +576,11 @@ def main():
         for _sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 signal.signal(_sig, signal.SIG_IGN)
+            except Exception:
+                pass
+        if remote_srv is not None:      # stop accepting phone commands before tearing devices down
+            try:
+                remote_srv.stop()
             except Exception:
                 pass
         for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):

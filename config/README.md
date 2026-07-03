@@ -58,6 +58,20 @@ for vision).
 | `ROBOT_RECORD_SECS` | `4` | Seconds of audio captured per command after a wake/ENTER. |
 | `ROBOT_TMPDIR` | `/dev/shm` | Scratch dir for the per-turn WAV/JPEG (RAM-backed = fast, no SD wear). |
 
+## Phone command endpoint (HTTP)
+
+A tiny token-secured HTTP server runs **inside the brain** (so `run_me.sh` is unchanged) — your phone POSTs
+a dictated text command to `http://<hostname>.local:PORT/speak` and it runs the **same** pipeline as the
+wake word (drives/answers, **speaks the reply, returns it as JSON**). **On by default.** Setup + security:
+[docs/http_setup.md](../docs/http_setup.md).
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_HTTP_ENABLE` | `1` | `0` = off. On by default; the server starts with every brain launch. |
+| `ROBOT_HTTP_PORT` | `8080` | Port the phone POSTs to: `http://<hostname>.local:PORT/speak`. |
+| `ROBOT_HTTP_TOKEN` | *(empty)* | Shared secret the phone must send (`X-Robot-Token` header or `?token=`). **Empty → auto-generated and saved here on first run** (the brain prints the ready URL + token once). |
+| `ROBOT_HTTP_ALLOW_CAMERA` | `0` | `0` = block the camera actions (look around / find / remember) over HTTP, so a stolen token can't even get a one-shot photo description. `1` = allow them. |
+
 ## PCA9685 PWM channels
 
 | Key | Default | What it does |

@@ -32,9 +32,10 @@ if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 echo ">> [1/8] system packages"
 sudo apt update
 sudo apt install -y git build-essential cmake alsa-utils curl \
-                    python3-venv python3-dev i2c-tools sqlite3 \
+                    python3-venv python3-dev i2c-tools sqlite3 avahi-daemon \
                     portaudio19-dev libasound2-dev   # PortAudio: continuous mic for the optional wake word
                     # sqlite3: raw CLI for the memory store (scripts/rag.sh wraps it; venv python also has it)
+                    # avahi-daemon: mDNS so <hostname>.local resolves -- SSH by name AND the phone command endpoint
 
 echo ">> [2/8] camera stack (picamera2 + libcamera, from apt -- NOT pip)"
 sudo apt install -y --no-install-recommends python3-picamera2 || \
