@@ -157,7 +157,7 @@ class WakeWord:
         return self._listen(audio_lock)
 
     def close(self):
-        self._yield.set()   # unblock a paused listen loop so wait() can return on shutdown
+        pass  # no persistent resources; the stream lives only inside wait()
 
     def pause_mic(self, timeout=2.0):
         """Ask the live listen loop to RELEASE the mic + audio_lock so another turn (e.g. an HTTP command)
