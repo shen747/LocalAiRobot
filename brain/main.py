@@ -359,7 +359,8 @@ def main():
 
     driver.on_obstacle = on_obstacle
 
-    turn_lock = threading.Lock()   # one command turn at a time -- voice and HTTP never overlap
+    turn_lock = threading.RLock()  # one command turn at a time (voice/HTTP); RLock so remote_command can
+    #                                hold it across the wake-mic pause AND handle_command's own acquire
 
     def handle_command(text, source="voice"):
         """Run ONE command turn: text -> LLM intent JSON -> action (drive/say/remember/find/explore).
@@ -514,6 +515,18 @@ def main():
     # Phone command endpoint (HTTP; ON BY DEFAULT). A tiny stdlib server runs INSIDE the brain so your
     # phone can POST text commands over Wi-Fi -> handle_command (same pipeline as the wake word). run_me.sh
     # is unchanged. First run auto-generates + saves a token and prints the ready URL. See docs/http_setup.md.
+    def remote_command(text, source="http"):
+        """What the HTTP server calls. Holds turn_lock for the WHOLE turn (RLock) and PAUSES the wake mic
+        around it so this turn's earcons/TTS can play -- the main thread is still in the wake listen
+        (holding audio_lock), so without the pause say() would deadlock. handle_command re-enters
+        turn_lock (RLock) fine. Concurrent requests serialise here, each re-asserting the pause."""
+        with turn_lock:
+            wake.pause_mic()
+            try:
+                return handle_command(text, source="http")
+            finally:
+                wake.resume_mic()
+
     remote_srv = None
     if os.environ.get("ROBOT_HTTP_ENABLE", "1") == "1":
         try:
@@ -525,7 +538,7 @@ def main():
                 _persist_env("ROBOT_HTTP_TOKEN", token)
                 os.environ["ROBOT_HTTP_TOKEN"] = token
                 log.info("generated ROBOT_HTTP_TOKEN and saved it to config/robot.env")
-            remote_srv = remote.RemoteServer(port, token, on_command=handle_command)
+            remote_srv = remote.RemoteServer(port, token, on_command=remote_command)
             remote_srv.start()
             host = socket.gethostname()
             print(f">> Phone command endpoint READY:  http://{host}.local:{port}/speak")

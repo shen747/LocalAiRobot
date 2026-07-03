@@ -37,6 +37,7 @@
 import logging
 import os
 import sys
+import threading
 import time
 
 from driver import dry_run_enabled
@@ -79,6 +80,11 @@ class WakeWord:
         self.threshold = _envf("ROBOT_WAKEWORD_THRESHOLD", 0.5)
         self.trigger_level = max(1, _envi("ROBOT_WAKEWORD_TRIGGER_LEVEL", 1))
         self.cooldown_s = _envf("ROBOT_WAKEWORD_COOLDOWN_S", 2.0)
+        # A non-voice turn (e.g. an HTTP command) needs the audio path WHILE we're listening. pause_mic()
+        # sets _yield so the listen loop drops audio_lock + the mic (confirmed via _yielded); resume_mic()
+        # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
+        self._yield = threading.Event()
+        self._yielded = threading.Event()
 
         model = os.path.expanduser(
             os.environ.get("ROBOT_WAKEWORD_MODEL", "~/LocalAiRobot/models/hey_richard.onnx"))
@@ -151,7 +157,21 @@ class WakeWord:
         return self._listen(audio_lock)
 
     def close(self):
-        pass  # no persistent resources; the stream lives only inside wait()
+        self._yield.set()   # unblock a paused listen loop so wait() can return on shutdown
+
+    def pause_mic(self, timeout=2.0):
+        """Ask the live listen loop to RELEASE the mic + audio_lock so another turn (e.g. an HTTP command)
+        can play TTS/earcons. Blocks until it confirms (or `timeout`). No-op in dry-run / when not
+        available (there's no live stream holding the lock). Always pair with resume_mic()."""
+        if not self.available or self._fake:
+            return
+        self._yielded.clear()
+        self._yield.set()
+        self._yielded.wait(timeout=timeout)
+
+    def resume_mic(self):
+        """Let the listen loop re-open the mic after a pause_mic()."""
+        self._yield.clear()
 
     # ---------- internals ----------
     def _listen(self, audio_lock):
@@ -174,72 +194,87 @@ class WakeWord:
         best_score = 0.0
         best_amp = 0
         next_report = time.time() + 15.0
+        logged = False
         try:
-            # Hold audio_lock for the whole listen: the wake mic must not be live while Piper or
-            # an earcon plays. Nothing else wants the lock at the top of a turn, so this is free.
-            with audio_lock:
-                with sd.InputStream(samplerate=rate, channels=1, dtype="int16",
-                                    blocksize=chunk, device=self._device) as stream:
-                    # Log the resolved audio path: mics vary wildly, and "capture 44100->16000Hz
-                    # resampled" vs the threshold/silence_floor is the first thing to check when a
-                    # wake word won't fire on someone else's hardware.
-                    log.info("wake: listening for '%s' on device=%s (capture %dHz%s, chunk=%d, "
-                             "threshold=%.2f, silence_floor=%d)%s", self._label,
-                             self._device if self._device is not None else "default", rate,
-                             f"->{_SAMPLE_RATE}Hz resampled" if rate != _SAMPLE_RATE else "",
-                             chunk, self.threshold, _SILENCE_FLOOR,
-                             "" if watch_stdin else " [headless]")
-                    while True:
-                        if watch_stdin:
-                            import select
-                            r, _, _ = select.select([sys.stdin], [], [], 0)
-                            if r:
-                                line = sys.stdin.readline()
-                                if line == "":
-                                    # EOF: the terminal went away (SSH logout under a detached run).
-                                    # select() would report readable forever -- stop watching stdin.
-                                    log.info("wake: stdin closed -- continuing wake-word-only")
-                                    watch_stdin = False
-                                    continue
-                                if line.strip().lower() == "q":
-                                    result = "QUIT"      # 'q' still quits over SSH
-                                    break
-                                # any other key (incl. ENTER) is ignored: live is wake-word-only
-                        data, _ = stream.read(chunk)
-                        audio = np.frombuffer(data, dtype=np.int16)
-                        if audio.ndim > 1:
-                            audio = audio.flatten()
-                        if rate != _SAMPLE_RATE:
-                            audio = self._to_16k(np, audio, rate)
-                        amp = int(np.max(np.abs(audio)))
-                        if amp > best_amp:
-                            best_amp = amp
-                        if amp < _SILENCE_FLOOR:                 # CPU guard: skip silence
-                            hits = 0
-                        else:
-                            scores = self._model.predict(audio)
-                            score = max(scores.values()) if scores else 0.0
-                            if score > best_score:
-                                best_score = score
-                            if score >= self.threshold:
-                                hits += 1
-                                if hits >= self.trigger_level:
-                                    log.info("wake: '%s' detected (score=%.2f)", self._label, score)
-                                    result = "WAKE"
-                                    break
-                            else:
+            while result is None:
+                # If another turn (e.g. an HTTP command) asked for the audio path, DROP the mic +
+                # audio_lock and wait until it's done -- else the listener holds audio_lock forever and
+                # that turn's TTS/earcons deadlock. (A real wake / 'q' exits this loop instead.)
+                if self._yield.is_set():
+                    self._yielded.set()
+                    while self._yield.is_set():
+                        time.sleep(0.05)
+                    self._yielded.clear()
+                    self._model.reset()
+                    hits = 0
+                # Hold audio_lock while the stream is open: the wake mic must not be live while Piper or an
+                # earcon plays (self-trigger defense). It's dropped above whenever another turn asks (yield).
+                with audio_lock:
+                    with sd.InputStream(samplerate=rate, channels=1, dtype="int16",
+                                        blocksize=chunk, device=self._device) as stream:
+                        if not logged:
+                            # Log the resolved audio path once: "capture 44100->16000Hz resampled" vs the
+                            # threshold/silence_floor is the first thing to check when a wake won't fire.
+                            log.info("wake: listening for '%s' on device=%s (capture %dHz%s, chunk=%d, "
+                                     "threshold=%.2f, silence_floor=%d)%s", self._label,
+                                     self._device if self._device is not None else "default", rate,
+                                     f"->{_SAMPLE_RATE}Hz resampled" if rate != _SAMPLE_RATE else "",
+                                     chunk, self.threshold, _SILENCE_FLOOR,
+                                     "" if watch_stdin else " [headless]")
+                            logged = True
+                        while True:
+                            if self._yield.is_set():
+                                break   # drop audio_lock + the stream so the waiting turn can play
+                            if watch_stdin:
+                                import select
+                                r, _, _ = select.select([sys.stdin], [], [], 0)
+                                if r:
+                                    line = sys.stdin.readline()
+                                    if line == "":
+                                        # EOF: the terminal went away (SSH logout under a detached run).
+                                        # select() would report readable forever -- stop watching stdin.
+                                        log.info("wake: stdin closed -- continuing wake-word-only")
+                                        watch_stdin = False
+                                        continue
+                                    if line.strip().lower() == "q":
+                                        result = "QUIT"      # 'q' still quits over SSH
+                                        break
+                                    # any other key (incl. ENTER) is ignored: live is wake-word-only
+                            data, _ = stream.read(chunk)
+                            audio = np.frombuffer(data, dtype=np.int16)
+                            if audio.ndim > 1:
+                                audio = audio.flatten()
+                            if rate != _SAMPLE_RATE:
+                                audio = self._to_16k(np, audio, rate)
+                            amp = int(np.max(np.abs(audio)))
+                            if amp > best_amp:
+                                best_amp = amp
+                            if amp < _SILENCE_FLOOR:                 # CPU guard: skip silence
                                 hits = 0
-                        # Periodic tuning read-out -- only for windows where someone actually spoke
-                        # (so a silent room doesn't spam the log); resets each window.
-                        if time.time() >= next_report:
-                            if best_amp >= _SILENCE_FLOOR:
-                                log.info("wake: still listening -- best score=%.2f, loudest=%d over the "
-                                         "last ~15s (threshold=%.2f). Lower ROBOT_WAKEWORD_THRESHOLD to "
-                                         "wake more easily; raise it if it false-fires.",
-                                         best_score, best_amp, self.threshold)
-                            best_score = 0.0
-                            best_amp = 0
-                            next_report = time.time() + 15.0
+                            else:
+                                scores = self._model.predict(audio)
+                                score = max(scores.values()) if scores else 0.0
+                                if score > best_score:
+                                    best_score = score
+                                if score >= self.threshold:
+                                    hits += 1
+                                    if hits >= self.trigger_level:
+                                        log.info("wake: '%s' detected (score=%.2f)", self._label, score)
+                                        result = "WAKE"
+                                        break
+                                else:
+                                    hits = 0
+                            # Periodic tuning read-out -- only for windows where someone actually spoke
+                            # (so a silent room doesn't spam the log); resets each window.
+                            if time.time() >= next_report:
+                                if best_amp >= _SILENCE_FLOOR:
+                                    log.info("wake: still listening -- best score=%.2f, loudest=%d over the "
+                                             "last ~15s (threshold=%.2f). Lower ROBOT_WAKEWORD_THRESHOLD to "
+                                             "wake more easily; raise it if it false-fires.",
+                                             best_score, best_amp, self.threshold)
+                                best_score = 0.0
+                                best_amp = 0
+                                next_report = time.time() + 15.0
         except Exception as e:
             log.warning("wake listen failed (%s) -- live has no ENTER fallback, stopping.", e)
             return "QUIT"
