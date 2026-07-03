@@ -33,3 +33,6 @@ __pycache__/
 # claude-mem writes session context into CLAUDE.md files — never commit them
 # (a deliberate root CLAUDE.md, if ever wanted, can still be added with `git add -f`)
 **/CLAUDE.md
+
+# Scratch implementation plan (working notes; not part of the shipped repo)
+/PLAN.md
