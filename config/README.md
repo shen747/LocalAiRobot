@@ -111,6 +111,7 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_OBSTACLE_CM` | `30` | FORWARD motion is cut when the front beam reads closer than this. |
+| `ROBOT_OBSTACLE_DEBOUNCE` | `3` | Consecutive close/failed front reads before a move **aborts** — rides out gpiozero's occasional garbage frame (even negative cm) under load. `1` = old behaviour. Each frame still holds neutral, so it never drives while unsure. |
 | `ROBOT_TRIG_PIN` | `23` | Front sensor **TRIG** (BCM GPIO number). |
 | `ROBOT_ECHO_PIN` | `24` | Front sensor **ECHO** (BCM; HC-SR04**P** ECHO is 3.3 V — a bare HC-SR04 needs a divider). |
 

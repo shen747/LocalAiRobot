@@ -163,6 +163,10 @@ class RobotDriver:
         # --- Obstacle sensing: forward FORWARD-cut gate + side-awareness (semi-hex 3-sensor array) ---
         self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD)
         self.side_obstacle_cm = _envf("ROBOT_SIDE_OBSTACLE_CM", 25.0)  # explore steering-avoid
+        # gpiozero's software-timed echo can jitter ONE garbage frame (even a NEGATIVE cm) under the 20Hz
+        # loop's CPU load. Require this many CONSECUTIVE close/failed reads before ABORTING a move, so one
+        # spurious frame can't kill a drive. Each frame still holds neutral, so it never drives while unsure.
+        self.obstacle_debounce = max(1, _envi("ROBOT_OBSTACLE_DEBOUNCE", 3))
         trig = _envi("ROBOT_TRIG_PIN", 23)
         echo = _envi("ROBOT_ECHO_PIN", 24)
         left_trig = _envi("ROBOT_LEFT_TRIG_PIN", 5)
@@ -183,6 +187,7 @@ class RobotDriver:
         self._log_throttle = None
         self._log_steer = None
         self._gate_blocked = False
+        self._gate_bad = 0            # consecutive FORWARD-gate close/failed reads (debounce vs sensor jitter)
 
         # --- Locks: _io serializes every I2C write; _lock guards shared state. ---
         self._io = threading.Lock()
@@ -354,7 +359,10 @@ class RobotDriver:
     def distance_cm(self, side="front"):
         sensor = self._sensors.get(side, self.sensor)
         try:
-            return sensor.distance * 100.0
+            cm = sensor.distance * 100.0
+            # gpiozero can jitter a NEGATIVE distance under load (physically impossible) -- normalise any
+            # such garbage to the -1.0 "read failed" sentinel so it's handled as a bad read, not an obstacle.
+            return cm if cm >= 0.0 else -1.0
         except Exception:
             return -1.0
 
@@ -475,17 +483,23 @@ class RobotDriver:
             if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
                 if drive == "FORWARD":
                     d = self.distance_cm()
-                    # Fail CLOSED: too close OR a failed read (-1.0) blocks FORWARD. (A dead/silent
-                    # sensor that saturates at max range still reads "clear" -- not distinguishable
-                    # in software from a genuinely open path; documented as a limitation.)
+                    # Fail CLOSED: too close OR a failed read (-1.0) HOLDS neutral immediately. But only
+                    # ABORT the move once the bad condition PERSISTS (obstacle_debounce frames) -- gpiozero's
+                    # software timing jitters an odd garbage frame under load, and one such frame must not
+                    # kill a drive. We never drive while unsure (out stays neutral on any bad read). A
+                    # dead/silent sensor that saturates at max range still reads "clear" -- not
+                    # distinguishable in software from a genuinely open path; documented as a limitation.
                     if d < self.obstacle_cm:
                         out = self.neutral
-                        if not self._gate_blocked:
-                            self._gate_blocked = True
-                            log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error)",
-                                     d, self.obstacle_cm)
-                        self._trip_obstacle(d)   # sets state STOP + fires callback
+                        self._gate_bad += 1
+                        if self._gate_bad >= self.obstacle_debounce:
+                            if not self._gate_blocked:
+                                self._gate_blocked = True
+                                log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error) "
+                                         "after %d frames", d, self.obstacle_cm, self._gate_bad)
+                            self._trip_obstacle(d)   # confirmed -> state STOP + fires callback
                     else:
+                        self._gate_bad = 0
                         self._gate_blocked = False
                         out = throttle
                 else:

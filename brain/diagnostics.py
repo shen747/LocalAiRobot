@@ -170,13 +170,18 @@ class Diag:
                         time.sleep(0.08)
                         reads.append(s.distance * 100.0)
                     no_echo = any("echo" in str(w.message).lower() for w in caught)
-                cur, lo = reads[-1], min(reads)
-                if no_echo:
+                # A WORKING sensor returns at least one REAL echo (< max range) across the ~0.8s window,
+                # even if a far/soft target (e.g. ~2 m) makes the odd ping miss (gpiozero then warns +
+                # returns max). So PASS on ANY valid reading; only a sensor that NEVER echoes is a failure.
+                # (This is why scripts/ultrasonic_sensor_probe.sh -- which just needs one good ping -- reads
+                # a sensor the old all-or-nothing 'any no-echo warning = fail' check wrongly flagged.)
+                valid = [r for r in reads if r < 395.0]
+                if valid:
+                    self.ok(label, f"reading {valid[-1]:.0f} cm")
+                elif no_echo:
                     self.bad(label, "NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring", DOC_SENS)
-                elif lo >= 395.0:
-                    self.ok(label, f"reading ~{cur:.0f} cm (max range -- aimed at open space)")
                 else:
-                    self.ok(label, f"reading {cur:.0f} cm")
+                    self.ok(label, f"reading ~{reads[-1]:.0f} cm (max range -- aimed at open space)")
             except Exception as e:
                 self.bad(label, f"read failed: {e}", DOC_SENS)
             finally:
