@@ -5,6 +5,7 @@
 # also halt it (your SSH session drops with it). The physical kill switch on the LiPo is the real safety net.
 #   (Attached to a foreground run_me.sh? plain Ctrl-C is enough -- and a 2nd Ctrl-C is now safe too.)
 set -uo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Match ONLY the brain's python process -- never an editor/grep that merely mentions the path
 # (e.g. `nano brain/main.py`). We trust the cmdline, not a PID number (those get recycled).
@@ -48,6 +49,30 @@ else
     wait_exit 4
   fi
   running && echo "   WARNING: a brain process is STILL alive." || echo "   stopped."
+fi
+
+# --- Release the GPIO too, not just the brain --------------------------------------------------------
+# run_diagnostics.sh (brain/diagnostics.py) and the probe scripts grab the SAME ultrasonic pins as the
+# brain. A diagnostics run that was Ctrl-C'd / suspended (Ctrl-Z) / left at a prompt stays ALIVE holding
+# those pins, so the next run fails with 'GPIO busy' even though no brain is running -- and the main.py
+# pattern above never matched it. Clear those stragglers so the GPIO is actually free.
+if pgrep -f 'python.*brain/diagnostics\.py' >/dev/null 2>&1; then
+  echo "Releasing GPIO: stopping a lingering diagnostics run (it still holds the ultrasonic pins)..."
+  pkill -CONT -f 'python.*brain/diagnostics\.py' 2>/dev/null || true   # wake a Ctrl-Z'd one so it can die
+  pkill -INT  -f 'python.*brain/diagnostics\.py' 2>/dev/null || true
+  sleep 1
+  pkill -KILL -f 'python.*brain/diagnostics\.py' 2>/dev/null || true
+fi
+# Catch-all: anything OF OURS (a stray probe, a wedged python) still holding a GPIO character device.
+# Non-sudo fuser sees your own processes (the brain runs as you), so there's no password prompt.
+if command -v fuser >/dev/null 2>&1; then
+  for pid in $(fuser /dev/gpiochip* 2>/dev/null | tr -s ' ' '\n'); do
+    [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] || continue
+    if tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "$REPO"; then
+      echo "   GPIO still held by PID $pid -- releasing it."
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
 fi
 
 pkill -x arecord 2>/dev/null || true   # a mid-flight 4s command recording, if any

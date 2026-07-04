@@ -27,6 +27,10 @@ fi
 
 # Re-apply the USB-speaker default + volume (USB audio volume resets across reboots) so the speaker check is
 # audible. --audio-only skips the config rewrite + sudo; best-effort (a laptop with no speaker just no-ops).
+# Free the hardware first: stop any running brain OR a lingering diagnostics/probe still holding the GPIO +
+# mic, or this LIVE run hits 'GPIO busy' / 'no input device'. shutdown.sh now releases the GPIO too.
+bash "$REPO/scripts/shutdown.sh" >/dev/null 2>&1 || true
+
 bash "$REPO/scripts/setup_audio.sh" --audio-only || true
 
 # Force LIVE hardware: a stray ROBOT_DRY_RUN=1 / ROBOT_MOTORS_OFF=1 in the env must not fake the very
