@@ -192,7 +192,11 @@ def _gemini_generate(cfg, payload, timeout):
     if "temperature" in opts:
         gen["temperature"] = opts["temperature"]
     if "num_predict" in opts:
-        gen["maxOutputTokens"] = opts["num_predict"]
+        # Local num_predict (e.g. 220) is tuned for the small LOCAL models and is FAR too low for Gemini
+        # 'thinking' models (e.g. gemini-*-flash): the reasoning tokens burn that whole budget and the JSON
+        # gets truncated to a preamble ("Here is the JSON..."). Floor it high so the structured reply always
+        # has room to finish thinking AND emit the object.
+        gen["maxOutputTokens"] = max(int(opts["num_predict"]), 8192)
     fmt = payload.get("format")
     if isinstance(fmt, dict):            # vision passes a JSON schema; text passes "json" (skipped)
         schema = _to_gemini_schema(fmt)
