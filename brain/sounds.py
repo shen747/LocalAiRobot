@@ -41,6 +41,8 @@ _CATEGORY_DIR = {
     "wake_ack": "wake_word_ack",
     "ack": "ack_sounds",
     "thinking": "thinking_sounds",
+    "thinking_still": "thinking_still_sounds",   # re-cues after the first 'thinking' one ("still...")
+    "remote_ack": "remote_ack_sounds",           # a phone/HTTP command just arrived (excuse-me cue)
     "error": "error_sounds",
 }
 
@@ -92,13 +94,17 @@ class Sounds:
         threading.Thread(target=self._play_locked, args=(wav,), daemon=True).start()
 
     # ---------- thinking loop ----------
-    def start_thinking(self):
-        """Begin the 'thinking' loop in the background (idempotent). Lead-in delay keeps fast
-        turns silent. Call stop_thinking() before the first say() of the turn."""
+    def start_thinking(self, lead_ms=None, repeat_s=None):
+        """Begin the 'thinking' loop in the background (idempotent). `lead_ms`/`repeat_s` override the
+        env defaults for THIS turn -- main.py passes backend-aware values (remote: long lead + play
+        once; local: quick lead + re-cue). Lead-in delay keeps fast turns silent. Call stop_thinking()
+        before the first say() of the turn."""
         if not self.enabled or not self._cat_enable.get("thinking", False):
             return
         if self._thinking.is_set():
             return
+        lead = self._lead_ms if lead_ms is None else int(lead_ms)
+        repeat = self._repeat_s if repeat_s is None else int(repeat_s)
         # Fresh Event per session: a later start_thinking() installs a NEW event object, so a
         # superseded loop thread that's still finishing a clip watches its OWN (now-cleared) event
         # and exits -- it can never be "rescued" back to life by the next session re-arming a
@@ -108,10 +114,10 @@ class Sounds:
         ev.set()
         self._thinking = ev
         if self._log_only:
-            log.info("SOUND -> thinking loop start")
+            log.info("SOUND -> thinking loop start (lead=%dms, repeat=%ds)", lead, repeat)
             return
         self._thinking_thread = threading.Thread(
-            target=self._thinking_loop, args=(ev,), daemon=True)
+            target=self._thinking_loop, args=(ev, lead, repeat), daemon=True)
         self._thinking_thread.start()
 
     def stop_thinking(self):
@@ -126,17 +132,23 @@ class Sounds:
         self.stop_thinking()
 
     # ---------- internals ----------
-    def _thinking_loop(self, ev):
+    def _thinking_loop(self, ev, lead_ms, repeat_s):
         # `ev` is THIS session's event (not self._thinking) -- see start_thinking(). The whole loop
         # watches `ev`, so once it's cleared this thread exits for good regardless of later sessions.
-        # Lead-in: stay quiet so a cache-warm fast turn never triggers a cue (reference does 0.5s).
-        if self._wait_or_stopped(ev, self._lead_ms / 1000.0):
+        # Lead-in: stay quiet so a fast turn never triggers a cue (remote passes a long lead so a quick
+        # reply is silent; local passes ~0.5s).
+        if self._wait_or_stopped(ev, lead_ms / 1000.0):
             return
         count = 0
         while ev.is_set():
-            wav = self._pick("thinking")
+            # First cue from 'thinking'; every re-cue from 'thinking_still' (the "still..." set) so a
+            # long think escalates ("Let me think" -> "Still working on it") instead of repeating.
+            category = "thinking"
+            if count >= 1 and self._cat_enable.get("thinking_still", True):
+                category = "thinking_still"
+            wav = self._pick(category) or (self._pick("thinking") if category != "thinking" else None)
             if not wav:
-                # no thinking assets present -> don't busy-spin, just idle until stopped
+                # no assets present -> don't busy-spin, just idle until stopped
                 if self._wait_or_stopped(ev, 0.5):
                     return
                 continue
@@ -146,13 +158,12 @@ class Sounds:
                     return
                 self._aplay(wav)
             count += 1
-            # Re-cue only after a real interval so a spoken cue can't machine-gun. 0 = play ONCE then
-            # stay silent (the thinking FACE is the ongoing proof-of-life). The log makes the cadence
-            # auditable -- a runaway loop would show as cue #2, #3, ... in quick succession.
-            once = self._repeat_s <= 0
-            log.info("thinking cue #%d played -- %s", count,
-                     "once; silent until the reply" if once else f"re-cue in {self._repeat_s:.0f}s if still busy")
-            if self._wait_or_stopped(ev, 86400.0 if once else self._repeat_s):
+            # Re-cue only after a real interval so a spoken cue can't machine-gun. repeat_s <= 0 = play
+            # ONCE then stay silent (remote uses this; the thinking FACE is the ongoing proof-of-life).
+            once = repeat_s <= 0
+            log.info("thinking cue #%d played (%s) -- %s", count, category,
+                     "once; silent until the reply" if once else f"re-cue in {repeat_s:.0f}s if still busy")
+            if self._wait_or_stopped(ev, 86400.0 if once else repeat_s):
                 return
 
     def _wait_or_stopped(self, ev, secs):

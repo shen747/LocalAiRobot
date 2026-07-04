@@ -135,10 +135,18 @@ else:
 PY
 
 # Earcon folders for the spoken ack/greeting/thinking/error cues. The WAVs are generated on your PC with
-# Piper and committed (see sounds/README.md), so a fresh clone already has them; this just makes sure the
-# folders exist. An empty folder is a silent no-op.
+# Piper and committed (see sounds/README.md), so a fresh clone already has them; this makes sure the folders
+# exist AND -- since Piper is installed above -- synthesizes any MISSING cues as a safety net (it never
+# overwrites a committed WAV; only --force would). An empty folder is a silent no-op.
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/wake_word_ack" "${REPO}/sounds/ack_sounds" \
-         "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/error_sounds"
+         "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/thinking_still_sounds" \
+         "${REPO}/sounds/remote_ack_sounds" "${REPO}/sounds/error_sounds"
+if [ -x "${H}/piper/piper/piper" ] && [ -f "${H}/piper/${VOICE}.onnx" ]; then
+  echo "   synthesizing any MISSING earcons with Piper (committed ones are kept)..."
+  bash "${REPO}/scripts/generate_sounds.sh" || echo "   (earcon generation skipped/failed -- committed WAVs still ship)"
+else
+  echo "   (Piper not found at ~/piper -- skipping earcon generation; committed WAVs still ship)"
+fi
 
 # Fill YOUR_USER in config/robot.env with the current Linux user -- whisper (STT) + piper (TTS) run from
 # these exact /home/<user>/... paths. Idempotent: once replaced there's no YOUR_USER left (re-run = no-op).

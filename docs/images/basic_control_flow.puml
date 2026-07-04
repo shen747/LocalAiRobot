@@ -55,7 +55,7 @@ rectangle "Camera" as cam <<data>>
 rectangle "Vision\n(describes what it sees)" as vision <<model>>
 
 ' ---------- 4. ACT (orange = control, red = motors) ----------
-rectangle "Explore / find loop\n(stop · look · small step)" as explore <<proc>>
+rectangle "Explore / find loop\n(agentic: look · decide · gated step)" as explore <<proc>>
 rectangle "Ultrasonic sensors\n(front / left / right)" as sensors <<data>>
 rectangle "Motion control\n(stops if something is < 30 cm ahead)" as motion <<proc>>
 rectangle "Servo Driver" as servodrv <<io>>

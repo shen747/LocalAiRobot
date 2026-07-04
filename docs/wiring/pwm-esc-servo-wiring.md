@@ -26,13 +26,15 @@ timing while it's busy running the LLM, but the PCA9685 never misses a beat. Tha
 
 ## Overview
 
-Two power domains — **never bridge their positives, but tie all grounds into one common bus**:
+One **3S LiPo** powers everything through two branches — **feed the Pi only via the UBEC, never the LiPo
+direct; tie all grounds into one common bus**:
 
-- **Motor:** LiPo → kill switch → ESC → motor. The ESC's **7.4 V BEC** also feeds the PCA9685 **V+ rail**,
-  which powers the servo (⚠️ 7.4 V — see the servo-voltage note in step 2).
-- **Brain:** Pi 5 → PCA9685 **logic** (3.3 V) + I²C.
+- **Drive:** LiPo → kill switch → ESC → motor. The ESC's **BEC** also feeds the PCA9685 **V+ rail**, which
+  powers the servo (⚠️ BEC voltage = servo voltage — see the servo-voltage note in step 2).
+- **Pi:** LiPo → kill switch → **ZTW UBEC (5–6 V) → the Pi's UPS input** (18650s = backup) → Pi 5 → PCA9685
+  **logic** (3.3 V) + I²C.
 
-PWM only registers if **Pi GND ↔ PCA9685 GND ↔ ESC GND are common**.
+PWM only registers if **Pi GND ↔ PCA9685 GND ↔ ESC GND ↔ UBEC GND are common**.
 
 ![Wiring overview](images/wiring-overview.png)
 <!-- render diagrams/wiring-overview.puml -> images/wiring-overview.png -->

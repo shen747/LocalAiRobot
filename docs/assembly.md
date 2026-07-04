@@ -202,21 +202,26 @@ disconnected. **First read Phase 2** so you don't bridge the power domains.
 
 ---
 
-## Phase 2 — The two power domains (read before you wire)
+## Phase 2 — Power: one 3S LiPo, two rails (read before you wire)
 
-**Never bridge the two batteries.** But **do** tie all the *grounds* together, or the Pi's PWM signals
-won't register at the ESC/servo.
+**One 3S LiPo feeds everything** through two branches: the **ESC** (drive motor + a BEC for the servo) and a
+**ZTW UBEC step-down (5–6 V) → the Pi's UPS input** (the UPS 18650s stay as a backup buffer). The LiPo reaches
+the Pi **only through the UBEC — never wire the LiPo straight to the Pi.** **Do** tie all the *grounds*
+together, or the Pi's PWM signals won't register at the ESC/servo.
 
-![Two isolated power domains: a 2S 7.4V LiPo powers the ESC + drive motor (motor domain); a UPS HAT - or the 27W PSU for bench bring-up - powers the Raspberry Pi 5 + Active Cooler (brain domain), which also drives the Pi Camera V2 NoIR over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors. The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC BEC. The two battery positives are never bridged; all grounds are common across Pi, PCA9685 and ESC.](images/assembly.png)
+![One 3S 11.1V LiPo powers everything: an ESC branch (drive motor + a BEC for the servo) and a ZTW UBEC step-down (5-6V) feeding the Raspberry Pi 5's UPS HAT input (2x 18650 backup) + Active Cooler; the Pi drives the Arducam IMX519 autofocus camera over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors. The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC BEC. All grounds are common across Pi, PCA9685, ESC and UBEC.](images/assembly.png)
 
-For the full picture — where the domains *legitimately* meet (shared ground + the ESC **BEC** feeding the
-PCA9685 V+ rail and the steering servo):
+For the full picture — the shared ground, the ESC **BEC** feeding the PCA9685 V+ rail and the steering servo,
+and the **UBEC → UPS → Pi** branch:
 
-![Detailed power: 2S 7.4V LiPo -> ESC -> drive motor, with the ESC BEC feeding the PCA9685 V+ rail + DS3225 steering servo (servo power stays inside the motor domain); the UPS HAT - or 27W PSU on the bench - powers the Raspberry Pi 5 + Active Cooler, which provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Pi Camera V2 NoIR (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground, while the two battery positives are never bridged.](images/power-domains.png)
+![Detailed power: one 3S 11.1V LiPo -> ESC -> drive motor, with the ESC BEC feeding the PCA9685 V+ rail + DS3225 steering servo; a second branch taps the LiPo to a ZTW UBEC step-down (5-6V) that feeds the Pi's UPS HAT input (2x 18650 backup), which powers the Raspberry Pi 5 + Active Cooler; the Pi provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Arducam IMX519 autofocus camera (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground.](images/power-domains.png)
 
 - ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC — pick the right one rather than solder.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained inference thermal-throttles without it.
-- ✅ A **LiPo balance charger** is required for the 2S pack; never charge LiPo on a dumb charger.
+- ✅ A **LiPo balance charger** is required for the 3S pack; never charge LiPo on a dumb charger.
+- ⚡ **UBEC → Pi.** A ZTW UBEC steps the 3S LiPo down to 5–6 V (jumper) to feed the Pi's **UPS input** — set
+  the jumper to the UPS's rated input (usually 5 V) and size the UBEC for the Pi 5 (~5 A). Tap it off the
+  LiPo **after** the kill switch, so the switch still cuts drive (the UPS keeps the Pi up for a clean stop).
 - 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach — your last-resort stop
   if the software dies (there's no hardware watchdog). See the safety note in the appendix.
 - ⚡ **BEC voltage = servo voltage.** The ESC's BEC feeds the V+ rail *and* the steering servo. This build's
@@ -368,11 +373,12 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
    you've found the servo's center in calibration, then attach it pointing straight.
 3. Build the brain stack: Pi 5 + Active Cooler (+ UPS HAT later — Phase 9) on a 3D-printed/cut deck on the
    frame rails. Keep fan airflow clear.
-4. Mount the **ESC**, **PCA9685**, and **LiPo**; route wiring clear of the driveshafts + steering links.
-   Keep the mic away from the cooler fan. **Now make the motor-domain connections deferred in Phase 3** —
-   ESC → motor, ESC 3-wire → PCA9685 **ch0**, **steering servo → ch1**, and **LiPo → ESC through your
-   kill switch** — pin-by-pin in the **[wiring guide](wiring/pwm-esc-servo-wiring.md)**. Keep all grounds
-   common; never bridge the battery positives (Phase 2).
+4. Mount the **ESC**, **PCA9685**, **UBEC**, and **LiPo**; route wiring clear of the driveshafts + steering
+   links. Keep the mic away from the cooler fan. **Now make the power connections deferred in Phase 3** —
+   ESC → motor, ESC 3-wire → PCA9685 **ch0**, **steering servo → ch1**, **LiPo → ESC through your kill
+   switch**, and the **LiPo → UBEC → the Pi's UPS input** (tap after the kill switch) — pin-by-pin in the
+   **[wiring guide](wiring/pwm-esc-servo-wiring.md)**. Keep all grounds common; feed the Pi **only via the
+   UBEC**, never the LiPo direct (Phase 2).
 5. Mount the **3-sensor plate** across the front (forward + ~45–60° left/right), clear of the wheels and
    roughly level. Mount the **camera** forward-facing near the sensors, and the **face panel** where you
    want the robot to "look at" you. Route the ribbons + USB cables away from the driveshafts.

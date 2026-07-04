@@ -162,11 +162,14 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_EXPLORE_TRIGGERS` | `explore,look around,have a look,…,head towards` | Comma-separated phrases that must appear in the transcript for EXPLORE/FIND to run (else demoted to DRIVE). **Quote the value.** |
-| `ROBOT_EXPLORE_MAX_ITERS` | `6` | FIND: max look→step iterations before giving up. |
-| `ROBOT_EXPLORE_STEP_MS` | `900` | FIND: forward step duration toward a sighted target. |
-| `ROBOT_SCAN_STEP_MS` | `700` | Arc-scan nudge when the target/scene isn't framed yet. |
-| `ROBOT_EXPLORE_SPEED` | `30` | Throttle 0–100 used during explore/find (kept low). |
-| `ROBOT_EXPLORE_SCANS` | `3` | EXPLORE ("look around"): number of arc-scan looks. |
+| `ROBOT_EXPLORE_MAX_ITERS` | `12` | **Local** agentic EXPLORE + FIND: max look→step iterations before giving up. |
+| `ROBOT_EXPLORE_MAX_ITERS_REMOTE` | `24` | **Remote** EXPLORE: 2× (Gemini/any remote is faster + smarter). |
+| `ROBOT_EXPLORE_MAX_SECONDS` | `60` | **Local** EXPLORE: wall-clock cap (whichever cap hits first ends it). |
+| `ROBOT_EXPLORE_MAX_SECONDS_REMOTE` | `120` | **Remote** EXPLORE: 2×. |
+| `ROBOT_EXPLORE_NARRATE` | `1` | EXPLORE: speak what it notices each step (`0` = silent, just store to memory). |
+| `ROBOT_EXPLORE_STEP_MS` | `900` | Forward step duration per move (EXPLORE + FIND toward a sighted target). |
+| `ROBOT_SCAN_STEP_MS` | `700` | FIND: arc-scan nudge when the target isn't framed yet. |
+| `ROBOT_EXPLORE_SPEED` | `15` | Throttle 0–100 used during explore/find (kept low). |
 | `ROBOT_FIND_CONFIDENCE` | `0.55` | Minimum vision confidence to act on a sighting. |
 | `ROBOT_APPROACH_CM` | `40` | Treat the target as reached when the forward beam is closer than this. |
 
@@ -176,6 +179,7 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 |---|---|---|
 | `ROBOT_MEMORY_DB` | `~/.localairobot/memory.db` | SQLite file holding sightings + taught people/things (survives reboots). |
 | `ROBOT_MEMORY_MAX_CONTEXT` | `8` | Recent distinct objects summarised back into the prompt each turn. |
+| `ROBOT_MEMORY_MAX_SCENES` | `3` | Recent scene **descriptions** (from agentic explore) summarised back into the prompt / shown by `rag.sh --scenes`. |
 
 Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/rag.sh` (taught facts),
 `--seen` (sightings), `--all`, `--forget <name>`, `--clear-facts`, or `--query "<SQL>"` for anything else.
@@ -217,8 +221,12 @@ WAV folder layout + format tips: [`sounds/README.md`](../sounds/README.md).
 | `ROBOT_SOUNDS_DEVICE` | *(empty)* | **Earcons only** — the **voice** (Piper) uses the ALSA *default*, so route that via `~/.asoundrc`. USB speaker by name: `plughw:CARD=<id>,DEV=0`. Empty = default. |
 | `ROBOT_SOUNDS_GREETING` | `1` | Play once on boot/arm (audible "stack is up" — vital headless). |
 | `ROBOT_SOUNDS_WAKE_ACK` | `1` | "Yes?/Hi" the instant the **wake word** fires (`wake_word_ack/`) — responding to being summoned, *before* it records your command. |
-| `ROBOT_SOUNDS_ACK` | `1` | "Got it/On it" after a **spoken command** is transcribed and accepted (`ack_sounds/`). |
-| `ROBOT_SOUNDS_THINKING` | `1` | Looped spoken cue **while** the model runs (proof-of-life on slow vision). |
+| `ROBOT_SOUNDS_ACK` | `1` | "Got it/On it/Okay" the instant a **spoken command** is accepted (`ack_sounds/`) — always immediate, both backends. |
+| `ROBOT_SOUNDS_REMOTE_ACK` | `1` | "Got a remote command…" when a **phone/HTTP** command lands (`remote_ack_sounds/`) — the robot audibly excuses itself mid-chat. |
+| `ROBOT_SOUNDS_THINKING` | `1` | The **first** processing cue while the model runs (`thinking_sounds/`, picked at random). |
+| `ROBOT_SOUNDS_THINKING_STILL` | `1` | The **re-cues** after the first, each repeat interval (`thinking_still_sounds/`, the "still…" set). |
 | `ROBOT_SOUNDS_ERROR` | `1` | On obstacle / LLM error (fire-and-forget; never delays the stop). |
-| `ROBOT_THINKING_LEAD_MS` | `500` | Stay silent this long before the first thinking cue (fast turns). |
-| `ROBOT_THINKING_REPEAT_S` | `20` | Seconds between thinking cues while the model runs. **`0` = play it once** (the face shows it's still thinking). Stops a spoken "Let me think" from repeating back-to-back over a long think. |
+| `ROBOT_THINKING_LEAD_MS` | `500` | **Local:** stay silent this long before the first thinking cue. |
+| `ROBOT_THINKING_REPEAT_S` | `10` | **Local:** seconds between re-cues (the "still…" set). **`0` = play once.** |
+| `ROBOT_THINKING_LEAD_REMOTE_MS` | `4000` | **Remote:** silent this long first, so a fast Gemini reply plays **no** cue at all. |
+| `ROBOT_THINKING_REPEAT_REMOTE_S` | `0` | **Remote:** `0` = if a cue fires on a slow turn, play it just **once**. |

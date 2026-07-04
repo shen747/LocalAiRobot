@@ -33,6 +33,16 @@ The robot **speaks a reply**, and curl prints it back:
 Try `{"text":"go forward"}` (wheels off / clear space) — it crawls forward, with all the usual failsafes
 (obstacle gate, duration cap, kill switch). Wrong/missing token → `401`; empty text → `400`.
 
+### Stop a running explore / behaviour
+An agentic **explore** (or any autonomous behaviour) can be interrupted from your phone via a separate
+`/stop` route — it does **not** wait for the current turn, so it works even *while* explore is busy:
+```bash
+curl -H "X-Robot-Token: <TOKEN>" -X POST http://LocalAiRobot-Jarvis.local:8080/stop
+```
+It trips the abort + neutralises the ESC, replying `{"stopped": true}` if something was running. Make a
+second HTTP-Shortcut ("Stop Jarvis") pointing at `/stop` (same token, no body) for a one-tap stop. You can
+also just say the wake word — *"hey jarvis"* — to stop it, or Ctrl-C over SSH.
+
 ## Android — one-time shortcut (HTTP Shortcuts app)
 1. Install **HTTP Shortcuts** (free, open-source — F-Droid or Play Store).
 2. **Create Shortcut** → give it a name (e.g. "Tell Jarvis").

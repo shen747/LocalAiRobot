@@ -45,6 +45,23 @@ DESCRIBE_SCHEMA = {
     "required": ["description", "objects"],
 }
 
+# Agentic EXPLORE: ONE multimodal call per step returns the scene AND the next move + whether to stop, so
+# a smart (remote) model can steer the exploration itself. move/steer are enum-constrained onto the driver;
+# the ultrasonic gate in driver.command is still the safety authority -- this only *suggests* a move.
+EXPLORE_STEP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "objects": {"type": "array", "items": {"type": "string"}},
+        "move": {"type": "string", "enum": ["FORWARD", "STOP"]},
+        "steer": {"type": "string", "enum": ["LEFT", "CENTER", "RIGHT"]},
+        "speak": {"type": "string"},
+        "done": {"type": "boolean"},
+        "reason": {"type": "string"},
+    },
+    "required": ["description", "move", "done"],
+}
+
 
 def _vision_timeout():
     try:
@@ -157,3 +174,60 @@ def describe(cfg, jpeg_bytes):
     except Exception as e:
         log.warning("vision DESCRIBE failed (%s)", e)
         return {"description": "", "objects": []}
+
+
+def _normalize_step(obj):
+    move = str(obj.get("move") or "FORWARD").upper()
+    if move not in ("FORWARD", "STOP"):
+        move = "FORWARD"
+    steer = str(obj.get("steer") or "CENTER").upper()
+    if steer not in ("LEFT", "CENTER", "RIGHT"):
+        steer = "CENTER"
+    return {
+        "description": str(obj.get("description") or ""),
+        "objects": [str(o) for o in (obj.get("objects") or []) if o],
+        "move": move,
+        "steer": steer,
+        "speak": str(obj.get("speak") or ""),
+        "done": bool(obj.get("done")),
+        "reason": str(obj.get("reason") or ""),
+    }
+
+
+def explore_step(cfg, jpeg_bytes, goal="", memory_summary="", distances=None):
+    """One agentic explore step: given the current frame + memory + sensor distances, return the scene
+    AND the next move -> {description, objects[], move(FORWARD|STOP), steer(LEFT|CENTER|RIGHT), speak,
+    done, reason}. Never raises: on any error (or no frame) returns a fail-safe STOP+done so the loop ends."""
+    distances = distances or {}
+    fmt = lambda v: f"{v:.0f}" if isinstance(v, (int, float)) else "?"
+    if not jpeg_bytes:
+        fake = _parse_fake()
+        if fake:
+            return _normalize_step({
+                "description": f"(dry-run) I can see a {fake['object']}.",
+                "objects": [fake["object"]], "move": "FORWARD",
+                "steer": (fake.get("horizontal") or "center").upper(),
+                "speak": f"I can see a {fake['object']}.", "done": False, "reason": "fake vision"})
+        return {"description": "(dry-run) no camera frame.", "objects": [], "move": "STOP",
+                "steer": "CENTER", "speak": "", "done": True, "reason": "no camera"}
+    prompt = (
+        "You are the driver AND the eyes of a small RC car exploring a room. Look at the image and choose "
+        "the SINGLE next move. Reply with JSON only.\n"
+        f"Goal: {goal or 'look around and learn what is in this space'}.\n"
+        f"Already seen (memory): {memory_summary or 'nothing yet'}.\n"
+        f"Ultrasonic distance to obstacles, cm: front={fmt(distances.get('front'))}, "
+        f"left={fmt(distances.get('left'))}, right={fmt(distances.get('right'))}.\n"
+        "Give a one-sentence description and the notable objects. Then pick move (FORWARD to advance, STOP "
+        "to hold position) and steer (LEFT/CENTER/RIGHT) toward something interesting or an OPEN path -- do "
+        "not steer into a close obstacle. Set done=true once you have seen enough of the space, it repeats, "
+        "or there is nowhere useful to go. Put a short spoken remark about what you notice in speak."
+    )
+    try:
+        step = _normalize_step(_ollama_image(cfg, prompt, jpeg_bytes, EXPLORE_STEP_SCHEMA))
+        log.info("vision EXPLORE_STEP: move=%s steer=%s done=%s | %s",
+                 step["move"], step["steer"], step["done"], step["description"][:80])
+        return step
+    except Exception as e:
+        log.warning("vision EXPLORE_STEP failed (%s) -> STOP + done", e)
+        return {"description": "", "objects": [], "move": "STOP", "steer": "CENTER",
+                "speak": "", "done": True, "reason": f"vision error: {e}"}

@@ -60,14 +60,27 @@ class _Handler(BaseHTTPRequestHandler):
     # ---- routes ----
     def do_GET(self):
         # Browser sanity check: GET the base URL to confirm the endpoint is up.
-        self._json(200, {"status": "LocalAiRobot ready", "post": "/speak (token required)"})
+        self._json(200, {"status": "LocalAiRobot ready", "post": "/speak or /stop (token required)"})
 
     def do_POST(self):
-        if urlparse(self.path).path != "/speak":
-            return self._json(404, {"error": "not found -- POST /speak"})
+        path = urlparse(self.path).path
+        if path not in ("/speak", "/stop"):
+            return self._json(404, {"error": "not found -- POST /speak or /stop"})
         if not self._authed():
-            log.warning("remote: rejected POST (bad/missing token) from %s", self.client_address[0])
+            log.warning("remote: rejected POST %s (bad/missing token) from %s", path, self.client_address[0])
             return self._json(401, {"error": "unauthorized (bad or missing token)"})
+        if path == "/stop":
+            # Emergency interrupt for a running autonomous behaviour (explore/find) or timed drive. This
+            # does NOT go through the command pipeline / turn_lock, so it works even WHILE an explore holds
+            # the lock -- it just trips the abort flag + neutralises the ESC. No body needed.
+            log.info("remote: STOP from %s", self.client_address[0])
+            stopped = False
+            try:
+                stopped = bool(self.server.on_stop()) if self.server.on_stop else False
+            except Exception as e:
+                log.warning("remote: stop failed: %s", e)
+            return self._json(200, {"status": "stopping" if stopped else "nothing running", "stopped": stopped})
+        # ---- /speak ----
         try:
             n = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
@@ -90,11 +103,12 @@ class _Handler(BaseHTTPRequestHandler):
 class RemoteServer:
     """Owns the HTTP server thread. start() to run, stop() to shut down cleanly."""
 
-    def __init__(self, port, token, on_command):
+    def __init__(self, port, token, on_command, on_stop=None):
         # Bind to 0.0.0.0 so the phone can reach it over Wi-Fi/hotspot (not just localhost).
         self._httpd = ThreadingHTTPServer(("0.0.0.0", int(port)), _Handler)
         self._httpd.token = str(token or "")
-        self._httpd.on_command = on_command          # = main.py handle_command(text, source=...)
+        self._httpd.on_command = on_command          # = main.py remote_command(text, source=...)
+        self._httpd.on_stop = on_stop                # = main.py on_stop() -> abort a running behaviour
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True, name="remote-http")
 
     def start(self):

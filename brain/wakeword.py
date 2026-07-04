@@ -85,6 +85,7 @@ class WakeWord:
         # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
         self._yield = threading.Event()
         self._yielded = threading.Event()
+        self._cancel = threading.Event()   # cancel_listen() sets it -> a listen in progress returns 'CANCELLED'
 
         model = os.path.expanduser(
             os.environ.get("ROBOT_WAKEWORD_MODEL", "~/LocalAiRobot/models/hey_richard.onnx"))
@@ -173,12 +174,19 @@ class WakeWord:
         """Let the listen loop re-open the mic after a pause_mic()."""
         self._yield.clear()
 
+    def cancel_listen(self):
+        """Break a listen in progress (it returns 'CANCELLED') -- used to stop the background voice-abort
+        listener when a behaviour ends. A fresh _listen() clears this flag at its start, so the normal
+        wake loop is unaffected afterwards."""
+        self._cancel.set()
+
     # ---------- internals ----------
     def _listen(self, audio_lock):
         import numpy as np
         import sounddevice as sd
 
         self._model.reset()
+        self._cancel.clear()                    # fresh listen; cancel_listen() sets it to break us out
         time.sleep(max(0.0, self.cooldown_s))   # don't re-wake on the tail of the last reply
         watch_stdin = sys.stdin.isatty()         # headless (systemd) has no TTY -> wake-only
         hits = 0
@@ -197,14 +205,20 @@ class WakeWord:
         logged = False
         try:
             while result is None:
+                if self._cancel.is_set():
+                    result = "CANCELLED"
+                    break
                 # If another turn (e.g. an HTTP command) asked for the audio path, DROP the mic +
                 # audio_lock and wait until it's done -- else the listener holds audio_lock forever and
-                # that turn's TTS/earcons deadlock. (A real wake / 'q' exits this loop instead.)
+                # that turn's TTS/earcons deadlock. (A real wake / 'q' / cancel exits this loop instead.)
                 if self._yield.is_set():
                     self._yielded.set()
-                    while self._yield.is_set():
+                    while self._yield.is_set() and not self._cancel.is_set():
                         time.sleep(0.05)
                     self._yielded.clear()
+                    if self._cancel.is_set():
+                        result = "CANCELLED"
+                        break
                     self._model.reset()
                     hits = 0
                 # Hold audio_lock while the stream is open: the wake mic must not be live while Piper or an
@@ -223,6 +237,9 @@ class WakeWord:
                                      "" if watch_stdin else " [headless]")
                             logged = True
                         while True:
+                            if self._cancel.is_set():
+                                result = "CANCELLED"
+                                break   # a behaviour ended -> stop the background voice-abort listener
                             if self._yield.is_set():
                                 break   # drop audio_lock + the stream so the waiting turn can play
                             if watch_stdin:

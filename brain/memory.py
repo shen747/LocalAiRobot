@@ -23,6 +23,13 @@ def _max_context():
         return 8
 
 
+def _max_scenes():
+    try:
+        return int(os.environ.get("ROBOT_MEMORY_MAX_SCENES", "3") or 3)
+    except ValueError:
+        return 3
+
+
 def _ago(seconds):
     s = max(0, int(seconds))
     if s < 60:
@@ -86,6 +93,18 @@ class Memory:
                     confidence=obs.get("confidence"), notes=obs.get("notes", ""),
                     distances=distances)
 
+    def record_scene(self, description, objects=None, distances=None):
+        """Record an agentic-explore look: the FULL scene description (a source='scene' row) PLUS one row
+        per named object -- so recent_scenes() can replay the rich descriptions a REMOTE run gathered for a
+        later LOCAL run to reuse, while context_string() still lists the individual objects."""
+        description = (description or "").strip()
+        if description:
+            self.record("scene", target=None, notes=description, distances=distances)
+        for o in (objects or []):
+            o = str(o).strip()
+            if o:
+                self.record("explore", target=o, visible=True, distances=distances)
+
     # ---------- user-taught facts (the "remember this person/thing" feature) ----------
     def remember_fact(self, name, fact="", description="", image_path=None):
         """Store a person/thing the user named. Non-critical: a write error is logged, not raised."""
@@ -140,9 +159,31 @@ class Memory:
                 break
         return ("Known people/things: " + "; ".join(parts) + ".") if parts else ""
 
+    def recent_scenes(self, n=None):
+        """Newest DISTINCT scene descriptions (source='scene' rows), for the prompt + rag.sh --scenes.
+        This is how a REMOTE explore's rich observations survive into a later offline/local session."""
+        n = n or _max_scenes()
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT notes, ts FROM observations WHERE source='scene' AND notes IS NOT NULL "
+                "AND notes != '' ORDER BY ts DESC LIMIT 200").fetchall()
+        seen, out = set(), []
+        for notes, _ts in rows:
+            key = (notes or "").strip().lower()[:80]
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(notes.strip())
+            if len(out) >= n:
+                break
+        return out
+
     def prompt_context(self, max_items=None):
-        """Combined LLM-prompt context: taught people/things + recently seen objects."""
-        return " ".join(p for p in (self.facts_string(), self.context_string(max_items)) if p)
+        """Combined LLM-prompt context: taught people/things + recently seen objects + recent scene
+        descriptions (so a LOCAL run reuses the rich scenes a REMOTE explore gathered)."""
+        scenes = self.recent_scenes()
+        scene_str = ("Recently explored: " + " | ".join(s[:160] for s in scenes)) if scenes else ""
+        return " ".join(p for p in (self.facts_string(), self.context_string(max_items), scene_str) if p)
 
     def context_string(self, max_items=None):
         """One-line rolling summary of recent distinct seen objects, for the LLM prompt.

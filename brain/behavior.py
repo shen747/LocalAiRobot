@@ -35,6 +35,12 @@ def _envf(key, default):
         return float(default)
 
 
+def _is_remote(cfg):
+    """True when a REMOTE model backend is configured (Gemini or any non-local) -- it's faster + smarter,
+    so agentic explore gets 2x the caps and near-silent per-step cues."""
+    return (cfg.get("ai_backend") or "local").lower() != "local"
+
+
 def _sleep(secs, aborted):
     end = time.monotonic() + secs
     while time.monotonic() < end:
@@ -100,33 +106,70 @@ def run_find(cfg, driver, cam, memory, face, say, snd, target, aborted=lambda: F
 
 
 def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False):
-    """Look around (coarse arc-scan), record what's seen to memory, and describe it. Returns objects."""
-    scans = max(1, _envi("ROBOT_EXPLORE_SCANS", 3))
-    scan_ms = _envi("ROBOT_SCAN_STEP_MS", 700)
-    speed = _envi("ROBOT_EXPLORE_SPEED", 30)
+    """AGENTIC look-around: each step the model sees the frame + memory + sensor distances and decides the
+    next move AND whether it's satisfied (vision.explore_step). Bounded by BACKEND-AWARE iteration + time
+    caps (2x on remote) and aborted() (HTTP /stop, wake word, or Ctrl-C). Every forward step is still
+    ultrasonic-gated by driver.command, and the car is held at NEUTRAL during each (slow) look. The full
+    scene descriptions are stored (memory.record_scene) so a later run reuses what this run learned.
+    Returns the distinct objects seen."""
+    remote = _is_remote(cfg)
+    if remote:
+        max_iters = max(1, _envi("ROBOT_EXPLORE_MAX_ITERS_REMOTE", 24))
+        max_secs = _envf("ROBOT_EXPLORE_MAX_SECONDS_REMOTE", 120)
+        think_lead, think_repeat = _envi("ROBOT_THINKING_LEAD_REMOTE_MS", 4000), 0
+    else:
+        max_iters = max(1, _envi("ROBOT_EXPLORE_MAX_ITERS", 12))
+        max_secs = _envf("ROBOT_EXPLORE_MAX_SECONDS", 60)
+        think_lead, think_repeat = _envi("ROBOT_THINKING_LEAD_MS", 500), _envi("ROBOT_THINKING_REPEAT_S", 10)
+    step_ms = _envi("ROBOT_EXPLORE_STEP_MS", 900)
+    speed = _envi("ROBOT_EXPLORE_SPEED", 15)
+    narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
     face.set_expression("exploring")
-    log.info("EXPLORE start (scans=%d)", scans)
-    seen, sweep = [], "LEFT"
-    for i in range(scans):
+    log.info("EXPLORE (agentic) start: backend=%s max_iters=%d max_secs=%.0f speed=%d",
+             "remote" if remote else "local", max_iters, max_secs, speed)
+    deadline = time.monotonic() + max_secs
+    seen, reason = [], "iteration cap"
+    for i in range(max_iters):
         if aborted():
+            reason = "aborted (stop)"
             break
-        driver.stop()                                  # neutral while the camera/LLM works
+        if time.monotonic() >= deadline:
+            reason = "time cap"
+            break
+        driver.stop()                                  # NEUTRAL while the (slow) camera + LLM step runs
         face.set_expression("capturing")
         frame = cam.capture_jpeg()
-        snd.start_thinking()
-        desc = vision.describe(cfg, frame)
+        snd.start_thinking(lead_ms=think_lead, repeat_s=think_repeat)
+        step = vision.explore_step(cfg, frame, goal="look around and learn what is in this space",
+                                   memory_summary=memory.context_string(), distances=driver.distances())
         snd.stop_thinking()
         face.set_expression("exploring")
-        for o in desc.get("objects", []):
-            memory.record("explore", target=o, visible=True, distances=driver.distances())
+        # RAG: store the FULL scene description + objects so a later (offline/local) run reuses it.
+        memory.record_scene(step.get("description", ""), step.get("objects", []), driver.distances())
+        for o in step.get("objects", []):
             if o.lower() not in (s.lower() for s in seen):
                 seen.append(o)
-        if i < scans - 1:
-            steer = sweep if not driver.side_blocked(sweep) else ("RIGHT" if sweep == "LEFT" else "LEFT")
-            driver.command("FORWARD", steer, speed, scan_ms)
-            _sleep(scan_ms / 1000.0 + 0.1, aborted)
-            sweep = "RIGHT" if sweep == "LEFT" else "LEFT"
+        if narrate and step.get("speak"):
+            face.set_expression("talking")
+            say(step["speak"])
+            face.set_expression("exploring")
+        if step.get("done"):
+            reason = "model satisfied"
+            break
+        if aborted():
+            reason = "aborted (stop)"
+            break
+        if step.get("move") == "STOP":
+            _sleep(0.4, aborted)                       # model wants to hold + look again; don't drive
+            continue
+        steer = step.get("steer") or "CENTER"
+        if steer in ("LEFT", "RIGHT") and driver.side_blocked(steer):
+            log.info("EXPLORE iter %d: side %s blocked -> CENTER", i, steer)
+            steer = "CENTER"
+        log.info("EXPLORE iter %d: FORWARD %s (%s)", i, steer, step.get("reason", "")[:60])
+        driver.command("FORWARD", steer, speed, step_ms)   # sensor-gated in the 20Hz control thread
+        _sleep(step_ms / 1000.0 + 0.1, aborted)
 
     driver.stop()
     face.set_expression("talking")
@@ -135,5 +178,5 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     else:
         say("I had a look around but I'm not sure what I'm seeing.")
     face.set_expression("idle")
-    log.info("EXPLORE done, objects=%s", seen)
+    log.info("EXPLORE (agentic) done (%s), objects=%s", reason, seen)
     return seen

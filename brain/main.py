@@ -261,6 +261,15 @@ def _as_int(value, default):
         return default
 
 
+def _short_error(e):
+    """A short, speakable one-liner from an exception, for the spoken error message. Collapses
+    whitespace/newlines and truncates so Piper doesn't read a giant technical string aloud."""
+    msg = " ".join(str(e).split())
+    if len(msg) > 140:
+        msg = msg[:140].rstrip() + "…"
+    return msg or e.__class__.__name__
+
+
 def _persist_env(key, value):
     """Write KEY=value into config/robot.env in place (preserving any trailing '# comment') or append it,
     like scripts/setup_audio.sh's set_kv. Used to save an auto-generated ROBOT_HTTP_TOKEN. Best-effort."""
@@ -306,9 +315,23 @@ def main():
         text = (text or "").strip()
         if not text:
             return
+        # During a behaviour the background voice-abort listener holds the mic + audio_lock; pause it so
+        # this narration can play (else speak() would block on audio_lock). No-op when not in a behaviour.
+        paused = False
+        if voice_abort_active.is_set():
+            try:
+                wake.pause_mic()
+                paused = True
+            except Exception:
+                pass
         fc.set_expression("talking")
         speak(cfg, text)
         fc.set_expression("idle")
+        if paused:
+            try:
+                wake.resume_mic()
+            except Exception:
+                pass
 
     def on_obstacle(distance_cm):
         print(f"Obstacle {distance_cm:.1f} cm ahead -> stopping")
@@ -323,11 +346,18 @@ def main():
             target=speak, args=(cfg, "Obstacle ahead. Stopping."), daemon=True
         ).start()
 
+    # Shared abort for autonomous behaviours (explore/find): tripped by HTTP /stop, the wake word during a
+    # behaviour (listener below), or Ctrl-C. behavior_active lets on_stop report whether anything is
+    # actually running. Cleared at the start of each behaviour so a stale /stop can't pre-abort the next.
+    behavior_abort = threading.Event()
+    behavior_active = threading.Event()
+    voice_abort_active = threading.Event()   # set while the background voice-abort listener runs (say() pauses the mic)
+
     def run_behavior(fn, *args):
-        # Run an autonomous behaviour with a graceful abort: while it runs, Ctrl-C sets an abort
-        # flag (honoured at the next look/step boundary) and returns to the prompt instead of
-        # killing the program. Any behaviour-internal error is contained, not fatal, and we always
-        # leave the ESC (Electronic Speed Controller) at neutral.
+        # Run an autonomous behaviour with a graceful abort: while it runs, Ctrl-C / HTTP /stop / the wake
+        # word set an abort flag (honoured at the next look/step boundary) and return to the prompt instead
+        # of killing the program. Any behaviour-internal error is contained, not fatal, and we always leave
+        # the ESC (Electronic Speed Controller) at neutral.
         ev = threading.Event()
         installed, prev = False, None
 
@@ -344,11 +374,36 @@ def main():
             installed = True
         except (ValueError, OSError):
             pass   # not the main thread -> Ctrl-C falls through to the outer handler (quits)
+        behavior_abort.clear()          # fresh run: ignore any earlier /stop
+        behavior_active.set()
+        # Voice abort: listen for the wake word in the BACKGROUND during the behaviour; "hey jarvis" trips
+        # on_stop(). Live + working wake word only (dry-run/no-model rely on HTTP /stop + Ctrl-C). say()
+        # pauses this mic (voice_abort_active) so the listener never records the robot's own narration.
+        listener = None
+        if wake.available and not wake.dry_run:
+            voice_abort_active.set()
+
+            def _voice_abort():
+                try:
+                    if wake.wait(audio_lock) == "WAKE":
+                        print("\n(wake word heard — stopping)")
+                        on_stop()
+                except Exception as e:
+                    log.debug("voice-abort listener error: %s", e)
+
+            listener = threading.Thread(target=_voice_abort, daemon=True, name="voice-abort")
+            listener.start()
         try:
-            fn(*args, aborted=ev.is_set)
+            # aborted() is honoured at every look/step boundary -- ev (Ctrl-C) OR the shared flag.
+            fn(*args, aborted=lambda: ev.is_set() or behavior_abort.is_set())
         except Exception as e:
             print(f"behaviour: {e}", file=sys.stderr)
         finally:
+            if listener is not None:
+                wake.cancel_listen()        # break the background listen -> it returns CANCELLED and exits
+                listener.join(timeout=3.0)
+                voice_abort_active.clear()
+            behavior_active.clear()
             driver.stop()
             fc.set_expression("idle")
             if installed:
@@ -357,10 +412,34 @@ def main():
                 except Exception:
                     pass
 
+    def on_stop():
+        """Interrupt a running behaviour / timed drive from OUTSIDE the turn (HTTP /stop, or the wake word
+        during a behaviour). Trips the abort flag AND neutralises the ESC immediately. Safe to call anytime;
+        returns whether a behaviour was actually running."""
+        active = behavior_active.is_set()
+        behavior_abort.set()
+        try:
+            driver.stop()
+        except Exception:
+            pass
+        log.info("STOP requested (behaviour active=%s)", active)
+        return active
+
     driver.on_obstacle = on_obstacle
 
     turn_lock = threading.RLock()  # one command turn at a time (voice/HTTP); RLock so remote_command can
     #                                hold it across the wake-mic pause AND handle_command's own acquire
+
+    def _start_thinking():
+        """Kick off the processing ('thinking') earcon with backend-aware timing: REMOTE (Gemini / any
+        non-local) stays silent ~4s so a fast reply plays NO cue, and plays only ONCE if it's slow;
+        LOCAL leads quickly (~0.5s) and re-cues with the 'still...' set. All keys have safe defaults so
+        config/robot.env need not set them."""
+        if cfg.get("ai_backend", "local") != "local":
+            snd.start_thinking(lead_ms=_as_int(os.environ.get("ROBOT_THINKING_LEAD_REMOTE_MS"), 4000),
+                               repeat_s=_as_int(os.environ.get("ROBOT_THINKING_REPEAT_REMOTE_S"), 0))
+        else:
+            snd.start_thinking()   # env defaults: ROBOT_THINKING_LEAD_MS / ROBOT_THINKING_REPEAT_S
 
     def handle_command(text, source="voice"):
         """Run ONE command turn: text -> LLM intent JSON -> action (drive/say/remember/find/explore).
@@ -369,18 +448,20 @@ def main():
         unless ROBOT_HTTP_ALLOW_CAMERA=1. Returns (action, reply)."""
         with turn_lock:
             fc.set_expression("thinking")
-            snd.start_thinking()           # proof-of-life cue while the (slow) model runs
+            _start_thinking()              # proof-of-life cue while the model runs (backend-aware timing)
             t_think = time.monotonic()
             try:
                 resp = query_ollama(cfg, text, context=mem.prompt_context())
             except Exception as e:
                 snd.stop_thinking()
-                snd.play("error")
                 print(f"llm: {e}", file=sys.stderr)
                 log.warning("llm failed after %.1fs: %s", time.monotonic() - t_think, e)
                 driver.stop()  # fail safe
-                fc.set_expression("idle")
-                return "ERROR", "Sorry, I hit an error."
+                # SPEAK the actual error (not just an 'uh oh' earcon) so you hear WHAT broke -- and the
+                # phone gets it back as the JSON reply too. _short_error keeps it speakable (one line).
+                reply = f"Uh oh. I think something went wrong. It seems like: {_short_error(e)}."
+                say(reply)
+                return "ERROR", reply
             snd.stop_thinking()            # stop BEFORE any say() so it doesn't fight TTS
             log.info("think: model replied in %.1fs", time.monotonic() - t_think)
 
@@ -429,7 +510,7 @@ def main():
                 desc = ""
                 if jpeg:
                     fc.set_expression("thinking")
-                    snd.start_thinking()
+                    _start_thinking()
                     desc = vision.describe(cfg, jpeg).get("description", "")
                     snd.stop_thinking()
                 img_path = mem.save_photo(jpeg, name)
@@ -522,6 +603,7 @@ def main():
         turn_lock (RLock) fine. Concurrent requests serialise here, each re-asserting the pause."""
         with turn_lock:
             wake.pause_mic()
+            snd.play("remote_ack")   # "got a remote command, on it now" -- the HTTP equivalent of ack
             try:
                 return handle_command(text, source="http")
             finally:
@@ -538,7 +620,7 @@ def main():
                 _persist_env("ROBOT_HTTP_TOKEN", token)
                 os.environ["ROBOT_HTTP_TOKEN"] = token
                 log.info("generated ROBOT_HTTP_TOKEN and saved it to config/robot.env")
-            remote_srv = remote.RemoteServer(port, token, on_command=remote_command)
+            remote_srv = remote.RemoteServer(port, token, on_command=remote_command, on_stop=on_stop)
             remote_srv.start()
             host = socket.gethostname()
             print(f">> Phone command endpoint READY:  http://{host}.local:{port}/speak")
@@ -556,6 +638,8 @@ def main():
                 driver.stop()
                 print("Bye.")
                 return
+            if trigger == "CANCELLED":
+                continue   # a background voice-abort listen was cancelled; just re-enter the wait
             if trigger == "WAKE":
                 snd.play("wake_ack")       # wake-ack: "yes?/hi" -- responding to being summoned, before recording
 

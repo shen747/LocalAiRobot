@@ -3,7 +3,8 @@
 # Uses the brain venv's Python (sqlite3 is stdlib -- nothing extra to install). Examples:
 #   ./scripts/rag.sh                                 # taught people/things (the 'facts' table)
 #   ./scripts/rag.sh --seen                          # recent things seen (the 'observations' table)
-#   ./scripts/rag.sh --all                           # both tables
+#   ./scripts/rag.sh --scenes                        # recent scene descriptions (from agentic explore)
+#   ./scripts/rag.sh --all                           # facts + seen + scenes
 #   ./scripts/rag.sh --forget Shawn                  # delete a taught person/thing by name
 #   ./scripts/rag.sh --clear-facts                   # wipe all taught facts (they're re-teachable)
 #   ./scripts/rag.sh --clear-all                     # wipe facts AND observations (asks first)
@@ -47,12 +48,15 @@ PY
 
 FACTS="SELECT id, datetime(ts,'unixepoch','localtime') AS taught, name, fact AS relationship, substr(description,1,50) AS description FROM facts ORDER BY ts DESC"
 SEEN="SELECT id, datetime(ts,'unixepoch','localtime') AS seen, target, visible, horizontal, distance, round(confidence,2) AS conf FROM observations WHERE target IS NOT NULL AND target!='' ORDER BY ts DESC LIMIT 50"
+SCENES="SELECT id, datetime(ts,'unixepoch','localtime') AS explored, substr(notes,1,90) AS scene FROM observations WHERE source='scene' AND notes IS NOT NULL AND notes!='' ORDER BY ts DESC LIMIT 30"
 
 case "${1:---facts}" in
   --facts|-f)               echo "== taught people/things (facts) =="; run "$FACTS" ;;
   --seen|--observations|-o) echo "== recently seen (observations, last 50) =="; run "$SEEN" ;;
+  --scenes|-s)              echo "== recently explored (scene descriptions, last 30) =="; run "$SCENES" ;;
   --all|--show-all|-a)      echo "== taught people/things (facts) =="; run "$FACTS"
-                            echo; echo "== recently seen (observations, last 50) =="; run "$SEEN" ;;
+                            echo; echo "== recently seen (observations, last 50) =="; run "$SEEN"
+                            echo; echo "== recently explored (scenes, last 30) =="; run "$SCENES" ;;
   --forget)                 [ $# -ge 2 ] || { echo "usage: $(basename "$0") --forget <name>"; exit 2; }
                             run "DELETE FROM facts WHERE lower(name)=lower(?)" "$2" ;;
   --clear-facts)            run "DELETE FROM facts" ;;

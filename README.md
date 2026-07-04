@@ -76,7 +76,8 @@ Search terms are generic — use your preferred retailer.
 | Pinion | `32P pinion gear 3.175mm 12T` | **32DP / M0.8**, 12–13T, 3.175 mm bore |
 | ESC (Electronic Speed Controller) | `60A brushed crawler ESC program card 2-3S` | direct reverse + drag-brake stop (e.g. SURPASS HOBBY 60A). ⚠️ its **7.4 V BEC** powers the servo — see the servo note |
 | Steering servo | `DSSERVO DS3225 digital servo 180` | 25 kg, **180°** (not 270°). ⚠️ use an **HV (7.4 V)** version, or feed V+ from a separate 5–6 V BEC — the 7.4 V ESC BEC can fry a 6 V servo |
-| Battery | `2S 7.4V 5200mAh LiPo Deans` | match the plug to the ESC (Electronic Speed Controller) |
+| Battery | `3S 11.1V 5200mAh LiPo Deans` | powers **everything** now — drive via the ESC, and the Pi via the UBEC below. Match the plug to the ESC; confirm your ESC (and servo BEC) are rated for 3S |
+| **UBEC step-down** (Pi power) | `ZTW UBEC 10A 6A adjustable 5V 6V BEC` | steps the 3S LiPo down to 5–6 V (jumper-set) to feed the **Pi's UPS input**, so one battery runs the whole robot. Size for the Pi 5 (~5 A); set the jumper to the UPS's rated input (usually 5 V) |
 | Charger | `IMAX B6 lipo balance charger` | balance-charges the 2S pack |
 | Plug adapter | `T plug to Tamiya adapter` | only if the ESC (Electronic Speed Controller) plug ≠ battery plug |
 | PWM driver | `PCA9685 16 channel servo driver I2C` | the PWM bridge to ESC (Electronic Speed Controller) + servo |
@@ -97,10 +98,10 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md); pin-by-pin wir
 [docs/wiring/pwm-esc-servo-wiring.md](docs/wiring/pwm-esc-servo-wiring.md) (drive & steering) and
 [docs/wiring/ultrasonic-sensors-wiring.md](docs/wiring/ultrasonic-sensors-wiring.md) (3× HC-SR04P sensors).
 
-![LocalAiRobot wiring at a glance: a 2S 7.4V LiPo feeds the ESC (Electronic Speed Controller) (which carries a 7.4V BEC) and the drive motor; the ESC (Electronic Speed Controller)'s 3-wire plug goes to PCA9685 ch0 (signal + V+ 7.4V rail + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Pi Camera V2 NoIR connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UPS HAT on its own battery. Two isolated battery domains, common ground.](docs/images/wiring.png)
+![LocalAiRobot wiring at a glance: a single 3S 11.1V LiPo feeds the ESC (Electronic Speed Controller) (drive motor + a BEC for the servo) AND a ZTW UBEC step-down; the ESC (Electronic Speed Controller)'s 3-wire plug goes to PCA9685 ch0 (signal + V+ from the ESC BEC + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Arducam IMX519 autofocus camera connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the UBEC into the UPS HAT (2x 18650 backup). One LiPo, two rails, common ground.](docs/images/wiring.png)
 
-- **Two isolated power domains** (LiPo→motor/servo, UPS→Pi): **never bridge them**, but **tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller)) or the PWM won't register.
-- PCA9685 **V+ rail = the ESC (Electronic Speed Controller)'s 7.4 V BEC**, *not* the Pi (so use an HV servo, or feed V+ from a separate 5–6 V BEC). All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
+- **One 3S LiPo powers everything** — an **ESC** branch (drive motor + a BEC for the servo) and a **UBEC (5–6 V) → UPS HAT → Pi** branch (the 18650s stay as a backup buffer). **Tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller) ⟷ UBEC) or the PWM won't register.
+- PCA9685 **V+ rail = the ESC (Electronic Speed Controller)'s BEC** (the servo rail), *not* the Pi (so use an HV servo, or feed V+ from a separate 5–6 V BEC). All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
 - **Pins:** I2C on GPIO2/3 (PCA9685 @ `0x40`); forward sensor TRIG/ECHO `23/24`, left `5/6`, right `20/21`. Camera is on the CSI ribbon, the face panel on USB — neither touches the GPIO header.
 
 ---
@@ -147,10 +148,12 @@ The LLM returns one JSON object; the Pi validates and clamps it before acting:
 | `duration_ms` | `300`–`5000` | run time before the failsafe neutralizes the move |
 | `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 
-**Explore & find.** On *"look around"* / *"find the X"* the car stops, grabs a frame, asks the `moondream`
-VLM, and (for FIND) runs a **bounded** stop → look → step loop — gated by the forward sensor, capped by
-`ROBOT_EXPLORE_MAX_ITERS`, held at neutral each look (Pi-CPU vision is slow; the fixed camera makes
-"look around" a coarse arc-scan).
+**Explore & find.** On *"look around"* the car runs an **agentic** loop: each step the model sees the frame
++ memory + sensor distances and picks the next move (and decides when it's satisfied) — bounded by
+backend-aware time/step caps (**2× on the faster remote model**), gated by the forward sensor, held at
+neutral each look, and **interruptible** any time (phone `POST /stop`, the wake word, or Ctrl-C). *"find the
+X"* runs a bounded stop → look → step loop toward a sighting. Each look's **full scene description is stored**
+to memory, so a later (offline) run reuses what a remote run learned.
 
 **Memory.** Sightings and taught people/things go to SQLite. Say *"this is my wife Shani"* (`REMEMBER`) and
 it photographs, has the VLM describe it, and stores name + relationship + description + the JPEG; each turn

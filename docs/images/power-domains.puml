@@ -1,12 +1,12 @@
 @startuml power-domains
-' LocalAiRobot — DETAILED power domains + signal wiring (camera, face & 3-sensor array).
+' LocalAiRobot — DETAILED power + signal wiring (camera, face & 3-sensor array).
 ' This source lives next to its render. Regenerate in place (writes power-domains.png here):
 '   plantuml -tpng docs/images/power-domains.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
-' Grouped like assembly.puml: each battery domain is one labelled box; PCA9685 + GND bus sit between.
+' ONE 3S LiPo now feeds everything: an ESC branch (drive + servo BEC) and a UBEC->UPS branch for the Pi.
 !pragma layout smetana
 hide stereotype
-title LocalAiRobot — detailed power domains (never bridge the batteries) + sensors, camera & face
+title LocalAiRobot — power from ONE 3S LiPo (UBEC->UPS->Pi + ESC->drive) + sensors, camera & face
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -34,12 +34,12 @@ skinparam rectangle {
   BorderColor<<braindomain>> #6C8EBF
 }
 
-' ---- brain domain: Pi power + everything the Pi drives directly ----
-rectangle "Brain power  (UPS HAT  —  or 27W PSU for bench bring-up)" as brainbox <<braindomain>> {
-  rectangle "UPS HAT (2x 18650)\nor official 27W PSU (bench)" as ups <<io>>
+' ---- brain rail: Pi power + everything the Pi drives directly ----
+rectangle "Brain rail  (UBEC -> UPS HAT -> Pi)" as brainbox <<braindomain>> {
+  rectangle "UPS HAT (2x 18650 = backup)\nfed by the UBEC (or 27W PSU on bench)" as ups <<io>>
   rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
   rectangle "HC-SR04P x3  (3.3V; no divider)\nfront 23/24  •  left 5/6  •  right 20/21" as sonar <<data>>
-  rectangle "Pi Camera V2 NoIR\n(IMX219, CSI via 22->15 adapter)" as cam <<data>>
+  rectangle "Camera: Arducam IMX519\n(16MP autofocus, CSI via 22->15 adapter)" as cam <<data>>
   rectangle "Face screen\n(USB-C -> /dev/ttyACM0)" as face <<io>>
 }
 ups --> pi : 5V to Pi
@@ -47,34 +47,39 @@ pi --> sonar : 3.3V + TRIG/ECHO
 pi --> cam : CSI ribbon
 pi --> face : USB-C (serial)
 
-' ---- motor domain: LiPo high-current path (servo power stays in here) ----
-rectangle "Motor power  (LiPo, high current)" as motorbox <<motordomain>> {
-  rectangle "2S 7.4V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(battery input + 7.4V/2A BEC)" as esc <<motor>>
+' ---- ONE 3S LiPo source: a high-current ESC branch AND a UBEC step-down branch feeding the Pi ----
+rectangle "Power  (single 3S LiPo source)" as motorbox <<motordomain>> {
+  rectangle "3S 11.1V LiPo" as lipo <<motor>>
+  rectangle "ESC\n(battery input + BEC for servo)" as esc <<motor>>
   rectangle "drive motor" as dmotor <<motor>>
-  rectangle "steering servo\n(DS3225 HV, on the 7.4V BEC rail)" as servo <<motor>>
+  rectangle "steering servo\n(DS3225 HV, on the ESC BEC rail)" as servo <<motor>>
 }
-lipo --> esc : 7.4 V
+rectangle "ZTW UBEC step-down\n(3S in -> 5-6V/6A out, jumper-set)" as ubec <<motor>>
+lipo --> esc  : 11.1 V (high current)
+lipo --> ubec : 11.1 V (tap)
+ubec --> ups  : 5-6 V -> UPS input
 esc --> dmotor : motor drive
 
-' ---- the only places the two domains legitimately meet: 3.3V logic/PWM signals + common GND ----
+' ---- 3.3V logic/PWM signals + the servo's BEC rail + common GND ----
 rectangle "PCA9685\n(I2C PWM bridge, 0x40)" as pca <<model>>
-rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC)" as gnd <<store>>
+rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC <-> UBEC)" as gnd <<store>>
 
 pi  --> pca   : 3.3V logic (VCC) + I2C SDA/SCL
 esc --> pca   : ch0 throttle PWM (signal)
-esc --> pca   : 7.4V/2A BEC -> V+ rail (servo power, LiPo domain)
-pca --> servo : ch1: 7.4V + PWM
+esc --> pca   : BEC -> V+ rail (servo power)
+pca --> servo : ch1: BEC V+ + PWM
 
-esc ..> gnd : GND
-pi  ..> gnd : GND
-pca ..> gnd : GND
+esc  ..> gnd : GND
+pi   ..> gnd : GND
+pca  ..> gnd : GND
+ubec ..> gnd : GND
 
 note bottom of gnd
-  **Never bridge LiPo + and UPS/PSU +.** The domains meet ONLY at shared **GND** and the 3.3V logic / PWM signals.
-  The **ESC 7.4V BEC -> PCA9685 V+ rail** is internal to the LiPo/motor domain (servo power), NOT a bridge to the Pi.
-  **7.4V BEC = use an HV servo, or feed V+ from a separate 5-6V BEC** (a 6V-only servo can be damaged).
-  Bench bring-up: power the Pi from the **27W PSU first** (UPS later). DS3225 stall ~2.5-3A — a 2A BEC may
-  brown out under hard steering; add a separate servo BEC on V+ if so. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe).
+  **ONE 3S LiPo powers everything** via two branches: the **ESC** (drive motor + BEC for the servo/V+ rail)
+  and the **UBEC (5-6V) -> UPS input -> Pi**. The UPS 18650s stay as a **backup buffer** + clean shutdown.
+  All parts share a **common GND**. The **ESC BEC -> PCA9685 V+ rail** is the servo's power (NOT the Pi's).
+  **Servo: use an HV (7.4V) servo, or feed V+ from a separate 5-6V BEC** (a 6V-only servo can be damaged).
+  Set the UBEC jumper to the UPS's rated input (typically 5V). DS3225 stall ~2.5-3A — if the ESC BEC browns
+  out under hard steering, add a separate servo BEC on V+. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe).
 end note
 @enduml
