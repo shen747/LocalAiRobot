@@ -1,8 +1,14 @@
 @startuml wiring-overview
-title LocalAiRobot — Power & Signal Wiring (front-steer, brushed 540 35T)
+top to bottom direction
+title LocalAiRobot — Power & Signal Wiring (one 3S LiPo: ESC drive + UBEC/UPS to the Pi)
 
 skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 17
+skinparam TitleFontSize 21
+skinparam ArrowFontSize 14
 skinparam rectangle {
+  FontSize 17
   BorderColor #333333
 }
 

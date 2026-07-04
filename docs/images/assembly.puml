@@ -1,22 +1,25 @@
 @startuml assembly
-' LocalAiRobot — two isolated power domains (high-level), now with camera, face & 3-sensor array.
+' LocalAiRobot — high-level power, TOP-TO-BOTTOM (one 3S LiPo -> ESC drive + UBEC -> UPS -> Pi).
 ' This source lives next to its render. Regenerate in place (writes assembly.png here):
 '   plantuml -tpng docs/images/assembly.puml
-' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
+' No Graphviz needed: !pragma layout smetana. Vertical + larger fonts; Pi peripherals collapsed into one box.
 !pragma layout smetana
+top to bottom direction
 hide stereotype
-title LocalAiRobot — one 3S LiPo powers all (UBEC->UPS->Pi + ESC->drive); bench-test on the 27W PSU first
+title LocalAiRobot — one 3S LiPo powers all (ESC -> drive + UBEC -> UPS -> Pi); bench-test on the 27W PSU first
 
 skinparam backgroundColor white
 skinparam shadowing false
 skinparam defaultFontName Helvetica
+skinparam defaultFontSize 18
+skinparam TitleFontSize 22
 skinparam ArrowColor #555555
-skinparam ArrowFontColor #555555
-skinparam ArrowFontSize 11
+skinparam ArrowFontColor #333333
+skinparam ArrowFontSize 15
 skinparam rectangle {
   RoundCorner 12
-  FontSize 12
-  BorderThickness 1
+  FontSize 18
+  BorderThickness 1.5
   BackgroundColor<<io>> #DAE8FC
   BorderColor<<io>> #6C8EBF
   BackgroundColor<<model>> #FFF2CC
@@ -27,42 +30,29 @@ skinparam rectangle {
   BorderColor<<motor>> #B85450
   BackgroundColor<<store>> #F5F5F5
   BorderColor<<store>> #666666
-  BackgroundColor<<motordomain>> #FBEAEA
-  BorderColor<<motordomain>> #B85450
-  BackgroundColor<<braindomain>> #E6EEF8
-  BorderColor<<braindomain>> #6C8EBF
 }
 
-rectangle "Power  (single 3S LiPo)" as motorbox <<motordomain>> {
-  rectangle "3S 11.1V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(battery input + BEC for servo)" as esc <<motor>>
-  rectangle "drive motor" as motor <<motor>>
-  rectangle "ZTW UBEC\n(3S -> 5-6V/6A step-down)" as ubec <<motor>>
-}
-lipo -right-> esc : 11.1 V (high current)
-lipo --> ubec : 11.1 V (tap)
-esc -right-> motor : motor drive
-
-rectangle "Brain rail  (UBEC -> UPS HAT -> Pi;  or 27W PSU for bench bring-up)" as brainbox <<braindomain>> {
-  rectangle "UPS HAT (2x 18650 backup)\nfed by UBEC (or 27W PSU bench)" as ups <<io>>
-  rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
-  rectangle "Camera: Arducam IMX519\n(autofocus, CSI ribbon)" as cam <<data>>
-  rectangle "Face screen\n(USB-C / ttyACM0)" as face <<io>>
-  rectangle "HC-SR04P x3\n(3.3V; front/left/right)" as sonar <<data>>
-}
-ubec --> ups : 5-6V -> UPS input
-ups -right-> pi : 5 V
-pi --> cam : CSI
-pi --> face : USB-C
-pi --> sonar : 3.3V + GPIO
-
-rectangle "PCA9685\n(I2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC BEC)" as pca <<model>>
-
+rectangle "3S 11.1V LiPo\n(single source)" as lipo <<motor>>
+rectangle "ESC\n(battery input + BEC for servo)" as esc <<motor>>
+rectangle "drive motor" as motor <<motor>>
+rectangle "ZTW UBEC\n3S -> 5-6V / 6A step-down" as ubec <<motor>>
+rectangle "UPS HAT\n2x 18650 backup (or 27W PSU bench)" as ups <<io>>
+rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
+rectangle "PCA9685\nI2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC BEC" as pca <<model>>
+rectangle "Pi-powered peripherals\nCamera: Arducam IMX519 (autofocus, CSI)\nFace screen (USB-C / ttyACM0)\nHC-SR04P x3 (3.3V; front/left/right)" as periph <<data>>
 rectangle "common GND bus" as gnd <<store>>
 
-esc ..> gnd : GND
-pi ..> gnd : GND
-pca ..> gnd : GND
+lipo --> esc  : 11.1V (high current)
+lipo --> ubec : 11.1V (tap)
+esc  --> motor : motor drive
+ubec --> ups  : 5-6V -> UPS input
+ups  --> pi   : 5V
+pi   --> pca  : 3.3V logic + I2C
+pi   --> periph : CSI · USB-C · 3.3V+GPIO
+
+esc  ..> gnd : GND
+pi   ..> gnd : GND
+pca  ..> gnd : GND
 ubec ..> gnd : GND
 
 note bottom of gnd

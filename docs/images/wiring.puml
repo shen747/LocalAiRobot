@@ -1,23 +1,26 @@
 @startuml wiring
-' LocalAiRobot — "Wiring at a glance" connection map (3 sensors + camera + face, two power domains).
+' LocalAiRobot — "Wiring at a glance" connection map, TOP-TO-BOTTOM power flow (1 LiPo -> ESC + UBEC/UPS).
 ' This source lives next to its render. Regenerate in place (writes wiring.png here):
 '   plantuml -tpng docs/images/wiring.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
-' Same grouped style as assembly.puml: two labelled power domains + a PCA9685 bridge + one note.
+' Vertical + larger fonts: no side-by-side domain boxes; the Pi's many peripherals collapse into one box.
 !pragma layout smetana
+top to bottom direction
 hide stereotype
-title LocalAiRobot — wiring at a glance (one 3S LiPo -> UBEC/UPS + ESC, common ground, PCA9685 bridge)
+title LocalAiRobot — wiring at a glance (one 3S LiPo: ESC drive + UBEC/UPS to the Pi; common ground)
 
 skinparam backgroundColor white
 skinparam shadowing false
 skinparam defaultFontName Helvetica
+skinparam defaultFontSize 18
+skinparam TitleFontSize 22
 skinparam ArrowColor #555555
-skinparam ArrowFontColor #555555
-skinparam ArrowFontSize 11
+skinparam ArrowFontColor #333333
+skinparam ArrowFontSize 15
 skinparam rectangle {
   RoundCorner 12
-  FontSize 12
-  BorderThickness 1
+  FontSize 18
+  BorderThickness 1.5
   BackgroundColor<<io>> #DAE8FC
   BorderColor<<io>> #6C8EBF
   BackgroundColor<<model>> #FFF2CC
@@ -28,53 +31,33 @@ skinparam rectangle {
   BorderColor<<motor>> #B85450
   BackgroundColor<<store>> #F5F5F5
   BorderColor<<store>> #666666
-  BackgroundColor<<motordomain>> #FBEAEA
-  BorderColor<<motordomain>> #B85450
-  BackgroundColor<<braindomain>> #E6EEF8
-  BorderColor<<braindomain>> #6C8EBF
 }
 
-' ---- ONE 3S LiPo: high-current ESC branch + a UBEC step-down branch for the Pi (servo power via ESC BEC) ----
-rectangle "Power  (single 3S LiPo)" as motorbox <<motordomain>> {
-  rectangle "3S 11.1V LiPo" as lipo <<motor>>
-  rectangle "ESC\n(+ BEC for servo)" as esc <<motor>>
-  rectangle "drive motor" as motor <<motor>>
-  rectangle "steering servo\n(DS3225 HV)" as servo <<motor>>
-  rectangle "ZTW UBEC\n(3S -> 5-6V/6A)" as ubec <<motor>>
-}
+rectangle "3S 11.1V LiPo\n(single source)" as lipo <<motor>>
+rectangle "ESC\n(+ BEC for servo)" as esc <<motor>>
+rectangle "drive motor" as motor <<motor>>
+rectangle "ZTW UBEC\n3S -> 5-6V / 6A" as ubec <<motor>>
+rectangle "UPS HAT\n2x 18650 (backup)" as ups <<io>>
+rectangle "Raspberry Pi 5\n(+ Active Cooler)" as pi <<io>>
+rectangle "PCA9685\nI2C PWM @ 0x40" as pca <<model>>
+rectangle "steering servo\nDS3225 HV (ch1)" as servo <<motor>>
+rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: Arducam IMX519 AF  (CSI, 22->15 adapter)\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
 
-' ---- brain / UPS domain (the Pi and everything it drives directly) ----
-rectangle "Brain power  (UPS HAT  —  or 27W PSU on the bench)" as brainbox <<braindomain>> {
-  rectangle "Raspberry Pi 5\n(+ Active Cooler)" as pi <<io>>
-  rectangle "UPS HAT (2x 18650 backup)\nfed by UBEC (or 27W PSU bench)" as ups <<io>>
-  rectangle "HC-SR04P  front" as sonF <<data>>
-  rectangle "HC-SR04P  left" as sonL <<data>>
-  rectangle "HC-SR04P  right" as sonR <<data>>
-  rectangle "Camera\n(Arducam IMX519 AF)" as cam <<data>>
-  rectangle "Face screen\n(3.5 inch USB-C)" as face <<io>>
-}
+' ---- power flows top -> bottom ----
+lipo --> esc  : 11.1V (high current)
+lipo --> ubec : 11.1V (tap)
+esc  --> motor : motor drive
+ubec --> ups  : 5-6V -> UPS input
+ups  --> pi   : 5V (18650 backup)
+esc  --> pca  : ch0: signal + V+ (ESC BEC) + GND
+pi   --> pca  : 3.3V VCC + SDA/SCL (I2C)
+pca  --> servo : ch1: signal / V+ / GND
+pi   --> periph : 3.3V + TRIG/ECHO · CSI · USB-C
 
-' ---- PWM bridge that straddles the two domains ----
-rectangle "PCA9685\n(I2C PWM bridge, 0x40)" as pca <<model>>
-
-' ---- connections (each label = what's on that wire) ----
-lipo --> esc : 11.1 V (high current)
-lipo --> ubec : 11.1 V (tap)
-ubec --> ups : 5-6V -> UPS input
-esc --> motor : motor drive
-esc --> pca : ch0: signal + V+ (ESC BEC) + GND
-pca --> servo : ch1: signal / V+ / GND
-pca --> pi : VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND
-ups --> pi : 5V (UPS out; 18650 backup)
-sonF --> pi : 3.3V + GND + TRIG(GPIO23) + ECHO(GPIO24)
-sonL --> pi : 3.3V + GND + TRIG(GPIO5) + ECHO(GPIO6)
-sonR --> pi : 3.3V + GND + TRIG(GPIO20) + ECHO(GPIO21)
-cam --> pi : CSI ribbon (Pi-5 22->15 adapter)
-face --> pi : USB-C -> /dev/ttyACM0
-
-note bottom of pca
+note bottom of periph
   **One 3S LiPo, two branches:** ESC (drive + servo BEC) and **UBEC (5-6V) -> UPS -> Pi** (18650s = backup).
   Tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC <-> UBEC) or the PWM won't register.
-  **PCA9685 V+ rail = the ESC BEC** (servo power), not the Pi (use an HV servo, or feed V+ from a separate 5-6V BEC). All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
+  **PCA9685 V+ rail = the ESC BEC** (servo power), not the Pi (use an HV servo, or a separate 5-6V BEC).
+  All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
 end note
 @enduml

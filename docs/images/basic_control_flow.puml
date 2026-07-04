@@ -16,14 +16,16 @@ title LocalAiRobot — how a spoken command becomes action (all on the Pi 5)
 skinparam backgroundColor white
 skinparam shadowing false
 skinparam defaultFontName Helvetica
+skinparam defaultFontSize 16
+skinparam TitleFontSize 20
 skinparam ArrowColor #555555
 skinparam ArrowFontColor #555555
-skinparam ArrowFontSize 11
+skinparam ArrowFontSize 14
 skinparam databaseBackgroundColor #D5E8D4
 skinparam databaseBorderColor #82B366
 skinparam rectangle {
   RoundCorner 12
-  FontSize 12
+  FontSize 16
   BorderThickness 1
   BackgroundColor<<io>> #DAE8FC
   BorderColor<<io>> #6C8EBF

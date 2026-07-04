@@ -90,21 +90,49 @@ def _post(cfg, payload, timeout):
             return json.loads(resp.read())
 
 
+def _loads_lenient(text):
+    """Parse a model's JSON reply, tolerating the markdown fences / stray prose some models add EVEN in
+    JSON mode (the classic cause of 'Expecting value: line 1 column 1 (char 0)' -- e.g. Gemini vision
+    wrapping the object in ```json ... ```). Tries strict first, then a fenced block, then the outermost
+    {...} span. Raises ValueError WITH a snippet if none parse, so the log shows what actually came back."""
+    s = (text or "").strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    if s.startswith("```"):                          # ```json ... ```  or  ``` ... ```
+        inner = s.strip("`")
+        nl = inner.find("\n")
+        if nl != -1 and inner[:nl].strip().lower() in ("json", ""):
+            inner = inner[nl + 1:]
+        try:
+            return json.loads(inner.strip().rstrip("`").strip())
+        except Exception:
+            pass
+    i, j = s.find("{"), s.rfind("}")                 # outermost object, ignoring any surrounding prose
+    if 0 <= i < j:
+        try:
+            return json.loads(s[i:j + 1])
+        except Exception:
+            pass
+    raise ValueError(f"model did not return parseable JSON: {s[:200]!r}")
+
+
 def ollama_generate(cfg, payload, timeout):
     """Run a generate call and return the model's parsed JSON OBJECT.
 
     Dispatches by backend (cfg['ai_backend'], from ROBOT_AI_BACKEND): 'gemini' -> Google Gemini
     (remote), anything else -> local Ollama (default). Both backends yield the model's response as
-    a JSON *string*; the shared tail parses + validates it to a dict, so the two callers (text intent
-    + vision) stay backend-agnostic. Raises ValueError on an empty/blocked response or a non-dict
-    body -- callers treat the raise as fail-safe (main.py -> STOP; vision.py -> 'not visible')."""
+    a JSON *string*; the shared tail parses (leniently -- see _loads_lenient) + validates it to a dict,
+    so the two callers (text intent + vision) stay backend-agnostic. Raises ValueError on an empty/blocked
+    response or a non-dict body -- callers treat the raise as fail-safe (main.py -> STOP; vision.py -> 'not visible')."""
     if cfg.get("ai_backend") == "gemini":
         response = _gemini_generate(cfg, payload, timeout)
     else:
         response = _post(cfg, payload, timeout).get("response")
     if not response:
         raise ValueError(f"model returned no response (backend={cfg.get('ai_backend') or 'local'})")
-    obj = json.loads(response)
+    obj = _loads_lenient(response)
     if not isinstance(obj, dict):
         # JSON mode guarantees valid JSON, not a JSON *object* -- guard so a list/string can't
         # crash the caller later at obj.get(...).
