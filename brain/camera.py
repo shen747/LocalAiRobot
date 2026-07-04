@@ -3,7 +3,7 @@
 # Camera v1) or IMX219 (v2) also works with no code change. On an autofocus sensor each capture runs a
 # one-shot focus first (sharp shots of a held-up object / a face at any distance -> better VLM answers);
 # fixed-focus sensors are left untouched. The IMX519 is third-party, so camera_auto_detect won't find it --
-# install_stack.sh writes its boot dtoverlay (camera_auto_detect=0 + dtoverlay=imx519,cam1). See docs/assembly.md.
+# install_stack.sh writes its boot dtoverlay (camera_auto_detect=0 + dtoverlay=imx519,cam0). See docs/assembly.md.
 #
 # Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision
 # encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands

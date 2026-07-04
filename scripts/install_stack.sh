@@ -45,8 +45,8 @@ sudo apt install -y --no-install-recommends python3-picamera2 || \
 # is NOT auto-detected -- it needs an explicit dtoverlay in the boot config. We write it here (idempotent;
 # config.txt backed up once) so the reboot at the end of install brings the camera up with no hand-editing.
 #   Using an OFFICIAL Pi camera (OV5647/IMX219/IMX708)? those auto-detect -- run:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack.sh
-#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam0 ./scripts/install_stack.sh
-CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-imx519,cam1}"
+#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack.sh
+CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-imx519,cam0}"
 CAMCFG=/boot/firmware/config.txt; [ -f "$CAMCFG" ] || CAMCFG=/boot/config.txt
 case "$CAMERA_OVERLAY" in
   none|off|auto)
@@ -65,7 +65,7 @@ case "$CAMERA_OVERLAY" in
         echo "dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]" | sudo tee -a "$CAMCFG" >/dev/null
       fi
       echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519 autofocus; live after the reboot)"
-      echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam0"
+      echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam1"
     else
       echo "   (boot config not found -- skipping camera overlay; not a Pi?)"
     fi ;;

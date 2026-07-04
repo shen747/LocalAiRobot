@@ -301,9 +301,9 @@ not GPIO/I2C, so it doesn't conflict with anything.
   reseat the ribbon. The brain runs fine without it; vision just reports "no frame".)*
 - **A third-party sensor (IMX519) needs a boot overlay** — `camera_auto_detect` only finds the *official*
   OV5647/IMX219/IMX708. **`install_stack.sh` sets it up for you** (`camera_auto_detect=0` +
-  `dtoverlay=imx519,cam1`, backing up `config.txt`); the install's reboot brings it up. Is `rpicam-hello
+  `dtoverlay=imx519,cam0`, backing up `config.txt`); the install's reboot brings it up. Is `rpicam-hello
   --list-cameras` empty afterwards? the camera's on the other CSI port — re-run with
-  `ROBOT_CAMERA_OVERLAY=imx519,cam0 ./scripts/install_stack.sh` and reboot. Official modules need no overlay
+  `ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack.sh` and reboot. Official modules need no overlay
   (install with `ROBOT_CAMERA_OVERLAY=none`).
 - **A NoIR module has no IR-cut filter:** reddish/magenta in daylight, and blind in the dark without an
   **IR illuminator** (850/940 nm). A *standard* module gives natural colour but is still dark-blind.
