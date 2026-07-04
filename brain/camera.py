@@ -1,6 +1,9 @@
-# brain/camera.py -- IMX219 camera capture for the multimodal vision pipeline. Works with any
-# libcamera-supported camera; the build uses an IMX219 module -- a Pi Camera V2 NoIR OR an Arducam
-# IMX219 8MP (same sensor, same driver, interchangeable; no code change to swap).
+# brain/camera.py -- camera capture for the multimodal vision pipeline. Works with ANY libcamera-supported
+# camera (via Picamera2). The build uses an Arducam IMX519 16MP AUTOFOCUS module; a fixed-focus OV5647 (Pi
+# Camera v1) or IMX219 (v2) also works with no code change. On an autofocus sensor each capture runs a
+# one-shot focus first (sharp shots of a held-up object / a face at any distance -> better VLM answers);
+# fixed-focus sensors are left untouched. The IMX519 is third-party, so camera_auto_detect won't find it --
+# install_stack.sh writes its boot dtoverlay (camera_auto_detect=0 + dtoverlay=imx519,cam1). See docs/assembly.md.
 #
 # Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision
 # encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands
@@ -39,7 +42,9 @@ class Camera:
             self.warmup = float(os.environ.get("ROBOT_CAMERA_WARMUP_S", "1.0") or 1.0)
         except ValueError:
             self.warmup = 1.0
+        self.autofocus = os.environ.get("ROBOT_CAMERA_AUTOFOCUS", "1") == "1"
         self._picam = None
+        self._has_af = False   # set true below iff the sensor exposes AfMode (IMX519 yes; OV5647/IMX219 no)
         self.available = False
 
         if not self.enabled:
@@ -56,7 +61,18 @@ class Camera:
             self._picam.start()
             time.sleep(self.warmup)   # let AE/AWB settle
             self.available = True
-            log.info("camera: Picamera2 started (still capture -> %dpx square JPEG)", self.size)
+            # Autofocus: only AF sensors (e.g. IMX519) expose an 'AfMode' control. Put it in Auto so
+            # capture_jpeg() can fire a one-shot focus per frame. Fixed-focus sensors have no AfMode -> skip.
+            if self.autofocus:
+                try:
+                    if "AfMode" in self._picam.camera_controls:
+                        from libcamera import controls as _ctrls
+                        self._picam.set_controls({"AfMode": _ctrls.AfModeEnum.Auto})
+                        self._has_af = True
+                except Exception as e:
+                    log.info("camera: autofocus not enabled (%s)", e)
+            log.info("camera: Picamera2 started (still capture -> %dpx square JPEG%s)",
+                     self.size, ", autofocus" if self._has_af else "")
         except Exception as e:
             # "list index out of range" here = libcamera saw NO camera. If one IS connected, confirm
             # `rpicam-hello --list-cameras` detects it (reseat the CSI ribbon; on the Pi 5 the camera
@@ -71,6 +87,11 @@ class Camera:
         if not self.available or self._picam is None:
             return None
         try:
+            if self._has_af:
+                try:
+                    self._picam.autofocus_cycle()   # one-shot AF scan; blocks until the lens locks (~0.3-1s)
+                except Exception as e:
+                    log.debug("autofocus cycle failed (%s) -- capturing anyway", e)
             buf = BytesIO()
             try:
                 # capture_image() returns a correctly-converted PIL.Image -- avoids the

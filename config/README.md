@@ -136,6 +136,7 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 | `ROBOT_CAMERA_ENABLE` | `1` | `0` disables the Pi Camera (explore/find/REMEMBER lose sight). |
 | `ROBOT_CAMERA_SIZE` | `512` | Square letterbox size (px) the frame is reduced to before the VLM. |
 | `ROBOT_CAMERA_WARMUP_S` | `1.0` | Settle time for auto-exposure/white-balance before each capture. |
+| `ROBOT_CAMERA_AUTOFOCUS` | `1` | On AF sensors (IMX519), run a one-shot focus before each capture; ignored on fixed-focus (IMX219/OV5647). |
 | `ROBOT_VISION_TIMEOUT_S` | `600` | Timeout for one image call — vision is **CPU-only and slow** on the Pi 5 (tens of s to minutes). |
 | `ROBOT_FAKE_VISION` | *(empty)* | Dry-run scripted sighting `target:horizontal:distance:confidence` (e.g. `sofa:left:near:0.9`) so explore/find runs with no camera. |
 

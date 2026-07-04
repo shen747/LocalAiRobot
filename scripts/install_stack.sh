@@ -40,6 +40,35 @@ sudo apt install -y git build-essential cmake alsa-utils curl \
 echo ">> [2/8] camera stack (picamera2 + libcamera, from apt -- NOT pip)"
 sudo apt install -y --no-install-recommends python3-picamera2 || \
   echo "   (python3-picamera2 not found -- update Raspberry Pi OS, or the camera feature stays off)"
+# Camera boot overlay. The build uses an Arducam IMX519 16MP AUTOFOCUS module, which is THIRD-PARTY and so
+# is NOT auto-detected -- it needs an explicit dtoverlay in the boot config. We write it here (idempotent;
+# config.txt backed up once) so the reboot at the end of install brings the camera up with no hand-editing.
+#   Using an OFFICIAL Pi camera (OV5647/IMX219/IMX708)? those auto-detect -- run:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack.sh
+#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam0 ./scripts/install_stack.sh
+CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-imx519,cam1}"
+CAMCFG=/boot/firmware/config.txt; [ -f "$CAMCFG" ] || CAMCFG=/boot/config.txt
+case "$CAMERA_OVERLAY" in
+  none|off|auto)
+    echo "   camera overlay: skipped (ROBOT_CAMERA_OVERLAY=$CAMERA_OVERLAY) -- official Pi cameras auto-detect." ;;
+  *)
+    if [ -f "$CAMCFG" ]; then
+      [ -f "$CAMCFG.localairobot.bak" ] || sudo cp "$CAMCFG" "$CAMCFG.localairobot.bak"   # one-time backup
+      if grep -qE '^[[:space:]]*camera_auto_detect=' "$CAMCFG"; then
+        sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=.*|camera_auto_detect=0   # [LocalAiRobot camera]|' "$CAMCFG"
+      else
+        echo 'camera_auto_detect=0   # [LocalAiRobot camera]' | sudo tee -a "$CAMCFG" >/dev/null
+      fi
+      if grep -qE '^[[:space:]]*dtoverlay=imx519' "$CAMCFG"; then
+        sudo sed -i -E "s|^[[:space:]]*dtoverlay=imx519.*|dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]|" "$CAMCFG"
+      else
+        echo "dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]" | sudo tee -a "$CAMCFG" >/dev/null
+      fi
+      echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519 autofocus; live after the reboot)"
+      echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam0"
+    else
+      echo "   (boot config not found -- skipping camera overlay; not a Pi?)"
+    fi ;;
+esac
 
 echo ">> [3/8] enable I2C + hardware group access (PCA9685 I2C, 3x HC-SR04 GPIO, USB-C panel, framebuffer)"
 sudo raspi-config nonint do_i2c 0 || echo "   (raspi-config not found -- enable I2C manually: dtparam=i2c_arm=on)"

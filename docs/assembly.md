@@ -277,26 +277,33 @@ latest cached value, never blocking the control loop.
 
 ---
 
-## Phase 5 — Wire the camera (IMX219: Pi Camera V2 NoIR **or** Arducam IMX219 8MP)
+## Phase 5 — Wire the camera (Arducam **IMX519** autofocus recommended; any libcamera module works)
 
 Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text brain
 `gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var). It's on the **CSI ribbon**,
 not GPIO/I2C, so it doesn't conflict with anything.
 
-- **Any IMX219 module works.** A **Pi Camera V2 NoIR** and an **Arducam IMX219 8MP** are the *same sensor*;
-  libcamera/picamera2 drive them identically, so swapping is **zero code change**. NoIR = no IR-cut filter
-  (reddish daylight, but sees with IR light).
+- **Any libcamera module works — zero code change.** The build uses an **Arducam IMX519 16MP autofocus**:
+  it focuses on whatever you show it, so `remember`/`find` shots of a held-up object or a face come out
+  **sharp**. **Fixed-focus** modules (Pi Camera v2 **IMX219**, or **OV5647** v1) also work but can't focus
+  close up. A **NoIR** variant drops the IR-cut filter (reddish daylight, but sees under IR light).
 - ⚠️ **The Pi 5 needs the 22→15 cable.** Its CSI/DSI ports are the narrow **22-pin, 0.5 mm** type; a
   module's 15-pin cable **won't fit**. Get a **22→15 adapter FPC** (the Arducam kit often bundles this as
   its "Pi Zero cable") and run it from the camera to either CAM/DISP port (contacts correct way, latch closed).
 - Install: `python3-picamera2` comes from **apt** (the installer does this) and the venv uses
   `--system-site-packages`. Confirm with `rpicam-hello --list-cameras`, then grab a frame with
   `rpicam-jpeg -n -o /tmp/test.jpg`. *(Brain logs `camera unavailable`? libcamera saw **no** camera —
-  reseat the ribbon. The brain runs fine without it; vision just reports "no frame".)* If auto-detect
-  misses it, add `dtoverlay=imx219,cam0` (or `cam1`) to `/boot/firmware/config.txt` and reboot.
+  reseat the ribbon. The brain runs fine without it; vision just reports "no frame".)*
+- **A third-party sensor (IMX519) needs a boot overlay** — `camera_auto_detect` only finds the *official*
+  OV5647/IMX219/IMX708. **`install_stack.sh` sets it up for you** (`camera_auto_detect=0` +
+  `dtoverlay=imx519,cam1`, backing up `config.txt`); the install's reboot brings it up. Is `rpicam-hello
+  --list-cameras` empty afterwards? the camera's on the other CSI port — re-run with
+  `ROBOT_CAMERA_OVERLAY=imx519,cam0 ./scripts/install_stack.sh` and reboot. Official modules need no overlay
+  (install with `ROBOT_CAMERA_OVERLAY=none`).
 - **A NoIR module has no IR-cut filter:** reddish/magenta in daylight, and blind in the dark without an
   **IR illuminator** (850/940 nm). A *standard* module gives natural colour but is still dark-blind.
-- Tuning: `ROBOT_CAMERA_ENABLE`, `ROBOT_CAMERA_SIZE`, `ROBOT_CAMERA_WARMUP_S`. Vision is **CPU-only and
+- Tuning: `ROBOT_CAMERA_ENABLE`, `ROBOT_CAMERA_SIZE`, `ROBOT_CAMERA_WARMUP_S`, `ROBOT_CAMERA_AUTOFOCUS`
+  (on by default — a one-shot focus before each capture on AF sensors; a no-op on fixed-focus). Vision is **CPU-only and
   slow** on the Pi 5 (`ROBOT_VISION_TIMEOUT_S` defaults to 600 s) — the car holds neutral during each look.
 
 ---
@@ -339,7 +346,7 @@ face wired and the ESC/motor *not connected*, the same `robot.hw` logs now refle
 
 ```bash
 i2cdetect -y 1                  # PCA9685 at 0x40
-rpicam-hello --list-cameras     # IMX219 detected (Pi Camera V2 NoIR or Arducam IMX219)
+rpicam-hello --list-cameras     # camera detected (imx519 / IMX219 / OV5647)
 lsusb | grep -i 1a86            # USB-C face panel (turing backend) ...
 ls /dev/fb0                     # ... OR a DSI/HDMI panel (framebuffer backend), if you went that route
 ./scripts/test_sensors.sh       # read the 3 sensors live before trusting the gate (Ctrl-C to stop)
@@ -444,7 +451,7 @@ arecord -D plughw:2,0 -d 3 -f S16_LE -r 16000 -c 1 -V mono /tmp/test.wav && apla
 
 # Confirm the bus + peripherals
 i2cdetect -y 1                  # PCA9685 at 0x40 (and 0x36 once the UPS is fitted)
-rpicam-hello --list-cameras     # IMX219 NoIR (after the 22→15 adapter cable)
+rpicam-hello --list-cameras     # camera detected (after the 22→15 adapter cable)
 lsusb | grep -i 1a86            # USB-C face panel
 
 # Read all three HC-SR04P sensors live -- cover each beam in turn and watch ITS number drop (Ctrl-C to stop)

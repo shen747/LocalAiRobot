@@ -10,7 +10,7 @@
 Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
-2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack and sets your username; then `sudo reboot` and SSH back in.
+2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in.
 3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
@@ -62,7 +62,7 @@ Search terms are generic — use your preferred retailer.
 
 | Part | Search term | Notes |
 |---|---|---|
-| IMX219 camera | `Raspberry Pi Camera V2 NoIR IMX219` **or** `Arducam IMX219 8MP Raspberry Pi 5` | visual input for the VLM. **Same IMX219 sensor** either way — interchangeable, no code change. **NoIR** = no IR-cut (reddish daylight, sees with IR light); a standard module = natural daylight colour |
+| Camera | `Arducam IMX519 16MP autofocus Raspberry Pi` **or** fixed-focus `Raspberry Pi Camera V2 IMX219` / `OV5647` | visual input for the VLM. **IMX519 (autofocus) recommended** — it focuses on whatever you show it (a held-up object, a face), so `remember`/`find` shots are sharp. It's third-party, so `install_stack.sh` **enables its boot overlay for you** (official IMX219/OV5647 auto-detect — using one? install with `ROBOT_CAMERA_OVERLAY=none`). Any libcamera camera works — no code change. |
 | **Pi 5 camera adapter cable** ⚠️ | `Raspberry Pi 5 camera cable 22-pin 0.5mm to 15-pin 1mm` | the Pi 5 CSI port is the narrow 22-way type; a bare V2's 15-way cable **won't fit** without this. **Some Arducam kits bundle it** (their "Pi Zero cable" is 22→15) — check before buying separately |
 | IR illuminator (optional) | `850nm IR LED illuminator board` | a NoIR module sees nothing in the dark without IR light; skip for lit rooms / a standard module |
 | Face screen — pick one | **USB-C:** `3.5 inch USB Type-C secondary screen 320x480 IPS` · **DSI:** `Freenove 5 inch DSI touchscreen 800x480 Raspberry Pi` | the robot's face. **USB-C** = the TURZX/"NO AIDA64" panel (USB-serial, `turing` backend). **DSI** = a ribbon panel like the Freenove 5" 800×480 (`framebuffer` backend, `/dev/fb0`). Either works — the code auto-detects; touch (if any) is unused. See [assembly](docs/assembly.md) |

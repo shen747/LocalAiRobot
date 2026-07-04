@@ -60,7 +60,7 @@ fi
 PLAN=()        # human-readable lines shown to the user
 RM_PATHS=()    # files/dirs that exist and will be deleted
 APT_PKGS=()    # installer packages currently installed (only with --deep)
-SVC=0; OLLAMA=0; I2C_OFF=0
+SVC=0; OLLAMA=0; I2C_OFF=0; CAM_OFF=0; CAMCFG=""
 sz() { du -sh "$1" 2>/dev/null | cut -f1; }   # best-effort size; '' if unreadable
 
 for p in "$H/whisper.cpp" "$H/piper" "$H/turing-smart-screen-python" "$H/openwakeword" \
@@ -104,6 +104,11 @@ if [ "$DEEP" = 1 ]; then
   for f in /boot/firmware/config.txt /boot/config.txt; do
     if [ -f "$f" ] && grep -Eq '^[[:space:]]*dtparam=i2c_arm=on' "$f"; then
       I2C_OFF=1; PLAN+=("reset    disable I2C in $f (raspi-config do_i2c 1)"); break
+    fi
+  done
+  for f in /boot/firmware/config.txt /boot/config.txt; do
+    if [ -f "$f" ] && grep -q '# \[LocalAiRobot camera\]' "$f"; then
+      CAM_OFF=1; CAMCFG="$f"; PLAN+=("reset    remove the IMX519 camera overlay from $f (restore camera_auto_detect=1)"); break
     fi
   done
 fi
@@ -174,6 +179,13 @@ fi
 if [ "$I2C_OFF" = 1 ]; then
   echo ">> disable I2C"
   sudo raspi-config nonint do_i2c 1 2>/dev/null || echo "   (raspi-config missing -- remove dtparam=i2c_arm=on by hand)"
+fi
+
+if [ "$CAM_OFF" = 1 ] && [ -n "${CAMCFG:-}" ]; then
+  echo ">> remove the IMX519 camera overlay from $CAMCFG (restore auto-detect)"
+  sudo sed -i -E '/^[[:space:]]*dtoverlay=imx519.*# \[LocalAiRobot camera\]/d' "$CAMCFG" || true
+  sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=0[[:space:]]*# \[LocalAiRobot camera\].*|camera_auto_detect=1|' "$CAMCFG" || true
+  sudo rm -f "$CAMCFG.localairobot.bak"
 fi
 
 if [ "$BASHRC_LINE" = 1 ]; then

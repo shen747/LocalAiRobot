@@ -16,3 +16,6 @@ repo defaults and the patch just prints the channel line for you to confirm.
 Adding a new ESC? Copy `hb_qr_1060.sh`, rename it, and change the `set_kv` values to that ESC's tested
 numbers. If two builds of the same ESC need different tuning (e.g. a different servo or channel), suffix
 the extra bit, e.g. `hb_qr_1060_hv.sh`.
+
+> Camera setup is **not** here — the IMX519 autofocus overlay is handled automatically by
+> `scripts/install_stack.sh` (see the camera row in the main [README](../../README.md) parts list).
