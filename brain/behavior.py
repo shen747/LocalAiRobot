@@ -147,12 +147,17 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         face.set_expression("exploring")
         # RAG: store the FULL scene description + objects so a later (offline/local) run reuses it.
         memory.record_scene(step.get("description", ""), step.get("objects", []), driver.distances())
+        new_objs = []
         for o in step.get("objects", []):
-            if o.lower() not in (s.lower() for s in seen):
+            if o and o.lower() not in (s.lower() for s in seen):
                 seen.append(o)
-        if narrate and step.get("speak"):
+                new_objs.append(o)
+        # Narrate ONLY when something NEW is in view (and keep it SHORT). Re-reading the same scene every
+        # step -- a 6-8s TTS sentence each time -- is what made explore feel stuck on "talking"; now it
+        # drives quietly until it sees something new, then remarks briefly. The wrap-up still lists all.
+        if narrate and new_objs and step.get("speak"):
             face.set_expression("talking")
-            say(step["speak"])
+            say(step["speak"][:140])
             face.set_expression("exploring")
         if step.get("done"):
             reason = "model satisfied"

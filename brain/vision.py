@@ -219,8 +219,10 @@ def explore_step(cfg, jpeg_bytes, goal="", memory_summary="", distances=None):
         f"left={fmt(distances.get('left'))}, right={fmt(distances.get('right'))}.\n"
         "Give a one-sentence description and the notable objects. Then pick move (FORWARD to advance, STOP "
         "to hold position) and steer (LEFT/CENTER/RIGHT) toward something interesting or an OPEN path -- do "
-        "not steer into a close obstacle. Set done=true once you have seen enough of the space, it repeats, "
-        "or there is nowhere useful to go. Put a short spoken remark about what you notice in speak."
+        "not steer into a close obstacle. Put your navigation reasoning in reason (NOT spoken). In speak, put "
+        "a VERY short remark (a few words) ONLY about something newly notable -- leave speak EMPTY if the view "
+        "is the same as before. Set done=true once you have seen the space, the view keeps repeating, or there "
+        "is nowhere useful to go."
     )
     try:
         step = _normalize_step(_ollama_image(cfg, prompt, jpeg_bytes, EXPLORE_STEP_SCHEMA))
