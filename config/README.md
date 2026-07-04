@@ -138,6 +138,7 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 | `ROBOT_CAMERA_SIZE` | `512` | Square letterbox size (px) the frame is reduced to before the VLM. |
 | `ROBOT_CAMERA_WARMUP_S` | `1.0` | Settle time for auto-exposure/white-balance before each capture. |
 | `ROBOT_CAMERA_AUTOFOCUS` | `1` | On AF sensors (IMX519), run a one-shot focus before each capture; ignored on fixed-focus (IMX219/OV5647). |
+| `ROBOT_WAKE_PERSON_CHECK` | `auto` | On wake, snap a frame + VLM-check if a **person** is in front (runs parallel to recording, so ~free on remote) and feed it into that reply. `auto` = on for remote / off for local; `1` = always, `0` = never. |
 | `ROBOT_VISION_TIMEOUT_S` | `600` | Timeout for one image call — vision is **CPU-only and slow** on the Pi 5 (tens of s to minutes). |
 | `ROBOT_FAKE_VISION` | *(empty)* | Dry-run scripted sighting `target:horizontal:distance:confidence` (e.g. `sofa:left:near:0.9`) so explore/find runs with no camera. |
 
@@ -163,6 +164,7 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_EXPLORE_TRIGGERS` | `explore,look around,have a look,…,head towards` | Comma-separated phrases that must appear in the transcript for EXPLORE/FIND to run (else demoted to DRIVE). **Quote the value.** |
+| `ROBOT_LOOK_TRIGGERS` | `what is this,what do you see,look at this,…` | Phrases that force a **live camera LOOK** (capture a fresh frame + describe it) instead of answering from memory. **Quote the value.** |
 | `ROBOT_EXPLORE_MAX_ITERS` | `12` | **Local** agentic EXPLORE + FIND: max look→step iterations before giving up. |
 | `ROBOT_EXPLORE_MAX_ITERS_REMOTE` | `24` | **Remote** EXPLORE: 2× (Gemini/any remote is faster + smarter). |
 | `ROBOT_EXPLORE_MAX_SECONDS` | `60` | **Local** EXPLORE: wall-clock cap (whichever cap hits first ends it). |

@@ -182,7 +182,8 @@ class Memory:
         """Combined LLM-prompt context: taught people/things + recently seen objects + recent scene
         descriptions (so a LOCAL run reuses the rich scenes a REMOTE explore gathered)."""
         scenes = self.recent_scenes()
-        scene_str = ("Recently explored: " + " | ".join(s[:160] for s in scenes)) if scenes else ""
+        scene_str = ("Earlier, while exploring, I saw (from MEMORY -- NOT the current camera view): "
+                     + " | ".join(s[:160] for s in scenes)) if scenes else ""
         return " ".join(p for p in (self.facts_string(), self.context_string(max_items), scene_str) if p)
 
     def context_string(self, max_items=None):

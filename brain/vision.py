@@ -233,3 +233,31 @@ def explore_step(cfg, jpeg_bytes, goal="", memory_summary="", distances=None):
         log.warning("vision EXPLORE_STEP failed (%s) -> STOP + done", e)
         return {"description": "", "objects": [], "move": "STOP", "steer": "CENTER",
                 "speak": "", "done": True, "reason": f"vision error: {e}"}
+
+
+PERSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "person_present": {"type": "boolean"},
+        "description": {"type": "string"},
+    },
+    "required": ["person_present"],
+}
+
+
+def check_person(cfg, jpeg_bytes):
+    """Quick 'is a PERSON in front of the camera right now?' check -> {present: bool, description: str}.
+    Run on wake so the brain knows someone is there before it answers. Never raises."""
+    if not jpeg_bytes:
+        return {"present": False, "description": ""}
+    prompt = ("Look at the image. Is there a PERSON (a human) clearly in front of the camera, reasonably "
+              "close? Reply JSON only: person_present true/false, and if true a SHORT description (a few "
+              "words, e.g. 'a man with glasses'). A distant person or an empty background = false.")
+    try:
+        obj = _ollama_image(cfg, prompt, jpeg_bytes, PERSON_SCHEMA)
+        present, desc = bool(obj.get("person_present")), str(obj.get("description") or "")
+        log.info("vision PERSON: present=%s %s", present, desc[:60])
+        return {"present": present, "description": desc}
+    except Exception as e:
+        log.warning("vision person-check failed (%s)", e)
+        return {"present": False, "description": ""}

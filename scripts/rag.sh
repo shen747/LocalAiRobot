@@ -7,6 +7,7 @@
 #   ./scripts/rag.sh --all                           # facts + seen + scenes
 #   ./scripts/rag.sh --forget Shawn                  # delete a taught person/thing by name
 #   ./scripts/rag.sh --clear-facts                   # wipe all taught facts (they're re-teachable)
+#   ./scripts/rag.sh --clear-scenes                  # wipe stored explore scene descriptions (stale RAG context)
 #   ./scripts/rag.sh --clear-all                     # wipe facts AND observations (asks first)
 #   ./scripts/rag.sh --query "SELECT * FROM facts"   # run ANY SQL (read or write)
 # (For raw interactive poking, the installer also adds the sqlite3 CLI: sqlite3 "$ROBOT_MEMORY_DB")
@@ -60,6 +61,7 @@ case "${1:---facts}" in
   --forget)                 [ $# -ge 2 ] || { echo "usage: $(basename "$0") --forget <name>"; exit 2; }
                             run "DELETE FROM facts WHERE lower(name)=lower(?)" "$2" ;;
   --clear-facts)            run "DELETE FROM facts" ;;
+  --clear-scenes)           run "DELETE FROM observations WHERE source='scene'" ;;
   --clear-all)              read -r -p "Delete ALL facts AND observations from $DB? [y/N] " a
                             case "$a" in y|Y) run "DELETE FROM facts"; run "DELETE FROM observations";;
                                          *)   echo "aborted.";; esac ;;

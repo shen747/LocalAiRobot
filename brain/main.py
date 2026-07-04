@@ -108,6 +108,23 @@ def is_remember_command(text):
     return any(t in low for t in REMEMBER_TRIGGERS)
 
 
+# --- LOOK gate: a live "what do you see / what is this" request captures a FRESH camera frame and describes
+# what's visible NOW, instead of answering from stored scene memory. Promotes SAY -> LOOK on these phrases. ---
+DEFAULT_LOOK_TRIGGERS = ("what is this,what's this,what is that,what's that,what do you see,what can you "
+                         "see,what are you looking at,what am i holding,look at this,look at that,what is in "
+                         "front,what's in front,describe what you see,can you see")
+
+
+def look_triggers():
+    raw = env("ROBOT_LOOK_TRIGGERS", DEFAULT_LOOK_TRIGGERS)
+    return [t.strip().lower() for t in raw.split(",") if t.strip()]
+
+
+def is_look_command(text):
+    low = text.lower()
+    return any(t in low for t in look_triggers())
+
+
 # Crawl by default: a normal move ("come forward", "follow me") stays SLOW. Speed only climbs when the
 # user EXPLICITLY asks for it -- detected on the RAW transcript, so the model can't decide to floor it on
 # its own. The crawl cap is ROBOT_DRIVE_CRAWL_SPEED (config). Any of these words lets speed climb to 100:
@@ -172,7 +189,7 @@ SYSTEM_PROMPT = (
     "It has a forward camera and can look around. Convert the user's spoken input into "
     "ONE JSON object and nothing else.\n"
     "Keys:\n"
-    '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY, REMEMBER.\n'
+    '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY, REMEMBER, LOOK.\n'
     "    DRIVE = ordinary movement (go / turn / reverse / stop).\n"
     "    EXPLORE = only if the user asks to look around or explore.\n"
     "    FIND = only if the user asks to find, go to, or move towards a named object.\n"
@@ -180,6 +197,9 @@ SYSTEM_PROMPT = (
     "    REMEMBER = the user is naming a person or thing for you to remember (e.g. 'this is my "
     "wife Shani', 'remember this is the kitchen'). The car will photograph what its camera sees "
     "and store it. Do NOT move.\n"
+    "    LOOK = the user asks what you SEE right now, what something IS, or to look at something they are "
+    "showing you (e.g. 'what is this?', 'what do you see?', 'look at this'). Capture the camera and describe "
+    "what is CURRENTLY visible -- answer from the LIVE view, NOT from memory. Do NOT move.\n"
     "    SAY = anything else that is NOT a movement, look, or remember request -- a question, a "
     "greeting, chit-chat, or something the car cannot physically do. Answer in words; do NOT move.\n"
     '- "target": for FIND, the object to look for (e.g. "sofa"); for REMEMBER, the NAME to store '
@@ -193,8 +213,8 @@ SYSTEM_PROMPT = (
     '- "reply": the spoken response. For SAY, a natural, helpful answer (max ~30 words); '
     "for movement, a brief confirmation (max 12 words). Plain text only.\n"
     "To turn, set steer LEFT or RIGHT together with drive FORWARD (the car must be moving to "
-    "steer). Only choose DRIVE / EXPLORE / FIND when the user clearly wants the car to move or "
-    "look; when in doubt, choose SAY and just answer.\n"
+    "steer). Choose LOOK when the user asks about what you currently see; DRIVE / EXPLORE / FIND when "
+    "they want the car to move or explore; when in doubt, choose SAY and just answer.\n"
 )
 
 
@@ -441,6 +461,28 @@ def main():
         else:
             snd.start_thinking()   # env defaults: ROBOT_THINKING_LEAD_MS / ROBOT_THINKING_REPEAT_S
 
+    # Wake person-check: on "hey jarvis" we snap a frame + ask the VLM if a PERSON is in front, IN PARALLEL
+    # with the command recording/transcription -- so on the fast REMOTE backend it's essentially free, and
+    # the answer is fed into THAT turn's prompt so the robot replies person-aware. ROBOT_WAKE_PERSON_CHECK:
+    # auto (default) = ON for remote, OFF for local (a slow local VLM would just delay the command); 1/0 force.
+    person_ctx = {"note": ""}
+
+    def _person_check_enabled():
+        v = os.environ.get("ROBOT_WAKE_PERSON_CHECK", "auto").strip().lower()
+        if v in ("0", "off", "no", "false"):
+            return False
+        if v in ("1", "on", "yes", "true"):
+            return True
+        return cfg.get("ai_backend", "local") != "local"   # "auto": remote only (hidden in the record window)
+
+    def _wake_person_check():
+        try:
+            res = vision.check_person(cfg, cam.capture_jpeg())
+            person_ctx["note"] = (f"(Right now a person is in front of the camera: "
+                                  f"{res.get('description') or 'someone'}.)") if res.get("present") else ""
+        except Exception as e:
+            log.debug("wake person-check error: %s", e)
+
     def handle_command(text, source="voice"):
         """Run ONE command turn: text -> LLM intent JSON -> action (drive/say/remember/find/explore).
         Shared by the voice loop AND the phone HTTP endpoint; turn_lock keeps the two from overlapping.
@@ -451,7 +493,12 @@ def main():
             _start_thinking()              # proof-of-life cue while the model runs (backend-aware timing)
             t_think = time.monotonic()
             try:
-                resp = query_ollama(cfg, text, context=mem.prompt_context())
+                ctx = mem.prompt_context()
+                if source == "voice":
+                    if person_ctx.get("note"):
+                        ctx = (person_ctx["note"] + " " + ctx).strip()
+                    person_ctx["note"] = ""   # consume: fresh each wake, never leak into the next turn
+                resp = query_ollama(cfg, text, context=ctx)
             except Exception as e:
                 snd.stop_thinking()
                 print(f"llm: {e}", file=sys.stderr)
@@ -482,9 +529,16 @@ def main():
             if action == "REMEMBER" and not str(target or "").strip():
                 action = "SAY"       # asked to remember but no name -> just reply, store nothing
 
+            # A live "what do you see / what is this" must LOOK (fresh capture) rather than answer from
+            # stored scene memory -- promote SAY -> LOOK on those phrases even if the model chose SAY.
+            if action == "SAY" and is_look_command(text):
+                print("(gate: a 'what do you see' question -> LOOK, a fresh camera look)")
+                log.info("look gate: promoting SAY -> LOOK (live view request)")
+                action = "LOOK"
+
             # --- HTTP hardening: over the network, BLOCK the camera-using actions unless explicitly
             # allowed, so a stolen token can't even get a one-shot photo description. Downgrade to SAY. ---
-            if source == "http" and action in ("REMEMBER", "FIND", "EXPLORE") \
+            if source == "http" and action in ("REMEMBER", "FIND", "EXPLORE", "LOOK") \
                     and os.environ.get("ROBOT_HTTP_ALLOW_CAMERA", "0") != "1":
                 log.info("http: blocking camera action %s (ROBOT_HTTP_ALLOW_CAMERA=0) -> SAY", action)
                 action, reply = "SAY", "I can only drive and chat over the phone, not use my camera."
@@ -516,6 +570,19 @@ def main():
                 img_path = mem.save_photo(jpeg, name)
                 mem.remember_fact(name, note, desc, img_path)
                 reply = reply or f"Okay, I'll remember {name}."
+                say(reply)
+            elif action == "LOOK":
+                # Live look: capture a FRESH frame and describe what's visible NOW (never from memory/RAG).
+                print("action=LOOK")
+                driver.stop()
+                fc.set_expression("capturing")
+                jpeg = cam.capture_jpeg()
+                fc.set_expression("thinking")
+                _start_thinking()
+                desc = vision.describe(cfg, jpeg)
+                snd.stop_thinking()
+                mem.record_scene(desc.get("description", ""), desc.get("objects", []), driver.distances())
+                reply = desc.get("description") or "I'm not sure what I'm looking at."
                 say(reply)
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")
@@ -642,6 +709,10 @@ def main():
                 continue   # a background voice-abort listen was cancelled; just re-enter the wait
             if trigger == "WAKE":
                 snd.play("wake_ack")       # wake-ack: "yes?/hi" -- responding to being summoned, before recording
+                # Snap + person-check IN PARALLEL with the record+transcribe below (so it's ~free on remote).
+                if _person_check_enabled() and getattr(cam, "available", False):
+                    person_ctx["note"] = ""
+                    threading.Thread(target=_wake_person_check, daemon=True).start()
 
             fc.set_expression("listening")
             try:
