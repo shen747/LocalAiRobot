@@ -36,3 +36,4 @@ __pycache__/
 
 # Scratch implementation plan (working notes; not part of the shipped repo)
 /PLAN.md
+/BENCH_SCRIPTS.txt
