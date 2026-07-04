@@ -202,6 +202,7 @@ class WakeWord:
         best_score = 0.0
         best_amp = 0
         next_report = time.time() + 15.0
+        next_overflow_log = 0.0
         logged = False
         try:
             while result is None:
@@ -257,7 +258,21 @@ class WakeWord:
                                         result = "QUIT"      # 'q' still quits over SSH
                                         break
                                     # any other key (incl. ENTER) is ignored: live is wake-word-only
-                            data, _ = stream.read(chunk)
+                            data, overflowed = stream.read(chunk)
+                            if overflowed:
+                                # PortAudio DROPPED input samples -- the loop couldn't read the mic in time
+                                # (CPU/GIL contention from the control loop + sensors). The model's rolling
+                                # feature buffer is now TORN, which collapses the wake score -- the classic
+                                # "worked for a while, then went deaf". Reset so it rebuilds from clean audio,
+                                # and skip this torn chunk. Repeated logs = the load is starving the mic read.
+                                self._model.reset()
+                                hits = 0
+                                if time.time() >= next_overflow_log:
+                                    log.warning("wake: mic input OVERFLOWED -- too busy to read audio in time; "
+                                                "model reset. If this keeps logging, the wake word stays "
+                                                "sluggish until the load eases.")
+                                    next_overflow_log = time.time() + 10.0
+                                continue
                             audio = np.frombuffer(data, dtype=np.int16)
                             if audio.ndim > 1:
                                 audio = audio.flatten()
