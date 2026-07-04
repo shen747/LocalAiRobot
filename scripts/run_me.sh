@@ -28,6 +28,13 @@ if [ -f config/robot.env ]; then
   set -a; . config/robot.env; set +a
 fi
 
+# GPIO backend: the Pi 5 uses lgpio (the modern /dev/gpiochip driver). pigpio is NOT supported on the Pi 5
+# (it can't reach the RP1 I/O controller), so we pin the correct, deterministic factory here rather than
+# risk gpiozero picking a wrong one. NOTE: this does NOT remove the software-timing jitter -- that's what
+# the ultrasonic gate DEBOUNCE (ROBOT_OBSTACLE_DEBOUNCE) handles; this is just the right backend. Respects
+# an existing override, and is a harmless no-op in --dry (the driver uses fakes there).
+export GPIOZERO_PIN_FACTORY="${GPIOZERO_PIN_FACTORY:-lgpio}"
+
 # --- boot-service helpers (systemd autostart; kept in here so there's no extra script file) ---
 install_boot() {
   local user="$(id -un)" src="$REPO/scripts/robot.service" unit="/etc/systemd/system/robot.service"
