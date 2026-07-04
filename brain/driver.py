@@ -167,6 +167,10 @@ class RobotDriver:
         # loop's CPU load. Require this many CONSECUTIVE close/failed reads before ABORTING a move, so one
         # spurious frame can't kill a drive. Each frame still holds neutral, so it never drives while unsure.
         self.obstacle_debounce = max(1, _envi("ROBOT_OBSTACLE_DEBOUNCE", 3))
+        # Sensor echo range. gpiozero times the echo pulse in SOFTWARE on the Pi 5 (no pigpio), so a ping that
+        # gets NO echo busy-waits the FULL timeout (proportional to max_distance), holding the GIL and starving
+        # the wake-word mic. Cap it low (the FORWARD gate only cares about <30cm) to slash that wasted CPU.
+        self.sensor_max_m = _envf("ROBOT_SENSOR_MAX_DISTANCE_M", 2.0)
         trig = _envi("ROBOT_TRIG_PIN", 23)
         echo = _envi("ROBOT_ECHO_PIN", 24)
         left_trig = _envi("ROBOT_LEFT_TRIG_PIN", 5)
@@ -283,7 +287,7 @@ class RobotDriver:
                     # HANGS the 20 Hz safety loop the first time the FORWARD gate reads it. partial=True
                     # returns whatever's available immediately, so a bad sensor can never stall the loop.
                     self._sensors[name] = DistanceSensor(
-                        echo=e_pin, trigger=t_pin, max_distance=4.0, queue_len=3, partial=True)
+                        echo=e_pin, trigger=t_pin, max_distance=self.sensor_max_m, queue_len=3, partial=True)
                 except Exception as e:
                     log.error("HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
                               "-> faked; its obstacle gate is DISABLED.", name, t_pin, e_pin, e)

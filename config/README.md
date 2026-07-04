@@ -112,6 +112,7 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 |---|---|---|
 | `ROBOT_OBSTACLE_CM` | `30` | FORWARD motion is cut when the front beam reads closer than this. |
 | `ROBOT_OBSTACLE_DEBOUNCE` | `3` | Consecutive close/failed front reads before a move **aborts** — rides out gpiozero's occasional garbage frame (even negative cm) under load. `1` = old behaviour. Each frame still holds neutral, so it never drives while unsure. |
+| `ROBOT_SENSOR_MAX_DISTANCE_M` | `2.0` | HC-SR04P echo range cap (m). Software-timed on the Pi 5, so a **no-echo** ping busy-waits the full timeout (∝ this) and can starve the wake mic — keep it low (the gate only needs <30 cm). |
 | `ROBOT_TRIG_PIN` | `23` | Front sensor **TRIG** (BCM GPIO number). |
 | `ROBOT_ECHO_PIN` | `24` | Front sensor **ECHO** (BCM; HC-SR04**P** ECHO is 3.3 V — a bare HC-SR04 needs a divider). |
 
@@ -211,6 +212,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 | `ROBOT_WAKEWORD_TRIGGER_LEVEL` | `1` | Consecutive activations before firing (raise to `2` if it false-fires). |
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |
 | `ROBOT_WAKEWORD_DEVICE` | *(empty)* | The **wake mic** (PortAudio): an index, or a unique substring of the mic's name (e.g. `PnP`) — by-name survives card renumbering. Empty = default input. |
+| `ROBOT_WAKEWORD_LATENCY` | `high` | Mic input **buffer**: `high` (device default — absorbs CPU stalls so a busy loop can't drop samples → no OVERFLOW/deafness), a float = seconds (e.g. `0.3`), or `low` (old tight buffer). Bigger = a touch more wake latency. |
 | `ROBOT_FAKE_WAKE` | `0` | Dry-run: `1` auto-fires the wake once; else type `r` at the prompt to simulate it. |
 
 ## Audio cues / earcons

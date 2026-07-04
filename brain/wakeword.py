@@ -94,6 +94,15 @@ class WakeWord:
         self.label = self._label.replace("_", " ")   # what to SAY (main.py banner); from the model file
         dev = os.environ.get("ROBOT_WAKEWORD_DEVICE", "").strip()
         self._device = int(dev) if dev.isdigit() else (dev or None)
+        # Mic input buffer. On a busy Pi the wake loop can be briefly starved of the GIL (the software-timed
+        # gpiozero sensors + the 20 Hz control loop), so PortAudio drops mic samples -> OVERFLOW -> torn model
+        # -> deaf. A BIGGER input buffer absorbs those stalls (audio is delayed a little, not dropped). 'high'
+        # = the device's generous default; a float = seconds; 'low' = the old tight buffer.
+        _lat = os.environ.get("ROBOT_WAKEWORD_LATENCY", "high").strip() or "high"
+        try:
+            self._latency = float(_lat)
+        except ValueError:
+            self._latency = _lat
 
         # Dry-run is ALWAYS interactive (bench testing with no mic): ENTER=talk, 'r'=simulate a wake,
         # 'q'=quit. This is the ONLY place the ENTER trigger survives -- live mode is wake-word-only.
@@ -225,8 +234,8 @@ class WakeWord:
                 # Hold audio_lock while the stream is open: the wake mic must not be live while Piper or an
                 # earcon plays (self-trigger defense). It's dropped above whenever another turn asks (yield).
                 with audio_lock:
-                    with sd.InputStream(samplerate=rate, channels=1, dtype="int16",
-                                        blocksize=chunk, device=self._device) as stream:
+                    with sd.InputStream(samplerate=rate, channels=1, dtype="int16", blocksize=chunk,
+                                        device=self._device, latency=self._latency) as stream:
                         if not logged:
                             # Log the resolved audio path once: "capture 44100->16000Hz resampled" vs the
                             # threshold/silence_floor is the first thing to check when a wake won't fire.
