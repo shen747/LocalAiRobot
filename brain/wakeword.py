@@ -40,6 +40,7 @@ import queue
 import sys
 import threading
 import time
+from math import gcd
 
 from driver import dry_run_enabled
 
@@ -389,20 +390,28 @@ class WakeWord:
         return result
 
     def _capture_rate(self, sd):
-        """Pick a sample rate the input device can actually OPEN: 16 kHz if possible, else the
-        device's own default, else the common 48/44.1 kHz. Anything != 16 kHz is resampled."""
-        candidates = [_SAMPLE_RATE]
+        """Pick a sample rate the input device can OPEN, PREFERRING 16 kHz (no resample) then CLEAN
+        integer-ratio rates (48k=3:1, 32k=2:1) over the device default / 44.1 kHz. Why the order matters:
+        44100->16000 is a 160:441 polyphase resample whose ~8800-tap filter is redesigned every 80ms chunk
+        -- that per-chunk cost can push the predict loop over real-time and DROP audio (the wake goes deaf).
+        48000->16000 is a trivial 3:1 decimation (~61-tap filter). ROBOT_WAKEWORD_CAPTURE_RATE forces one."""
+        forced = _envi("ROBOT_WAKEWORD_CAPTURE_RATE", 0)
+        candidates = ([forced] if forced > 0 else []) + [_SAMPLE_RATE, 48000, 32000]
         try:
             candidates.append(int(sd.query_devices(self._device, "input")["default_samplerate"]))
         except Exception:
             pass
-        candidates += [48000, 44100]
+        candidates.append(44100)
         for rate in dict.fromkeys(candidates):   # dedupe, keep order
             try:
                 sd.check_input_settings(device=self._device, samplerate=rate,
                                         channels=1, dtype="int16")
                 if rate != _SAMPLE_RATE:
-                    log.info("wake: mic can't open 16 kHz -- capturing at %d Hz and resampling", rate)
+                    ratio = ("clean %d:1 decimation" % (rate // _SAMPLE_RATE)
+                             if rate % _SAMPLE_RATE == 0 else "polyphase %d:%d -- costlier per chunk"
+                             % (_SAMPLE_RATE // gcd(_SAMPLE_RATE, rate), rate // gcd(_SAMPLE_RATE, rate)))
+                    log.info("wake: mic can't open 16 kHz -- capturing at %d Hz and resampling (%s)",
+                             rate, ratio)
                 return rate
             except Exception:
                 continue
@@ -410,8 +419,9 @@ class WakeWord:
 
     @staticmethod
     def _to_16k(np, audio, rate):
-        """Resample one int16 chunk from `rate` to 16 kHz (scipy ships with openwakeword)."""
-        from math import gcd
+        """Resample one int16 chunk from `rate` to 16 kHz (scipy ships with openwakeword). At a clean
+        ratio (e.g. 48000->16000 = 3:1) the polyphase filter is tiny and this is cheap; _capture_rate
+        prefers those exactly so this stays well under the per-chunk budget."""
         from scipy.signal import resample_poly
         g = gcd(_SAMPLE_RATE, rate)
         res = resample_poly(audio.astype(np.float32), _SAMPLE_RATE // g, rate // g)
