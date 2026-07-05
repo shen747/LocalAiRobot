@@ -206,6 +206,13 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 |---|---|---|
 | `ROBOT_VISION_MODEL` | `moondream` | Separate VLM for camera frames (decouples vision latency from the text brain). Empty falls back to sharing `ROBOT_MODEL`. Switch: `ollama pull <new>`, set here, re-source. |
 
+## Conversation follow-ups
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_FOLLOWUP_ENABLE` | `1` | `1` = after a wake, keep taking commands with **no** "hey jarvis" until you go quiet — a natural back-and-forth. `0` = require the wake word every single turn (old behaviour). |
+| `ROBOT_FOLLOWUP_SILENCE_S` | `12` | Seconds of silence mid-conversation before it goes back to sleep (wake word needed again). Granularity is ~one record window (`ROBOT_RECORD_SECS`), so the effective wait rounds up to the next window. |
+
 ## Wake word (openWakeWord)
 
 | Key | Default | What it does |

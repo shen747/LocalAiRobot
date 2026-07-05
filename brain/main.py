@@ -702,6 +702,14 @@ def main():
             log.warning("remote endpoint failed to start: %s", e)
             remote_srv = None
 
+    # Conversation follow-ups: after a wake, keep taking commands with NO wake word until the operator
+    # goes quiet for ROBOT_FOLLOWUP_SILENCE_S -- so a back-and-forth doesn't need "hey jarvis" every turn.
+    # Both keys have safe code defaults, so config/robot.env need not set them.
+    followup_enable = os.environ.get("ROBOT_FOLLOWUP_ENABLE", "1") == "1"
+    followup_silence_s = max(1, _as_int(os.environ.get("ROBOT_FOLLOWUP_SILENCE_S"), 12))
+    log.info("conversation: follow-ups %s%s", "ON" if followup_enable else "OFF (wake word every turn)",
+             f" (sleep after %ds of silence)" % followup_silence_s if followup_enable else "")
+
     try:
         while True:
             fc.set_expression("idle")
@@ -723,22 +731,48 @@ def main():
                     person_ctx["note"] = ""
                     threading.Thread(target=_wake_person_check, daemon=True).start()
 
-            fc.set_expression("listening")
-            try:
-                text = listen_and_transcribe(cfg)
-            except Exception as e:
-                print(f"listen: {e}", file=sys.stderr)
-                log.warning("listen failed: %s", e)
-                continue
+            # --- Conversation loop: the wake OPENED it; now take follow-ups with NO wake word until
+            #     followup_silence_s of quiet (or a capture error) drops us back to the wake word. The
+            #     person-check + wake-ack above are wake-ONLY -- follow-ups just listen. ---
+            last_voice = time.monotonic()
+            while True:
+                fc.set_expression("listening")
+                try:
+                    text = listen_and_transcribe(cfg)
+                except Exception as e:
+                    print(f"listen: {e}", file=sys.stderr)
+                    log.warning("listen failed: %s -- ending the conversation, back to the wake word", e)
+                    break
 
-            text = text.strip()
-            if len(text) < 2 or is_noise(text):
-                print("(ignored: empty / noise)")
-                continue
-            print(f"Heard: {text!r}")
-            snd.play("ack")                # command-ack: "got it/on it" -- command accepted, AFTER the noise filter
+                text = text.strip()
+                if len(text) < 2 or is_noise(text):
+                    print("(ignored: empty / noise)")
+                    if not followup_enable:
+                        break
+                    silent_for = time.monotonic() - last_voice
+                    if silent_for >= followup_silence_s:
+                        log.info("conversation: %.0fs of silence -> sleeping (say the wake word to talk again)",
+                                 silent_for)
+                        break
+                    fc.set_expression("idle")   # nothing heard yet; keep waiting for a follow-up
+                    continue
 
-            handle_command(text, source="voice")   # thinking -> LLM intent -> action (shared with HTTP)
+                print(f"Heard: {text!r}")
+                snd.play("ack")                # command-ack: "got it/on it" -- accepted, AFTER the noise filter
+                try:
+                    handle_command(text, source="voice")   # thinking -> LLM intent -> action (shared w/ HTTP)
+                except Exception as e:
+                    # A single turn must NEVER crash the whole robot: log the FULL traceback (so we can see
+                    # exactly what broke), stop the motors, tell the operator, and keep the conversation alive.
+                    log.exception("voice turn crashed: %s", e)
+                    driver.stop()
+                    try:
+                        say("Uh oh. Something went wrong on my end.")
+                    except Exception:
+                        pass
+                last_voice = time.monotonic()
+                if not followup_enable:
+                    break
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
