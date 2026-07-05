@@ -36,6 +36,7 @@
 
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -85,9 +86,13 @@ class WakeWord:
         # then went permanently deaf"). When that persists, tear the stream DOWN and reopen a fresh one (the
         # HTTP-yield path already reopens cleanly, so this reuses a proven-safe rebuild). 0 disables it.
         self.stream_reset_s = _envf("ROBOT_WAKEWORD_STREAM_RESET_S", 15.0)
-        # Health: log a DEGRADED warning when this %% of mic reads overflow in a ~15s window -- the
-        # early-warning that the wake word is being starved (before it goes fully deaf).
+        # Health: log a DEGRADED warning when this %% of mic chunks get dropped in a ~15s window -- the
+        # early-warning that the predict loop can't keep up (before the wake word gets sluggish).
         self.degraded_pct = _envf("ROBOT_WAKEWORD_DEGRADED_PCT", 20.0)
+        # Decouple mic capture from predict(): a PortAudio callback drains the mic into a bounded queue
+        # (~q_max chunks of jitter buffer, chunk = 80ms) while this loop predicts. Bigger = absorbs longer
+        # predict spikes before a chunk is dropped, at the cost of a little worst-case wake latency.
+        self._q_max = max(4, _envi("ROBOT_WAKEWORD_QUEUE_MAX", 32))
         # A non-voice turn (e.g. an HTTP command) needs the audio path WHILE we're listening. pause_mic()
         # sets _yield so the listen loop drops audio_lock + the mic (confirmed via _yielded); resume_mic()
         # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
@@ -249,19 +254,41 @@ class WakeWord:
                 # Hold audio_lock while the stream is open: the wake mic must not be live while Piper or an
                 # earcon plays (self-trigger defense). It's dropped above whenever another turn asks (yield).
                 with audio_lock:
+                    # Decouple mic READ from predict(): a PortAudio CALLBACK (its own high-priority thread)
+                    # drains the mic into audio_q; THIS loop only consumes + predicts. So a slow predict can
+                    # no longer back PortAudio's buffer up -> the read-overflow "went deaf" failure is gone,
+                    # and the queue absorbs predict jitter with NO fixed added latency. If the consumer truly
+                    # can't keep up for ~q_max chunks, the callback drops the OLDEST chunk and flags a tear
+                    # (a clean, chosen drop) instead of PortAudio silently shredding the buffer.
+                    audio_q = queue.Queue(maxsize=self._q_max)
+
+                    def _cb(indata, frames, tinfo, status):
+                        # Runs in PortAudio's thread -- keep it TINY (copy + enqueue) so the mic stays drained.
+                        try:
+                            audio_q.put_nowait((indata[:, 0].copy(), bool(status.input_overflow)))
+                        except queue.Full:
+                            try:
+                                audio_q.get_nowait()      # consumer behind -> drop oldest, mark this one torn
+                            except queue.Empty:
+                                pass
+                            try:
+                                audio_q.put_nowait((indata[:, 0].copy(), True))
+                            except queue.Full:
+                                pass
+
                     with sd.InputStream(samplerate=rate, channels=1, dtype="int16", blocksize=chunk,
-                                        device=self._device, latency=self._latency) as stream:
+                                        device=self._device, latency=self._latency, callback=_cb):
                         if not logged:
                             # Log the resolved audio path once: "capture 44100->16000Hz resampled" vs the
                             # threshold/silence_floor is the first thing to check when a wake won't fire.
                             log.info("wake: listening for '%s' on device=%s (capture %dHz%s, chunk=%d, "
-                                     "threshold=%.2f, silence_floor=%d)%s", self._label,
+                                     "threshold=%.2f, silence_floor=%d, callback+queue<=%d)%s", self._label,
                                      self._device if self._device is not None else "default", rate,
                                      f"->{_SAMPLE_RATE}Hz resampled" if rate != _SAMPLE_RATE else "",
-                                     chunk, self.threshold, _SILENCE_FLOOR,
+                                     chunk, self.threshold, _SILENCE_FLOOR, self._q_max,
                                      "" if watch_stdin else " [headless]")
                             logged = True
-                        last_clean = time.time()   # for the persistent-overflow stream-rebuild watchdog
+                        last_clean = time.time()   # for the persistent-drop stream-rebuild watchdog
                         while True:
                             if self._cancel.is_set():
                                 result = "CANCELLED"
@@ -283,34 +310,35 @@ class WakeWord:
                                         result = "QUIT"      # 'q' still quits over SSH
                                         break
                                     # any other key (incl. ENTER) is ignored: live is wake-word-only
-                            data, overflowed = stream.read(chunk)
+                            try:
+                                audio, overflowed = audio_q.get(timeout=0.5)
+                            except queue.Empty:
+                                continue   # no chunk yet -> re-loop so _yield/_cancel stay responsive
                             rd_window += 1
                             if overflowed:
                                 ov_window += 1
                                 ov_total += 1
-                                # PortAudio DROPPED input samples -- the loop couldn't read the mic in time
-                                # (CPU/GIL contention from the control loop + sensors). The model's rolling
-                                # feature buffer is now TORN, which collapses the wake score -- the classic
-                                # "worked for a while, then went deaf". Reset so it rebuilds from clean audio,
-                                # and skip this torn chunk. Repeated logs = the load is starving the mic read.
+                                # A chunk was DROPPED: either PortAudio flagged input_overflow, or the callback
+                                # discarded the oldest because the predict loop couldn't keep up for q_max chunks.
+                                # openWakeWord's rolling buffer is now torn -> reset so it rebuilds from
+                                # contiguous audio. Persisting = predict can't keep up (raise the queue / ease load).
                                 self._model.reset()
                                 hits = 0
                                 if time.time() >= next_overflow_log:
-                                    log.warning("wake: mic input OVERFLOWED -- too busy to read audio in time; "
-                                                "model reset. If this keeps logging, the wake word stays "
-                                                "sluggish until the load eases.")
+                                    log.warning("wake: mic chunk DROPPED -- the predict loop fell behind "
+                                                "(queue full); model reset. Persisting = raise "
+                                                "ROBOT_WAKEWORD_QUEUE_MAX or ease the CPU load.")
                                     next_overflow_log = time.time() + 10.0
-                                # Self-heal: if NO clean read has landed for stream_reset_s, the stream itself
-                                # is wedged (reset() can't fix that). Break to the outer loop, which closes
-                                # this InputStream and opens a fresh one -- recovers a permanently-deaf mic.
+                                # Self-heal: if NO clean chunk has been consumed for stream_reset_s, the stream
+                                # itself is wedged (reset can't fix that). Break to the outer loop, which closes
+                                # this InputStream and opens a fresh one -- recovers a permanently-stuck mic.
                                 if self.stream_reset_s > 0 and (time.time() - last_clean) >= self.stream_reset_s:
-                                    log.warning("wake: rebuilding the mic stream after %.0fs of continuous "
-                                                "overflow (self-heal -- reopening PortAudio).",
+                                    log.warning("wake: rebuilding the mic stream after %.0fs with no clean "
+                                                "audio (self-heal -- reopening PortAudio).",
                                                 time.time() - last_clean)
                                     break
                                 continue
-                            last_clean = time.time()   # a clean read landed -> reset the rebuild watchdog
-                            audio = np.frombuffer(data, dtype=np.int16)
+                            last_clean = time.time()   # a clean chunk landed -> reset the rebuild watchdog
                             if audio.ndim > 1:
                                 audio = audio.flatten()
                             if rate != _SAMPLE_RATE:
@@ -334,23 +362,21 @@ class WakeWord:
                                 else:
                                     hits = 0
                             # Periodic HEALTH read-out (every ~15s). ALWAYS logged -- a robot that must run
-                            # "forever" can't degrade silently, so this makes the mic-starvation signature
-                            # (overflow %) visible in the log even in a quiet room. The threshold hint is
-                            # only added when someone actually spoke (so a silent room isn't nagged).
+                            # "forever" can't degrade silently, so this makes the drop signature (dropped %)
+                            # visible in the log even in a quiet room. The threshold hint is only added when
+                            # someone actually spoke (so a silent room isn't nagged).
                             if time.time() >= next_report:
                                 pct = (100.0 * ov_window / rd_window) if rd_window else 0.0
                                 spoke = best_amp >= _SILENCE_FLOOR
                                 hint = ((" (threshold=%.2f -- lower ROBOT_WAKEWORD_THRESHOLD to wake more "
                                          "easily, raise it if it false-fires)") % self.threshold) if spoke else ""
-                                log.info("wake HEALTH: %d/%d reads overflowed (%.0f%%) last ~15s, %d total; "
+                                log.info("wake HEALTH: %d/%d chunks dropped (%.0f%%) last ~15s, %d total; "
                                          "best score=%.2f, loudest=%d%s", ov_window, rd_window, pct, ov_total,
                                          best_score, best_amp, hint)
                                 if pct >= self.degraded_pct and rd_window >= 5:
-                                    log.warning("wake DEGRADED: %.0f%% of mic reads overflowed in the last ~15s "
-                                                "-- the wake word is starved (slow/at risk of going deaf). Ease "
-                                                "the CPU load: wire/aim the ultrasonic sensors so pings get an "
-                                                "echo, lower ROBOT_SENSOR_MAX_DISTANCE_M, or run fewer sensors.",
-                                                pct)
+                                    log.warning("wake DEGRADED: %.0f%% of mic chunks dropped in the last ~15s "
+                                                "-- the predict loop can't keep up. Raise ROBOT_WAKEWORD_QUEUE_MAX "
+                                                "to buffer more, or reduce CPU load on the Pi.", pct)
                                 best_score = 0.0
                                 best_amp = 0
                                 ov_window = 0
