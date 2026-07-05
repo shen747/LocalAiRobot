@@ -169,19 +169,19 @@ class Diag:
                     for _ in range(4):                # ~0.3s of samples -- enough to read + catch a no-echo
                         time.sleep(0.08)
                         reads.append(s.distance * 100.0)
-                    no_echo = any("echo" in str(w.message).lower() for w in caught)
-                # A WORKING sensor returns at least one REAL echo (< max range) across the ~0.8s window,
-                # even if a far/soft target (e.g. ~2 m) makes the odd ping miss (gpiozero then warns +
-                # returns max). So PASS on ANY valid reading; only a sensor that NEVER echoes is a failure.
-                # (This is why scripts/ultrasonic_sensor_probe.sh -- which just needs one good ping -- reads
-                # a sensor the old all-or-nothing 'any no-echo warning = fail' check wrongly flagged.)
-                valid = [r for r in reads if r < 395.0]
-                if valid:
-                    self.ok(label, f"reading {valid[-1]:.0f} cm")
-                elif no_echo:
-                    self.bad(label, "NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring", DOC_SENS)
+                # (the catch_warnings above just SUPPRESSES gpiozero's no-echo warning spam during the reads)
+                # A WIRED, responding sensor returns a PLAUSIBLE distance (HC-SR04 range ~2..400 cm) at least
+                # once across the window -- even if a far/soft target makes the odd ping miss. An UNCONNECTED
+                # sensor reads garbage: ~0 cm (ECHO pin floating LOW) or max/no-echo (floating high / dead).
+                # Require a plausible reading to PASS -- 0 cm is NOT a real reading (that was the bug where an
+                # unplugged sensor passed). Aim it at a wall / your hand during the test, not open space.
+                plausible = [r for r in reads if 2.0 <= r < 395.0]
+                if plausible:
+                    self.ok(label, f"reading {plausible[-1]:.0f} cm")
+                elif any(r < 2.0 for r in reads):
+                    self.bad(label, "reads ~0 cm -- ECHO pin floating/unconnected: check ECHO/TRIG + 3.3V wiring", DOC_SENS)
                 else:
-                    self.ok(label, f"reading ~{reads[-1]:.0f} cm (max range -- aimed at open space)")
+                    self.bad(label, "no echo / out of range -- not responding: check ECHO/TRIG + 3.3V wiring (aim it at a wall)", DOC_SENS)
             except Exception as e:
                 self.bad(label, f"read failed: {e}", DOC_SENS)
             finally:
