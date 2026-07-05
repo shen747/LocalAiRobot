@@ -80,6 +80,11 @@ class WakeWord:
         self.threshold = _envf("ROBOT_WAKEWORD_THRESHOLD", 0.5)
         self.trigger_level = max(1, _envi("ROBOT_WAKEWORD_TRIGGER_LEVEL", 1))
         self.cooldown_s = _envf("ROBOT_WAKEWORD_COOLDOWN_S", 2.0)
+        # Self-heal: if the mic OVERFLOWS continuously for this long, model.reset() alone isn't clearing it
+        # -- a PortAudio InputStream can wedge into an overflow spiral (the classic "ran fine for a while,
+        # then went permanently deaf"). When that persists, tear the stream DOWN and reopen a fresh one (the
+        # HTTP-yield path already reopens cleanly, so this reuses a proven-safe rebuild). 0 disables it.
+        self.stream_reset_s = _envf("ROBOT_WAKEWORD_STREAM_RESET_S", 15.0)
         # A non-voice turn (e.g. an HTTP command) needs the audio path WHILE we're listening. pause_mic()
         # sets _yield so the listen loop drops audio_lock + the mic (confirmed via _yielded); resume_mic()
         # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
@@ -246,6 +251,7 @@ class WakeWord:
                                      chunk, self.threshold, _SILENCE_FLOOR,
                                      "" if watch_stdin else " [headless]")
                             logged = True
+                        last_clean = time.time()   # for the persistent-overflow stream-rebuild watchdog
                         while True:
                             if self._cancel.is_set():
                                 result = "CANCELLED"
@@ -281,7 +287,16 @@ class WakeWord:
                                                 "model reset. If this keeps logging, the wake word stays "
                                                 "sluggish until the load eases.")
                                     next_overflow_log = time.time() + 10.0
+                                # Self-heal: if NO clean read has landed for stream_reset_s, the stream itself
+                                # is wedged (reset() can't fix that). Break to the outer loop, which closes
+                                # this InputStream and opens a fresh one -- recovers a permanently-deaf mic.
+                                if self.stream_reset_s > 0 and (time.time() - last_clean) >= self.stream_reset_s:
+                                    log.warning("wake: rebuilding the mic stream after %.0fs of continuous "
+                                                "overflow (self-heal -- reopening PortAudio).",
+                                                time.time() - last_clean)
+                                    break
                                 continue
+                            last_clean = time.time()   # a clean read landed -> reset the rebuild watchdog
                             audio = np.frombuffer(data, dtype=np.int16)
                             if audio.ndim > 1:
                                 audio = audio.flatten()

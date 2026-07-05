@@ -213,6 +213,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 | `ROBOT_WAKEWORD_COOLDOWN_S` | `2.0` | Quiet window after a wake / after TTS before re-listening (anti self-trigger). |
 | `ROBOT_WAKEWORD_DEVICE` | *(empty)* | The **wake mic** (PortAudio): an index, or a unique substring of the mic's name (e.g. `PnP`) — by-name survives card renumbering. Empty = default input. |
 | `ROBOT_WAKEWORD_LATENCY` | `high` | Mic input **buffer**: `high` (device default — absorbs CPU stalls so a busy loop can't drop samples → no OVERFLOW/deafness), a float = seconds (e.g. `0.3`), or `low` (old tight buffer). Bigger = a touch more wake latency. |
+| `ROBOT_WAKEWORD_STREAM_RESET_S` | `15` | **Self-heal.** If the mic OVERFLOWS continuously for this many seconds, `model.reset()` alone can't clear a wedged PortAudio stream — so the listener tears it down and reopens a fresh one (recovers a mic that went permanently deaf after a long run). `0` disables. |
 | `ROBOT_FAKE_WAKE` | `0` | Dry-run: `1` auto-fires the wake once; else type `r` at the prompt to simulate it. |
 
 ## Audio cues / earcons
