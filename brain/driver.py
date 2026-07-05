@@ -336,8 +336,9 @@ class RobotDriver:
         # --verbose: a low-rate background beam read-out so you can watch the sensors even while idle
         # (the control loop only reads the front beam while DRIVING, so without this you'd see nothing).
         if self.sensor_verbose:
-            log.info("SENSOR VERBOSE: logging front/left/right every %.1fs (ROBOT_SENSOR_VERBOSE=1)",
-                     self.sensor_log_period)
+            log.info("SENSOR VERBOSE: logging front/left/right every %.1fs -- and idle-quiescing is OFF "
+                     "in verbose (sensors stay ON so you can watch them, so expect the wake mic to overflow; "
+                     "run WITHOUT --verbose to see the quiescing fix).", self.sensor_log_period)
             threading.Thread(target=self._sensor_log_loop, daemon=True).start()
 
     # ---------- public API (mutate state only; the control thread drives the hardware) ----------
@@ -473,7 +474,7 @@ class RobotDriver:
                 return
             self._sensing_paused = True   # set FIRST: distance_cm short-circuits before touching a closing sensor
             self._close_sensor_objs(list(self._sensors.values()))
-        log.debug("sensing PAUSED (idle) -- ultrasonic threads stopped to free the wake-word mic")
+        log.info("sensing PAUSED (idle) -- ultrasonic threads stopped to free the wake-word mic")
 
     def resume_sensing(self):
         """Rebuild the ultrasonics after a pause (before a drive/explore reads them). Idempotent; no-op in
@@ -486,7 +487,7 @@ class RobotDriver:
             self._sensors = self._build_sensor_objs(quiet=True)   # fresh objects/threads
             self.sensor = self._sensors.get("front", self.sensor)
             self._sensing_paused = False   # clear LAST: reads see the new sensors, never a half-built dict
-        log.debug("sensing RESUMED -- ultrasonic sensors rebuilt")
+        log.info("sensing RESUMED -- ultrasonic sensors rebuilt for this drive/turn")
 
     # ---------- internals ----------
     def _arm(self):
