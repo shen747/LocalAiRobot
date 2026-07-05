@@ -85,6 +85,9 @@ class WakeWord:
         # then went permanently deaf"). When that persists, tear the stream DOWN and reopen a fresh one (the
         # HTTP-yield path already reopens cleanly, so this reuses a proven-safe rebuild). 0 disables it.
         self.stream_reset_s = _envf("ROBOT_WAKEWORD_STREAM_RESET_S", 15.0)
+        # Health: log a DEGRADED warning when this %% of mic reads overflow in a ~15s window -- the
+        # early-warning that the wake word is being starved (before it goes fully deaf).
+        self.degraded_pct = _envf("ROBOT_WAKEWORD_DEGRADED_PCT", 20.0)
         # A non-voice turn (e.g. an HTTP command) needs the audio path WHILE we're listening. pause_mic()
         # sets _yield so the listen loop drops audio_lock + the mic (confirmed via _yielded); resume_mic()
         # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
@@ -217,6 +220,13 @@ class WakeWord:
         best_amp = 0
         next_report = time.time() + 15.0
         next_overflow_log = 0.0
+        # Health telemetry: how many mic reads OVERFLOWED (were dropped, tearing the model) vs total, in
+        # the current ~15s window + cumulatively. A high overflow % is the signature of "worked for a few
+        # minutes then went sluggish/deaf" -- surfaced every window so it's DETECTABLE in the log (the whole
+        # point: a robot that must run 'forever' can't silently degrade). See the HEALTH/DEGRADED lines below.
+        ov_window = 0        # overflowed reads this window
+        rd_window = 0        # total reads this window
+        ov_total = 0         # cumulative overflowed reads since this listen began
         logged = False
         try:
             while result is None:
@@ -274,7 +284,10 @@ class WakeWord:
                                         break
                                     # any other key (incl. ENTER) is ignored: live is wake-word-only
                             data, overflowed = stream.read(chunk)
+                            rd_window += 1
                             if overflowed:
+                                ov_window += 1
+                                ov_total += 1
                                 # PortAudio DROPPED input samples -- the loop couldn't read the mic in time
                                 # (CPU/GIL contention from the control loop + sensors). The model's rolling
                                 # feature buffer is now TORN, which collapses the wake score -- the classic
@@ -320,16 +333,28 @@ class WakeWord:
                                         break
                                 else:
                                     hits = 0
-                            # Periodic tuning read-out -- only for windows where someone actually spoke
-                            # (so a silent room doesn't spam the log); resets each window.
+                            # Periodic HEALTH read-out (every ~15s). ALWAYS logged -- a robot that must run
+                            # "forever" can't degrade silently, so this makes the mic-starvation signature
+                            # (overflow %) visible in the log even in a quiet room. The threshold hint is
+                            # only added when someone actually spoke (so a silent room isn't nagged).
                             if time.time() >= next_report:
-                                if best_amp >= _SILENCE_FLOOR:
-                                    log.info("wake: still listening -- best score=%.2f, loudest=%d over the "
-                                             "last ~15s (threshold=%.2f). Lower ROBOT_WAKEWORD_THRESHOLD to "
-                                             "wake more easily; raise it if it false-fires.",
-                                             best_score, best_amp, self.threshold)
+                                pct = (100.0 * ov_window / rd_window) if rd_window else 0.0
+                                spoke = best_amp >= _SILENCE_FLOOR
+                                hint = ((" (threshold=%.2f -- lower ROBOT_WAKEWORD_THRESHOLD to wake more "
+                                         "easily, raise it if it false-fires)") % self.threshold) if spoke else ""
+                                log.info("wake HEALTH: %d/%d reads overflowed (%.0f%%) last ~15s, %d total; "
+                                         "best score=%.2f, loudest=%d%s", ov_window, rd_window, pct, ov_total,
+                                         best_score, best_amp, hint)
+                                if pct >= self.degraded_pct and rd_window >= 5:
+                                    log.warning("wake DEGRADED: %.0f%% of mic reads overflowed in the last ~15s "
+                                                "-- the wake word is starved (slow/at risk of going deaf). Ease "
+                                                "the CPU load: wire/aim the ultrasonic sensors so pings get an "
+                                                "echo, lower ROBOT_SENSOR_MAX_DISTANCE_M, or run fewer sensors.",
+                                                pct)
                                 best_score = 0.0
                                 best_amp = 0
+                                ov_window = 0
+                                rd_window = 0
                                 next_report = time.time() + 15.0
         except Exception as e:
             log.warning("wake listen failed (%s) -- live has no ENTER fallback, stopping.", e)

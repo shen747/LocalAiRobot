@@ -112,7 +112,11 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 |---|---|---|
 | `ROBOT_OBSTACLE_CM` | `30` | FORWARD motion is cut when the front beam reads closer than this. |
 | `ROBOT_OBSTACLE_DEBOUNCE` | `3` | Consecutive close/failed front reads before a move **aborts** — rides out gpiozero's occasional garbage frame (even negative cm) under load. `1` = old behaviour. Each frame still holds neutral, so it never drives while unsure. |
-| `ROBOT_SENSOR_MAX_DISTANCE_M` | `2.0` | HC-SR04P echo range cap (m). Software-timed on the Pi 5, so a **no-echo** ping busy-waits the full timeout (∝ this) and can starve the wake mic — keep it low (the gate only needs <30 cm). |
+| `ROBOT_SENSOR_MAX_DISTANCE_M` | `1.0` | HC-SR04P echo range cap (m). Software-timed on the Pi 5, so a **no-echo** ping busy-waits the full timeout (∝ this) and can starve the wake mic — keep it low (the gate only needs <30 cm). Lowered `2.0`→`1.0` to halve that wait. |
+| `ROBOT_SENSOR_IDLE_QUIESCE` | `1` | **The "runs forever" fix.** While idle-listening for the wake word, CLOSE the 3 ultrasonic sensors so their software-timed ping threads stop starving the mic → no overflow/deafness. Rebuilt automatically for each drive/explore (fail-closed: a paused front gate blocks, never drives blind). `0` = keep them always on. Auto-disabled under `--verbose`. |
+| `ROBOT_SENSOR_VERBOSE` | `0` | `1` (or `run_me.sh --verbose`): stream a live `SENSORS front/left/right` read-out every `ROBOT_SENSOR_LOG_PERIOD_S` s and show **every** no-echo (not collapsed to one line). Adds a little load (reads all 3 beams) — a diagnosis switch, not for continuous running. Also disables idle-quiescing so you can watch the sensors. |
+| `ROBOT_SENSOR_LOG_PERIOD_S` | `2.0` | How often the `--verbose` `SENSORS` read-out prints (seconds). |
+| `ROBOT_LOG_LEVEL` | `INFO` | Log verbosity: `INFO` or `DEBUG`. `run_me.sh --verbose` sets `DEBUG` for that run. |
 | `ROBOT_TRIG_PIN` | `23` | Front sensor **TRIG** (BCM GPIO number). |
 | `ROBOT_ECHO_PIN` | `24` | Front sensor **ECHO** (BCM; HC-SR04**P** ECHO is 3.3 V — a bare HC-SR04 needs a divider). |
 
@@ -214,6 +218,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 | `ROBOT_WAKEWORD_DEVICE` | *(empty)* | The **wake mic** (PortAudio): an index, or a unique substring of the mic's name (e.g. `PnP`) — by-name survives card renumbering. Empty = default input. |
 | `ROBOT_WAKEWORD_LATENCY` | `high` | Mic input **buffer**: `high` (device default — absorbs CPU stalls so a busy loop can't drop samples → no OVERFLOW/deafness), a float = seconds (e.g. `0.3`), or `low` (old tight buffer). Bigger = a touch more wake latency. |
 | `ROBOT_WAKEWORD_STREAM_RESET_S` | `15` | **Self-heal.** If the mic OVERFLOWS continuously for this many seconds, `model.reset()` alone can't clear a wedged PortAudio stream — so the listener tears it down and reopens a fresh one (recovers a mic that went permanently deaf after a long run). `0` disables. |
+| `ROBOT_WAKEWORD_DEGRADED_PCT` | `20` | **Health.** Logs a `wake DEGRADED` warning when ≥ this % of mic reads overflow in a ~15 s window — the early sign the wake word is being starved (before it goes deaf). A `wake HEALTH:` line (overflow %) prints every ~15 s regardless. |
 | `ROBOT_FAKE_WAKE` | `0` | Dry-run: `1` auto-fires the wake once; else type `r` at the prompt to simulate it. |
 
 ## Audio cues / earcons

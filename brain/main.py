@@ -318,8 +318,11 @@ def _persist_env(key, value):
 def main():
     # Hardware actions (intended PWM/GPIO/I2C) are logged by driver.py on the "robot.hw"
     # logger -- configure logging FIRST so the startup banner + mapping show on the console.
+    # ROBOT_LOG_LEVEL (default INFO) lets run_me.sh --verbose crank it to DEBUG for a live-diagnosis
+    # run (sensor sweeps, wake-word health) without touching code. Unknown value -> INFO.
+    _lvl = getattr(logging, os.environ.get("ROBOT_LOG_LEVEL", "INFO").strip().upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=_lvl,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
@@ -670,11 +673,13 @@ def main():
         turn_lock (RLock) fine. Concurrent requests serialise here, each re-asserting the pause."""
         with turn_lock:
             wake.pause_mic()
+            driver.resume_sensing()  # an HTTP turn may drive -> ensure the ultrasonics are live for the gate
             snd.play("remote_ack")   # "got a remote command, on it now" -- the HTTP equivalent of ack
             try:
                 return handle_command(text, source="http")
             finally:
                 wake.resume_mic()
+                driver.pause_sensing()   # back to idle -> quiesce again so the wake mic stays clean
 
     remote_srv = None
     if os.environ.get("ROBOT_HTTP_ENABLE", "1") == "1":
@@ -700,6 +705,9 @@ def main():
     try:
         while True:
             fc.set_expression("idle")
+            # IDLE: quiesce the ultrasonics so their software-timed threads don't starve the wake-word mic
+            # while we wait (the "runs forever" fix). A wake / drive / HTTP command below resumes them.
+            driver.pause_sensing()
             trigger = wait_for_trigger(cfg, wake)
             if trigger == "QUIT":
                 driver.stop()
@@ -708,6 +716,7 @@ def main():
             if trigger == "CANCELLED":
                 continue   # a background voice-abort listen was cancelled; just re-enter the wait
             if trigger == "WAKE":
+                driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 snd.play("wake_ack")       # wake-ack: "yes?/hi" -- responding to being summoned, before recording
                 # Snap + person-check IN PARALLEL with the record+transcribe below (so it's ~free on remote).
                 if _person_check_enabled() and getattr(cam, "available", False):

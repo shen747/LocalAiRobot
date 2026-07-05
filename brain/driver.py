@@ -171,6 +171,12 @@ class RobotDriver:
         # gets NO echo busy-waits the FULL timeout (proportional to max_distance), holding the GIL and starving
         # the wake-word mic. Cap it low (the FORWARD gate only cares about <30cm) to slash that wasted CPU.
         self.sensor_max_m = _envf("ROBOT_SENSOR_MAX_DISTANCE_M", 2.0)
+        # --verbose (ROBOT_SENSOR_VERBOSE=1): stream a live SENSORS front/left/right read-out every
+        # ROBOT_SENSOR_LOG_PERIOD_S seconds AND stop collapsing the gpiozero no-echo warning to one line,
+        # so you can watch exactly what the ultrasonics are doing while it runs. Off by default (the sweep
+        # actively reads all 3 beams, which adds a little load -- fine for a diagnosis run, not for "forever").
+        self.sensor_verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
+        self.sensor_log_period = _envf("ROBOT_SENSOR_LOG_PERIOD_S", 2.0)
         trig = _envi("ROBOT_TRIG_PIN", 23)
         echo = _envi("ROBOT_ECHO_PIN", 24)
         left_trig = _envi("ROBOT_LEFT_TRIG_PIN", 5)
@@ -196,6 +202,19 @@ class RobotDriver:
         # --- Locks: _io serializes every I2C write; _lock guards shared state. ---
         self._io = threading.Lock()
         self._lock = threading.Lock()
+
+        # --- Idle sensor quiescing (ROBOT_SENSOR_IDLE_QUIESCE, default on) ---
+        # On the Pi 5 the ultrasonic echo is timed in SOFTWARE, so the 3 gpiozero DistanceSensor
+        # background ping threads hog the GIL and starve the wake-word mic (-> OVERFLOW -> the wake word
+        # goes sluggish/deaf after minutes). While IDLE (waiting for the wake word) we don't need obstacle
+        # sensing at all, so main.py pause_sensing()'s them -- the threads stop and the mic runs clean.
+        # A drive/explore resume_sensing()'s them (also auto-resumed by command() for any FORWARD/REVERSE).
+        # gpiozero threads can't restart, so pause CLOSES the sensors and resume REBUILDS them.
+        self.sensor_quiesce = os.environ.get("ROBOT_SENSOR_IDLE_QUIESCE", "1") == "1"
+        self._sense_lock = threading.Lock()
+        self._sensing_paused = False
+        self._DistanceSensor = None      # gpiozero class (or None) kept for the rebuild on resume
+        self._sensor_pins = {}           # {name: (trig, echo)} kept for the rebuild on resume
 
         if self.dry_run:
             _mode = "DRY RUN -- no hardware will be driven"
@@ -250,7 +269,10 @@ class RobotDriver:
             try:
                 import warnings
                 from gpiozero.exc import DistanceSensorNoEcho
-                warnings.filterwarnings("once", category=DistanceSensorNoEcho)
+                # --verbose wants to SEE every no-echo (that's the sensor telling you it's unwired / aimed at
+                # open space); normal mode collapses it to one line so a genuine fault isn't buried.
+                warnings.filterwarnings("default" if self.sensor_verbose else "once",
+                                        category=DistanceSensorNoEcho)
             except Exception:
                 pass
 
@@ -274,25 +296,12 @@ class RobotDriver:
                     self.hw_failed = True
 
             # Three HC-SR04P distance sensors -- build each on its own so one bad pin doesn't take
-            # out the others. A failed sensor falls back to a fake (reads 'clear'); we log loudly.
-            self._sensors = {}
-            for name, t_pin, e_pin in (
-                ("front", trig, echo), ("left", left_trig, left_echo), ("right", right_trig, right_echo),
-            ):
-                try:
-                    if DistanceSensor is None:
-                        raise RuntimeError("gpiozero unavailable")
-                    # partial=True is CRITICAL: without it gpiozero's .distance/.value BLOCKS until
-                    # the sample queue fills, and a dead/unwired sensor (no echo) never fills it -- which
-                    # HANGS the 20 Hz safety loop the first time the FORWARD gate reads it. partial=True
-                    # returns whatever's available immediately, so a bad sensor can never stall the loop.
-                    self._sensors[name] = DistanceSensor(
-                        echo=e_pin, trigger=t_pin, max_distance=self.sensor_max_m, queue_len=3, partial=True)
-                except Exception as e:
-                    log.error("HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
-                              "-> faked; its obstacle gate is DISABLED.", name, t_pin, e_pin, e)
-                    self._sensors[name] = FakeDistanceSensor(cm=400.0)
-                    self.hw_failed = True
+            # out the others (see _build_sensor_objs). Keep the class + pins so pause/resume_sensing()
+            # can REBUILD them (gpiozero's ping threads can't be restarted, only recreated).
+            self._DistanceSensor = DistanceSensor
+            self._sensor_pins = {
+                "front": (trig, echo), "left": (left_trig, left_echo), "right": (right_trig, right_echo)}
+            self._sensors = self._build_sensor_objs()
 
             if self.hw_failed:
                 log.error("*** RUNNING DEGRADED: some hardware is faked (see HARDWARE FAILURE above) -- "
@@ -324,6 +333,13 @@ class RobotDriver:
         self._thread = threading.Thread(target=self._control_loop, daemon=True)
         self._thread.start()
 
+        # --verbose: a low-rate background beam read-out so you can watch the sensors even while idle
+        # (the control loop only reads the front beam while DRIVING, so without this you'd see nothing).
+        if self.sensor_verbose:
+            log.info("SENSOR VERBOSE: logging front/left/right every %.1fs (ROBOT_SENSOR_VERBOSE=1)",
+                     self.sensor_log_period)
+            threading.Thread(target=self._sensor_log_loop, daemon=True).start()
+
     # ---------- public API (mutate state only; the control thread drives the hardware) ----------
     def command(self, drive, steer, speed, duration_ms):
         """Replace the in-flight motion. A new command preempts the previous one."""
@@ -331,6 +347,10 @@ class RobotDriver:
         steer = steer if steer in VALID_STEER else "CENTER"
         speed = max(0, min(100, int(speed)))
         duration_ms = max(0, min(self.max_move_ms, int(duration_ms)))
+        # Defense-in-depth: a drive needs the obstacle gate, so make sure sensing is live even if the
+        # caller forgot to resume_sensing() (the front gate reads -1 = fail-closed = won't move otherwise).
+        if drive in ("FORWARD", "REVERSE") and self._sensing_paused:
+            self.resume_sensing()
         throttle = self._speed_to_throttle(drive, speed) if drive != "STOP" else 0.0
         log.info("CMD drive=%s steer=%s speed=%d -> throttle=%.3f dur=%dms",
                  drive, steer, speed, throttle, duration_ms)
@@ -361,6 +381,8 @@ class RobotDriver:
         self._neutral()   # don't wait up to one loop tick to cut throttle
 
     def distance_cm(self, side="front"):
+        if self._sensing_paused:
+            return -1.0    # sensors quiesced while idle -> fail-closed (front gate blocks; sides read 'clear')
         sensor = self._sensors.get(side, self.sensor)
         try:
             cm = sensor.distance * 100.0
@@ -394,10 +416,40 @@ class RobotDriver:
         self._neutral()
         with self._io:
             self._write_steer("CENTER")
-        for sensor in self._sensors.values():
-            # gpiozero races its own close(): the background "fill" thread can still be mid-read
-            # when close() tears the trigger pin down -> AttributeError tracebacks on exit. Stop
-            # that thread FIRST (internal but stable attr; the dry-run fakes simply lack it).
+        self._close_sensor_objs(list(self._sensors.values()))
+
+    # ---------- idle sensor quiescing (see the ROBOT_SENSOR_IDLE_QUIESCE note in __init__) ----------
+    def _build_sensor_objs(self, quiet=False):
+        """Build the 3 gpiozero DistanceSensors from self._sensor_pins. Each on its own so one bad pin
+        doesn't take out the others; a failure falls back to a fake (reads 'clear'). `quiet` softens the
+        per-sensor failure log to DEBUG for rebuilds (resume_sensing) so a turn-by-turn rebuild of an
+        unwired sensor doesn't spam ERROR every wake."""
+        sensors = {}
+        DS = self._DistanceSensor
+        for name, (t_pin, e_pin) in self._sensor_pins.items():
+            try:
+                if DS is None:
+                    raise RuntimeError("gpiozero unavailable")
+                # partial=True is CRITICAL: without it gpiozero's .distance/.value BLOCKS until the sample
+                # queue fills, and a dead/unwired sensor (no echo) never fills it -- which HANGS the 20 Hz
+                # safety loop the first time the FORWARD gate reads it. partial=True returns whatever's
+                # available immediately, so a bad sensor can never stall the loop.
+                sensors[name] = DS(echo=e_pin, trigger=t_pin, max_distance=self.sensor_max_m,
+                                   queue_len=3, partial=True)
+            except Exception as e:
+                (log.debug if quiet else log.error)(
+                    "HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
+                    "-> faked; its obstacle gate is DISABLED.", name, t_pin, e_pin, e)
+                sensors[name] = FakeDistanceSensor(cm=400.0)
+                self.hw_failed = True
+        return sensors
+
+    @staticmethod
+    def _close_sensor_objs(sensors):
+        for sensor in sensors:
+            # gpiozero races its own close(): the background "fill" thread can still be mid-read when
+            # close() tears the trigger pin down -> AttributeError tracebacks. Stop that thread FIRST
+            # (internal but stable attr; the dry-run fakes simply lack it).
             try:
                 q = getattr(sensor, "_queue", None)
                 if q is not None:
@@ -408,6 +460,33 @@ class RobotDriver:
                 sensor.close()
             except Exception:
                 pass
+
+    def pause_sensing(self):
+        """Quiesce the ultrasonics while IDLE (waiting for the wake word): CLOSE the 3 gpiozero sensors so
+        their software-timed ping threads stop hogging the GIL + starving the wake mic. Rebuilt on the next
+        drive/explore. Idempotent. No-op in dry-run, when quiescing is off, or in --verbose (there you WANT
+        to keep watching the sensors)."""
+        if self.dry_run or not self.sensor_quiesce or self.sensor_verbose:
+            return
+        with self._sense_lock:
+            if self._sensing_paused:
+                return
+            self._sensing_paused = True   # set FIRST: distance_cm short-circuits before touching a closing sensor
+            self._close_sensor_objs(list(self._sensors.values()))
+        log.debug("sensing PAUSED (idle) -- ultrasonic threads stopped to free the wake-word mic")
+
+    def resume_sensing(self):
+        """Rebuild the ultrasonics after a pause (before a drive/explore reads them). Idempotent; no-op in
+        dry-run / quiescing-off / --verbose (they were never paused there)."""
+        if self.dry_run or not self.sensor_quiesce or self.sensor_verbose:
+            return
+        with self._sense_lock:
+            if not self._sensing_paused:
+                return
+            self._sensors = self._build_sensor_objs(quiet=True)   # fresh objects/threads
+            self.sensor = self._sensors.get("front", self.sensor)
+            self._sensing_paused = False   # clear LAST: reads see the new sensors, never a half-built dict
+        log.debug("sensing RESUMED -- ultrasonic sensors rebuilt")
 
     # ---------- internals ----------
     def _arm(self):
@@ -555,3 +634,19 @@ class RobotDriver:
             cb(distance_cm)
         except Exception:
             pass
+
+    def _sensor_log_loop(self):
+        """--verbose only: log all three beams periodically so the operator can watch the ultrasonics
+        live. '--' = no echo / read error (-1). Runs on its own daemon thread; exits when the driver closes."""
+        period = max(0.5, self.sensor_log_period)
+        while True:
+            with self._lock:
+                if self._closed:
+                    break
+            d = self.distances()
+            def _fmt(v):
+                return f"{v:.0f}cm" if v >= 0 else "--"
+            log.info("SENSORS  front=%-6s left=%-6s right=%-6s  (gate<%.0f | side<%.0f)",
+                     _fmt(d["front"]), _fmt(d["left"]), _fmt(d["right"]),
+                     self.obstacle_cm, self.side_obstacle_cm)
+            time.sleep(period)

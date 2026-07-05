@@ -9,6 +9,9 @@
 # needed on the bench). Foreground is what you want for bench + calibration.
 #
 # Other actions:
+#   --verbose / -v  diagnosis run: live SENSORS front/left/right read-out (even while idle), every
+#                   no-echo shown (not collapsed), and DEBUG log level. Combine with any mode
+#                   (e.g. --live --verbose). Off by default (the sensor sweep adds a little load).
 #   --detach        run LIVE in the BACKGROUND (survives SSH logout). Stop with scripts/shutdown.sh.
 #   --reload        re-apply an edited config/robot.env to a RUNNING robot (restarts the boot service
 #                   if it's installed, else the --detach instance).
@@ -60,17 +63,30 @@ disable_boot() {
   echo "   removed. Start it by hand anytime with:  ./scripts/run_me.sh --live"
 }
 
-override=""; detach=0; reload=0
-case "${1:-}" in
-  --dry|-d)        override=1 ;;
-  --live|-l)       override=0 ;;
-  --detach|-D)     override=0; detach=1 ;;
-  --reload)        reload=1 ;;
-  --install-boot)  install_boot; exit 0 ;;
-  --disable-boot)  disable_boot; exit 0 ;;
-  "")              ;;
-  *) echo "usage: $(basename "$0") [--dry|--live|--detach|--reload|--install-boot|--disable-boot]"; exit 2 ;;
-esac
+override=""; detach=0; reload=0; verbose=0
+# Flags can be combined (e.g. `--live --verbose`), so parse them all, not just $1.
+for arg in "$@"; do
+  case "$arg" in
+    --dry|-d)        override=1 ;;
+    --live|-l)       override=0 ;;
+    --detach|-D)     override=0; detach=1 ;;
+    --reload)        reload=1 ;;
+    --verbose|-v)    verbose=1 ;;
+    --install-boot)  install_boot; exit 0 ;;
+    --disable-boot)  disable_boot; exit 0 ;;
+    "")              ;;
+    *) echo "usage: $(basename "$0") [--dry|--live|--detach|--reload|--verbose|--install-boot|--disable-boot]"; exit 2 ;;
+  esac
+done
+
+# --verbose: turn on the live SENSORS read-out + un-collapse the no-echo warnings (driver reads
+# ROBOT_SENSOR_VERBOSE) and raise the log level to DEBUG. Exported here so it flows through the exec
+# below to the brain. Respects an existing ROBOT_LOG_LEVEL. Safe on a 512GB NVMe (verbose = more log I/O).
+if [ "$verbose" = 1 ]; then
+  export ROBOT_SENSOR_VERBOSE=1
+  export ROBOT_LOG_LEVEL="${ROBOT_LOG_LEVEL:-DEBUG}"
+  echo ">> VERBOSE on: live SENSORS front/left/right read-out + every no-echo shown + DEBUG logs."
+fi
 
 # A robot.pid is only trusted if its PID is still OUR brain: PIDs get recycled (especially after a
 # reboot, since ~/.localairobot/robot.pid survives one), and `kill -0` alone can't tell a stale
