@@ -230,9 +230,19 @@ class WakeWord:
         # the current ~15s window + cumulatively. A high overflow % is the signature of "worked for a few
         # minutes then went sluggish/deaf" -- surfaced every window so it's DETECTABLE in the log (the whole
         # point: a robot that must run 'forever' can't silently degrade). See the HEALTH/DEGRADED lines below.
-        ov_window = 0        # overflowed reads this window
-        rd_window = 0        # total reads this window
-        ov_total = 0         # cumulative overflowed reads since this listen began
+        ov_window = 0        # dropped chunks this window
+        rd_window = 0        # total chunks consumed this window
+        ov_total = 0         # cumulative dropped chunks since this listen began
+        # Deep diagnostics (per ~15s window) -- to find the ACTUAL wall instead of guessing: is predict()
+        # over the 80ms budget? is the drop a PortAudio starve (CPU maxed) or the consumer lagging? is the
+        # queue pinned full? is the whole Pi oversubscribed (loadavg)? See the expanded HEALTH line below.
+        pa_drops = 0         # drops flagged by PortAudio input_overflow (callback itself starved -> CPU maxed)
+        q_drops = 0          # drops from a FULL queue (this consumer loop can't keep up)
+        predict_ms_sum = 0.0; predict_ct = 0; predict_ms_max = 0.0
+        resample_ms_sum = 0.0; resample_ct = 0
+        skipped = 0          # chunks below the silence floor (predict skipped)
+        qdepth_max = 0
+        empty_since = 0.0    # first time get() came back empty in a stall (0 = not stalling)
         logged = False
         try:
             while result is None:
@@ -265,15 +275,19 @@ class WakeWord:
 
                     def _cb(indata, frames, tinfo, status):
                         # Runs in PortAudio's thread -- keep it TINY (copy + enqueue) so the mic stays drained.
+                        # drop flag: 0 = clean, 1 = PortAudio dropped before us (callback starved = CPU maxed),
+                        # 2 = our queue was full (this consumer loop is behind). Distinguishing them is the
+                        # whole point of this instrumentation -- they need different fixes.
+                        flag = 1 if status.input_overflow else 0
                         try:
-                            audio_q.put_nowait((indata[:, 0].copy(), bool(status.input_overflow)))
+                            audio_q.put_nowait((indata[:, 0].copy(), flag))
                         except queue.Full:
                             try:
                                 audio_q.get_nowait()      # consumer behind -> drop oldest, mark this one torn
                             except queue.Empty:
                                 pass
                             try:
-                                audio_q.put_nowait((indata[:, 0].copy(), True))
+                                audio_q.put_nowait((indata[:, 0].copy(), 2))
                             except queue.Full:
                                 pass
 
@@ -312,23 +326,37 @@ class WakeWord:
                                         break
                                     # any other key (incl. ENTER) is ignored: live is wake-word-only
                             try:
-                                audio, overflowed = audio_q.get(timeout=0.5)
+                                audio, drop = audio_q.get(timeout=0.5)
                             except queue.Empty:
-                                continue   # no chunk yet -> re-loop so _yield/_cancel stay responsive
+                                # No audio delivered -> the callback isn't firing. A brief gap is normal; a
+                                # SUSTAINED one means PortAudio/the stream is dead (a prime "went unresponsive"
+                                # suspect). Detect it and self-heal by reopening the stream.
+                                if empty_since == 0.0:
+                                    empty_since = time.time()
+                                elif time.time() - empty_since >= 3.0:
+                                    log.warning("wake: NO audio from the mic for %.0fs -- the capture callback "
+                                                "stopped (stream dead); rebuilding PortAudio.",
+                                                time.time() - empty_since)
+                                    break
+                                continue
+                            empty_since = 0.0
+                            qdepth_max = max(qdepth_max, audio_q.qsize())
                             rd_window += 1
-                            if overflowed:
+                            if drop:
                                 ov_window += 1
                                 ov_total += 1
-                                # A chunk was DROPPED: either PortAudio flagged input_overflow, or the callback
-                                # discarded the oldest because the predict loop couldn't keep up for q_max chunks.
-                                # openWakeWord's rolling buffer is now torn -> reset so it rebuilds from
-                                # contiguous audio. Persisting = predict can't keep up (raise the queue / ease load).
+                                if drop == 1:
+                                    pa_drops += 1
+                                else:
+                                    q_drops += 1
+                                # A chunk was DROPPED -> openWakeWord's rolling buffer is torn -> reset so it
+                                # rebuilds from contiguous audio. (See the HEALTH line for WHY it's dropping.)
                                 self._model.reset()
                                 hits = 0
                                 if time.time() >= next_overflow_log:
-                                    log.warning("wake: mic chunk DROPPED -- the predict loop fell behind "
-                                                "(queue full); model reset. Persisting = raise "
-                                                "ROBOT_WAKEWORD_QUEUE_MAX or ease the CPU load.")
+                                    log.warning("wake: mic chunk DROPPED (%s) -- model reset. See 'wake HEALTH' "
+                                                "for predict-ms / load / queue depth.",
+                                                "PortAudio starved" if drop == 1 else "queue full")
                                     next_overflow_log = time.time() + 10.0
                                 # Self-heal: if NO clean chunk has been consumed for stream_reset_s, the stream
                                 # itself is wedged (reset can't fix that). Break to the outer loop, which closes
@@ -343,14 +371,23 @@ class WakeWord:
                             if audio.ndim > 1:
                                 audio = audio.flatten()
                             if rate != _SAMPLE_RATE:
+                                _t0 = time.perf_counter()
                                 audio = self._to_16k(np, audio, rate)
+                                resample_ms_sum += (time.perf_counter() - _t0) * 1000.0
+                                resample_ct += 1
                             amp = int(np.max(np.abs(audio)))
                             if amp > best_amp:
                                 best_amp = amp
                             if amp < _SILENCE_FLOOR:                 # CPU guard: skip silence
                                 hits = 0
+                                skipped += 1
                             else:
+                                _t0 = time.perf_counter()
                                 scores = self._model.predict(audio)
+                                _pm = (time.perf_counter() - _t0) * 1000.0
+                                predict_ms_sum += _pm; predict_ct += 1
+                                if _pm > predict_ms_max:
+                                    predict_ms_max = _pm
                                 score = max(scores.values()) if scores else 0.0
                                 if score > best_score:
                                     best_score = score
@@ -369,19 +406,38 @@ class WakeWord:
                             if time.time() >= next_report:
                                 pct = (100.0 * ov_window / rd_window) if rd_window else 0.0
                                 spoke = best_amp >= _SILENCE_FLOOR
+                                p_avg = (predict_ms_sum / predict_ct) if predict_ct else 0.0
+                                r_avg = (resample_ms_sum / resample_ct) if resample_ct else 0.0
+                                try:
+                                    load1 = os.getloadavg()[0]
+                                except Exception:
+                                    load1 = -1.0
                                 hint = ((" (threshold=%.2f -- lower ROBOT_WAKEWORD_THRESHOLD to wake more "
                                          "easily, raise it if it false-fires)") % self.threshold) if spoke else ""
-                                log.info("wake HEALTH: %d/%d chunks dropped (%.0f%%) last ~15s, %d total; "
-                                         "best score=%.2f, loudest=%d%s", ov_window, rd_window, pct, ov_total,
+                                # ONE rich diagnostic line: predict-ms is the smoking gun (avg > 80ms = predict
+                                # itself is the wall); pa vs queue drops say WHERE it's lost; load1 (vs 4 cores)
+                                # says if the whole Pi is oversubscribed (e.g. the always-on camera pipeline).
+                                log.info("wake HEALTH: dropped %d/%d (%.0f%%: %dq %dpa) | predict avg %.0fms "
+                                         "max %.0fms n=%d skip=%d | resample %.1fms | qdepth max %d/%d | "
+                                         "load %.1f/%dcpu | best %.2f loud %d%s",
+                                         ov_window, rd_window, pct, q_drops, pa_drops, p_avg, predict_ms_max,
+                                         predict_ct, skipped, r_avg, qdepth_max, self._q_max, load1, os.cpu_count() or 0,
                                          best_score, best_amp, hint)
                                 if pct >= self.degraded_pct and rd_window >= 5:
                                     log.warning("wake DEGRADED: %.0f%% of mic chunks dropped in the last ~15s "
-                                                "-- the predict loop can't keep up. Raise ROBOT_WAKEWORD_QUEUE_MAX "
-                                                "to buffer more, or reduce CPU load on the Pi.", pct)
+                                                "-- predict avg %.0fms (budget 80ms). If predict is the wall, "
+                                                "reduce competing CPU load; else raise ROBOT_WAKEWORD_QUEUE_MAX.",
+                                                pct, p_avg)
                                 best_score = 0.0
                                 best_amp = 0
                                 ov_window = 0
                                 rd_window = 0
+                                pa_drops = 0
+                                q_drops = 0
+                                predict_ms_sum = 0.0; predict_ct = 0; predict_ms_max = 0.0
+                                resample_ms_sum = 0.0; resample_ct = 0
+                                skipped = 0
+                                qdepth_max = 0
                                 next_report = time.time() + 15.0
         except Exception as e:
             log.warning("wake listen failed (%s) -- live has no ENTER fallback, stopping.", e)
