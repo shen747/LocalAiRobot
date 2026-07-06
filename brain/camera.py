@@ -1,22 +1,19 @@
-# brain/camera.py -- camera capture for the multimodal vision pipeline. Works with ANY libcamera-supported
-# camera (via Picamera2). The build uses an Arducam IMX519 16MP AUTOFOCUS module; a fixed-focus OV5647 (Pi
-# Camera v1) or IMX219 (v2) also works with no code change. On an autofocus sensor each capture runs a
-# one-shot focus first (sharp shots of a held-up object / a face at any distance -> better VLM answers);
-# fixed-focus sensors are left untouched. The IMX519 is third-party, so camera_auto_detect won't find it --
-# install_stack.sh writes its boot dtoverlay (camera_auto_detect=0 + dtoverlay=imx519,cam0). See docs/assembly.md.
+# brain/camera.py -- camera capture for the multimodal vision pipeline.
 #
-# Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision
-# encoder uses a single crop -> fewer image tokens -> less CPU on the Pi 5), and hands
-# the JPEG bytes to vision.py. picamera2 is imported LAZILY inside the live branch so this
-# module imports fine on a laptop / unwired Pi; in dry run there is no capture at all and
-# vision.py falls back to ROBOT_FAKE_VISION (so the explore loop is testable with no camera).
+# This module holds the board-agnostic POLICY (enable flag, dry-run, target size, the shared
+# letterbox/JPEG helper) and delegates the actual capture to a board-selected backend from the HAL:
+#   Pi 5   -> Picamera2 / libcamera            (brain/picamera2_backend.py, brain/boards/pi5.py)
+#   Jetson -> GStreamer/V4L2                    (added in JETSON_NANO_SUPPORT.md Phase 4)
+# Every backend exposes the same .capture_jpeg()/.close()/.available surface, so the rest of the vision
+# pipeline (vision.py, the REMEMBER/LOOK/EXPLORE actions) only ever sees JPEG bytes and never a board.
 #
-# Install on the Pi (NOT pip):  sudo apt install -y python3-picamera2 --no-install-recommends
-# and create the venv with --system-site-packages so it can see libcamera (see install_stack.sh).
+# Grabs a single still frame, letterbox-pads it toward a square ~512px JPEG (so the VLM's vision encoder
+# uses a single crop -> fewer image tokens -> less CPU), and hands the JPEG bytes to vision.py. The backend
+# is built LAZILY (only in live mode), so this module imports fine on a laptop / unwired board; in dry run
+# there is no capture at all and vision.py falls back to ROBOT_FAKE_VISION.
 
 import logging
 import os
-from io import BytesIO
 
 from driver import dry_run_enabled
 
@@ -29,7 +26,9 @@ def _letterbox_square(img, size):
 
 
 class Camera:
-    """Single-frame still capture. .capture_jpeg() returns JPEG bytes or None (no camera)."""
+    """Single-frame still capture. .capture_jpeg() returns JPEG bytes or None (no camera). The actual
+    capture backend (Picamera2 on the Pi, GStreamer/V4L2 on the Jetson, ...) is chosen by the board HAL;
+    this class holds the enable/dry-run policy and delegates to it."""
 
     def __init__(self):
         self.enabled = os.environ.get("ROBOT_CAMERA_ENABLE", "1") == "1"
@@ -38,13 +37,7 @@ class Camera:
             self.size = int(os.environ.get("ROBOT_CAMERA_SIZE", "512") or 512)
         except ValueError:
             self.size = 512
-        try:
-            self.warmup = float(os.environ.get("ROBOT_CAMERA_WARMUP_S", "1.0") or 1.0)
-        except ValueError:
-            self.warmup = 1.0
-        self.autofocus = os.environ.get("ROBOT_CAMERA_AUTOFOCUS", "1") == "1"
-        self._picam = None
-        self._has_af = False   # set true below iff the sensor exposes AfMode (IMX519 yes; OV5647/IMX219 no)
+        self._backend = None
         self.available = False
 
         if not self.enabled:
@@ -53,68 +46,28 @@ class Camera:
         if self.dry_run:
             log.info("camera: DRY RUN (no capture; vision uses ROBOT_FAKE_VISION or 'not visible')")
             return
+        # Build the board's camera backend. Its own __init__ catches hardware failures and reports
+        # available=False (so vision degrades to 'no frame'); we still guard against an unexpected raise.
         try:
-            import time
-            from picamera2 import Picamera2
-            self._picam = Picamera2()
-            self._picam.configure(self._picam.create_still_configuration(main={"size": (1280, 720)}))
-            self._picam.start()
-            time.sleep(self.warmup)   # let AE/AWB settle
-            self.available = True
-            # Autofocus: only AF sensors (e.g. IMX519) expose an 'AfMode' control. Put it in Auto so
-            # capture_jpeg() can fire a one-shot focus per frame. Fixed-focus sensors have no AfMode -> skip.
-            if self.autofocus:
-                try:
-                    if "AfMode" in self._picam.camera_controls:
-                        from libcamera import controls as _ctrls
-                        self._picam.set_controls({"AfMode": _ctrls.AfModeEnum.Auto})
-                        self._has_af = True
-                except Exception as e:
-                    log.info("camera: autofocus not enabled (%s)", e)
-            log.info("camera: Picamera2 started (still capture -> %dpx square JPEG%s)",
-                     self.size, ", autofocus" if self._has_af else "")
+            import hal
+            self._backend = hal.current().make_camera(self.size)
+            self.available = bool(getattr(self._backend, "available", False))
         except Exception as e:
-            # "list index out of range" here = libcamera saw NO camera. If one IS connected, confirm
-            # `rpicam-hello --list-cameras` detects it (reseat the CSI ribbon; on the Pi 5 the camera
-            # board's 15-pin cable needs the 22->15 adapter -- the Arducam kit's "Pi Zero cable" is it).
-            log.warning("camera unavailable (%s) -- vision will report no frame "
-                        "(if a camera is connected, check `rpicam-hello --list-cameras`)", e)
-            self._picam = None
+            log.warning("camera unavailable (%s) -- vision will report no frame", e)
+            self._backend = None
             self.available = False
 
     def capture_jpeg(self):
         """Capture one frame as preprocessed JPEG bytes, or None if no camera is available."""
-        if not self.available or self._picam is None:
+        if not self.available or self._backend is None:
             return None
-        try:
-            if self._has_af:
-                try:
-                    self._picam.autofocus_cycle()   # one-shot AF scan; blocks until the lens locks (~0.3-1s)
-                except Exception as e:
-                    log.debug("autofocus cycle failed (%s) -- capturing anyway", e)
-            buf = BytesIO()
-            try:
-                # capture_image() returns a correctly-converted PIL.Image -- avoids the
-                # capture_array()+Image.fromarray channel-order trap (the default XBGR8888 main
-                # stream gets misread as RGBA, swapping colours / pinning a constant plane).
-                img = _letterbox_square(self._picam.capture_image("main"), self.size)
-                img.save(buf, format="JPEG", quality=80)
-            except Exception:
-                # Pillow/letterbox unavailable: send the raw still; Ollama resizes it itself.
-                buf = BytesIO()
-                self._picam.capture_file(buf, format="jpeg")
-            data = buf.getvalue()
-            log.info("captured frame: %d bytes JPEG", len(data))
-            return data
-        except Exception as e:
-            log.warning("capture failed: %s", e)
-            return None
+        return self._backend.capture_jpeg()
 
     def close(self):
-        if self._picam is not None:
+        if self._backend is not None:
             try:
-                self._picam.stop()
+                self._backend.close()
             except Exception:
                 pass
-            self._picam = None
+            self._backend = None
             self.available = False

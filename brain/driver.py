@@ -213,7 +213,7 @@ class RobotDriver:
         self.sensor_quiesce = os.environ.get("ROBOT_SENSOR_IDLE_QUIESCE", "1") == "1"
         self._sense_lock = threading.Lock()
         self._sensing_paused = False
-        self._DistanceSensor = None      # gpiozero class (or None) kept for the rebuild on resume
+        self._board = None               # hal board (set in the live branch); builds the PWM kit + sensors
         self._sensor_pins = {}           # {name: (trig, echo)} kept for the rebuild on resume
 
         if self.dry_run:
@@ -243,29 +243,16 @@ class RobotDriver:
                 "right": FakeDistanceSensor(cm=_envf("ROBOT_FAKE_RIGHT_CM", 200.0)),
             }
         else:
-            # Real-hardware imports live HERE, not at module top: on a laptop
-            # `import board` (pulled in by adafruit_servokit) raises NotImplementedError,
-            # and on a Pi with no PCA9685 `ServoKit(...)` raises ValueError -- guarding the
-            # import (not just the constructor) is what makes a no-hardware dry run possible.
-            # Each device is built defensively: a hardware failure is LOGGED (naming the device
-            # and how to fix it) and swapped for a fake, so the brain keeps running instead of
-            # crashing with a traceback.
-            if self.motors_off:
-                ServoKit = None      # motors-off: PWM is simulated, so the real PCA9685 driver isn't needed
-            else:
-                try:
-                    from adafruit_servokit import ServoKit
-                except Exception as e:
-                    ServoKit = None
-                    log.error("HARDWARE FAILURE: PCA9685 driver import failed (adafruit_servokit): %s", e)
-            try:
-                from gpiozero import DistanceSensor
-            except Exception as e:
-                DistanceSensor = None
-                log.error("HARDWARE FAILURE: HC-SR04P driver import failed (gpiozero): %s", e)
-            # gpiozero emits a DistanceSensorNoEcho warning on EVERY read with no echo -- ~15/sec with
-            # the 3-sensor array unwired, which buries the real log. Show it ONCE (a genuine fault is
-            # still surfaced; the forward gate already fail-closes on a bad read), not on every ping.
+            # Real-hardware backends are built via the board HAL (brain/boards/<board>.py), not imported
+            # here: on a laptop `import board` (pulled in by adafruit_servokit) raises NotImplementedError,
+            # and on a Pi with no PCA9685 the ServoKit constructor raises -- the board's factory guards both.
+            # Each device is built defensively: a hardware failure is LOGGED (naming the device and how to
+            # fix it) and swapped for a fake, so the brain keeps running instead of crashing with a traceback.
+            import hal
+            self._board = hal.current()
+            # gpiozero emits a DistanceSensorNoEcho warning on EVERY read with no echo -- ~15/sec with the
+            # 3-sensor array unwired, which buries the real log. Collapse it to one line (Pi/gpiozero only; a
+            # no-op where gpiozero isn't installed). The forward gate already fail-closes on a bad read.
             try:
                 import warnings
                 from gpiozero.exc import DistanceSensorNoEcho
@@ -276,7 +263,8 @@ class RobotDriver:
             except Exception:
                 pass
 
-            # PCA9685 (ESC throttle + steering servo) -- probes I2C 0x40; the usual failure point.
+            # PCA9685 (ESC throttle + steering servo) -- built by the board; probes I2C 0x40, the usual
+            # failure point.
             if self.motors_off:
                 # STATIONARY mode: deliberately fake the PWM output so the ESC/servo get NO signal
                 # (wheels won't move). Sensors below stay REAL. This is intentional, NOT hw_failed.
@@ -285,9 +273,7 @@ class RobotDriver:
                 self.kit = FakeServoKit(channels=channels)
             else:
                 try:
-                    if ServoKit is None:
-                        raise RuntimeError("adafruit_servokit unavailable")
-                    self.kit = ServoKit(channels=channels)
+                    self.kit = self._board.make_pwm_kit(channels)
                 except Exception as e:
                     log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40 (SDA GPIO2 / SCL GPIO3): %s", e)
                     log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and `i2cdetect -y 1` "
@@ -295,10 +281,9 @@ class RobotDriver:
                     self.kit = FakeServoKit(channels=channels)
                     self.hw_failed = True
 
-            # Three HC-SR04P distance sensors -- build each on its own so one bad pin doesn't take
-            # out the others (see _build_sensor_objs). Keep the class + pins so pause/resume_sensing()
-            # can REBUILD them (gpiozero's ping threads can't be restarted, only recreated).
-            self._DistanceSensor = DistanceSensor
+            # Three HC-SR04P distance sensors -- build each on its own (via the board) so one bad pin doesn't
+            # take out the others (see _build_sensor_objs). Keep the pins so pause/resume_sensing() can
+            # REBUILD them (gpiozero's ping threads can't be restarted, only recreated).
             self._sensor_pins = {
                 "front": (trig, echo), "left": (left_trig, left_echo), "right": (right_trig, right_echo)}
             self._sensors = self._build_sensor_objs()
@@ -421,22 +406,16 @@ class RobotDriver:
 
     # ---------- idle sensor quiescing (see the ROBOT_SENSOR_IDLE_QUIESCE note in __init__) ----------
     def _build_sensor_objs(self, quiet=False):
-        """Build the 3 gpiozero DistanceSensors from self._sensor_pins. Each on its own so one bad pin
-        doesn't take out the others; a failure falls back to a fake (reads 'clear'). `quiet` softens the
-        per-sensor failure log to DEBUG for rebuilds (resume_sensing) so a turn-by-turn rebuild of an
-        unwired sensor doesn't spam ERROR every wake."""
+        """Build the 3 distance sensors from self._sensor_pins via the board HAL (gpiozero's DistanceSensor
+        on the Pi). Each on its own so one bad pin doesn't take out the others; a failure falls back to a
+        fake (reads 'clear'). `quiet` softens the per-sensor failure log to DEBUG for rebuilds
+        (resume_sensing) so a turn-by-turn rebuild of an unwired sensor doesn't spam ERROR every wake."""
         sensors = {}
-        DS = self._DistanceSensor
         for name, (t_pin, e_pin) in self._sensor_pins.items():
             try:
-                if DS is None:
-                    raise RuntimeError("gpiozero unavailable")
-                # partial=True is CRITICAL: without it gpiozero's .distance/.value BLOCKS until the sample
-                # queue fills, and a dead/unwired sensor (no echo) never fills it -- which HANGS the 20 Hz
-                # safety loop the first time the FORWARD gate reads it. partial=True returns whatever's
-                # available immediately, so a bad sensor can never stall the loop.
-                sensors[name] = DS(echo=e_pin, trigger=t_pin, max_distance=self.sensor_max_m,
-                                   queue_len=3, partial=True)
+                # The board's factory owns the driver specifics (on the Pi, gpiozero with partial=True so a
+                # dead/unwired sensor can never block the 20 Hz safety loop).
+                sensors[name] = self._board.make_distance_sensor(t_pin, e_pin, self.sensor_max_m)
             except Exception as e:
                 (log.debug if quiet else log.error)(
                     "HARDWARE FAILURE: %s HC-SR04P (TRIG GPIO%d / ECHO GPIO%d) init failed: %s "
