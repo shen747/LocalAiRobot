@@ -43,6 +43,7 @@ _CATEGORY_DIR = {
     "thinking": "thinking_sounds",
     "thinking_still": "thinking_still_sounds",   # re-cues after the first 'thinking' one ("still...")
     "remote_ack": "remote_ack_sounds",           # a phone/HTTP command just arrived (excuse-me cue)
+    "sleep": "sleep_sounds",                      # spoken "going back to sleep, say hey jarvis" on conversation end
     "error": "error_sounds",
 }
 
@@ -92,6 +93,19 @@ class Sounds:
         if not wav:
             return
         threading.Thread(target=self._play_locked, args=(wav,), daemon=True).start()
+
+    def play_blocking(self, category):
+        """Play a one-shot cue and BLOCK until it finishes. Used for the goodbye/sleep cue, which MUST
+        complete before the caller re-enters the wake listen (the wake stream holds audio_lock while open,
+        so a fire-and-forget cue could otherwise stall behind it and never play). Best-effort; never raises."""
+        if not self.enabled or not self._cat_enable.get(category, False):
+            return
+        if self._log_only:
+            log.info("SOUND -> %s (blocking)", category)
+            return
+        wav = self._pick(category)
+        if wav:
+            self._play_locked(wav)   # holds audio_lock, aplay, returns when the clip is done
 
     # ---------- thinking loop ----------
     def start_thinking(self, lead_ms=None, repeat_s=None):

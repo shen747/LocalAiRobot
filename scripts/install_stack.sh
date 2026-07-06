@@ -141,13 +141,19 @@ PY
 # overwrites a committed WAV; only --force would). An empty folder is a silent no-op.
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/wake_word_ack" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/thinking_still_sounds" \
-         "${REPO}/sounds/remote_ack_sounds" "${REPO}/sounds/error_sounds"
+         "${REPO}/sounds/remote_ack_sounds" "${REPO}/sounds/sleep_sounds" "${REPO}/sounds/error_sounds"
 if [ -x "${H}/piper/piper/piper" ] && [ -f "${H}/piper/${VOICE}.onnx" ]; then
   echo "   synthesizing any MISSING earcons with Piper (committed ones are kept)..."
   bash "${REPO}/scripts/generate_sounds.sh" || echo "   (earcon generation skipped/failed -- committed WAVs still ship)"
 else
   echo "   (Piper not found at ~/piper -- skipping earcon generation; committed WAVs still ship)"
 fi
+
+# Face templates: render any MISSING procedural face PNGs (brain/faces/<state>/01.png) with the brain venv's
+# Pillow -- committed art is kept, and new states (e.g. sleeping, inquisitive) get a starting template. The
+# face ALSO renders procedurally live with no PNGs, so this is a convenience/consistency step, never required.
+echo "   rendering any MISSING face templates (brain/faces/<state>/01.png)..."
+bash "${REPO}/scripts/generate_faces.sh" || echo "   (face template render skipped/failed -- the face still renders procedurally)"
 
 # Fill YOUR_USER in config/robot.env with the current Linux user -- whisper (STT) + piper (TTS) run from
 # these exact /home/<user>/... paths. Idempotent: once replaced there's no YOUR_USER left (re-run = no-op).

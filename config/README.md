@@ -245,6 +245,7 @@ WAV folder layout + format tips: [`sounds/README.md`](../sounds/README.md).
 | `ROBOT_SOUNDS_REMOTE_ACK` | `1` | "Got a remote command…" when a **phone/HTTP** command lands (`remote_ack_sounds/`) — the robot audibly excuses itself mid-chat. |
 | `ROBOT_SOUNDS_THINKING` | `1` | The **first** processing cue while the model runs (`thinking_sounds/`, picked at random). |
 | `ROBOT_SOUNDS_THINKING_STILL` | `1` | The **re-cues** after the first, each repeat interval (`thinking_still_sounds/`, the "still…" set). |
+| `ROBOT_SOUNDS_SLEEP` | `1` | Spoken **goodbye** when a conversation ends on silence (`sleep_sounds/`, e.g. *"Going back to sleep — say hey jarvis to wake me"*). Plays **fully** (blocking) before the robot shows the sleeping face and returns to wake-word-only. |
 | `ROBOT_SOUNDS_ERROR` | `1` | On obstacle / LLM error (fire-and-forget; never delays the stop). |
 | `ROBOT_THINKING_LEAD_MS` | `500` | **Local:** stay silent this long before the first thinking cue. |
 | `ROBOT_THINKING_REPEAT_S` | `10` | **Local:** seconds between re-cues (the "still…" set). **`0` = play once.** |

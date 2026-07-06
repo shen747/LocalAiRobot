@@ -29,7 +29,7 @@ fi
 cd "$REPO"
 mkdir -p sounds/greeting_sounds sounds/wake_word_ack sounds/ack_sounds \
          sounds/thinking_sounds sounds/thinking_still_sounds sounds/remote_ack_sounds \
-         sounds/error_sounds
+         sounds/sleep_sounds sounds/error_sounds
 
 # say <out.wav> "<words>": speak the words into the WAV with Piper (the robot's own voice). Skips a file
 # that already exists (so re-running never regenerates/clobbers what's there) unless --force.
@@ -102,6 +102,21 @@ say sounds/thinking_still_sounds/wont_be_long.wav     "Won't be long"
 say sounds/remote_ack_sounds/remote_got_it.wav   "Got a remote command, on it now"
 say sounds/remote_ack_sounds/remote_incoming.wav "Incoming request, working on that"
 say sounds/remote_ack_sounds/remote_received.wav "Received a remote command, one moment"
+# sleep -- spoken when a CONVERSATION ends on silence: the robot says goodbye + how to wake it, then goes
+# back to wake-word-only. Full friendly sentences (unlike the short acks); each MUST mention "hey jarvis".
+# Picked at random -- >=12 for variety.
+say sounds/sleep_sounds/busy.wav         "Alright, it seems you're busy now. Say hey jarvis whenever you need me again."
+say sounds/sleep_sounds/done_chatting.wav "Looks like we're done chatting for now. I'll be right here. Just say hey jarvis to wake me."
+say sounds/sleep_sounds/back_to_sleep.wav "Okay, I'll head back to sleep. Say hey jarvis whenever you want to talk again."
+say sounds/sleep_sounds/gone_quiet.wav   "It's gone quiet, so I'm dozing off. Wake me any time with hey jarvis."
+say sounds/sleep_sounds/catch_you.wav    "Catch you later! Say hey jarvis when you need me."
+say sounds/sleep_sounds/standby.wav      "Going back to standby. Just say hey jarvis to bring me back."
+say sounds/sleep_sounds/rest_now.wav     "I'll rest for now. Say hey jarvis and I'm all ears again."
+say sounds/sleep_sounds/talk_soon.wav    "Talk soon! Wake me up with hey jarvis whenever you like."
+say sounds/sleep_sounds/powering_down.wav "Alright, powering down my ears. Say hey jarvis to wake me up."
+say sounds/sleep_sounds/take_your_time.wav "No worries, take your time. Say hey jarvis when you're ready to chat."
+say sounds/sleep_sounds/napping.wav      "I'll be napping. A quick hey jarvis will wake me right up."
+say sounds/sleep_sounds/signing_off.wav  "Signing off for now. Say hey jarvis to start another conversation."
 # error -- obstacle / LLM error
 say sounds/error_sounds/uh_oh.wav        "Uh oh"
 

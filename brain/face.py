@@ -32,7 +32,8 @@ from driver import dry_run_enabled
 log = logging.getLogger("robot.face")
 
 STATES = ("idle", "listening", "thinking", "talking", "exploring",
-          "happy", "confused", "alarmed", "warmup", "capturing")
+          "happy", "confused", "alarmed", "warmup", "capturing",
+          "inquisitive", "sleeping")
 
 # Per-mood drawing params: bg tint, eye colour, pupil look (dx,dy in -1..1), mouth style,
 # and flags for happy (^^) eyes / wide (startled) eyes / drooped lids.
@@ -48,6 +49,11 @@ _MOODS = {
     # added states: warmup (model loading at boot) + capturing (camera grab before a vision look)
     "warmup":    dict(bg=(20, 20, 34),  eye=(160, 180, 255), look=(0.0, 0.0),   mouth="flat", lid=0.2),
     "capturing": dict(bg=(12, 30, 38),  eye=(150, 230, 255), look=(0.0, -0.1),  mouth="o", wide=True),
+    # inquisitive: shown the instant "hey jarvis" wakes it -- wide bright eyes glancing up-and-aside, curious
+    # "o" mouth (distinct from listening's straight-ahead look). sleeping: shown when a conversation ends on
+    # silence -- peaceful CLOSED eyes (sleep=True), a soft smile, and floating "Zzz".
+    "inquisitive": dict(bg=(16, 34, 46), eye=(150, 235, 255), look=(0.35, -0.35), mouth="o", wide=True, query=True),
+    "sleeping":    dict(bg=(14, 14, 26), eye=(120, 160, 220), look=(0.0, 0.0),    mouth="smile_s", sleep=True),
 }
 
 # Per-state animation timing, used ONLY when a state has >=2 PNG frames: (fps, loop).
@@ -97,6 +103,10 @@ def _render(state, w, h, frame=0):
     dx, dy = m["look"]
 
     def draw_eye(cx):
+        if m.get("sleep"):                   # closed, peaceful eye = a gentle downward-cup arc (a content ‿)
+            d.arc([cx - er, cy - er * 0.6, cx + er, cy + er * 0.7], start=20, end=160,
+                  fill=eye, width=max(3, int(er * 0.32)))
+            return
         if m.get("happy"):                   # ^^ happy eyes = upward arcs
             d.arc([cx - er, cy - er, cx + er, cy + er], start=200, end=340, fill=eye, width=max(3, int(er * 0.35)))
             return
@@ -138,8 +148,32 @@ def _render(state, w, h, frame=0):
             pts.append((xx, yy))
         d.line(pts, fill=eye, width=line)
 
+    # Sleepy "Zzz" (three ascending Z's, drawn as strokes so no font is needed) + a curious "?" accent.
+    if m.get("sleep"):
+        for i, s in enumerate((h * 0.05, h * 0.07, h * 0.10)):
+            zx, zy = w * (0.66 + i * 0.07), h * (0.30 - i * 0.09)
+            _draw_z(d, zx, zy, s, eye, max(2, int(h * 0.012)))
+    if m.get("query"):
+        _draw_query(d, w * 0.80, h * 0.16, h * 0.11, eye, max(3, int(h * 0.016)))
+
     d.text((6, h - 16), state, fill=(150, 150, 160))   # tiny label (handy on the bench)
     return img
+
+
+def _draw_z(d, x, y, s, color, wdt):
+    """A 'Z' glyph from three strokes (top bar, diagonal, bottom bar) -- no font dependency."""
+    d.line([(x, y), (x + s, y)], fill=color, width=wdt)
+    d.line([(x + s, y), (x, y + s)], fill=color, width=wdt)
+    d.line([(x, y + s), (x + s, y + s)], fill=color, width=wdt)
+
+
+def _draw_query(d, x, y, s, color, wdt):
+    """A '?' glyph: a hooked arc + a dot below -- drawn as strokes so no font is needed."""
+    r = s * 0.5
+    d.arc([x - r, y, x + r, y + s], start=150, end=390, fill=color, width=wdt)  # the top hook
+    d.line([(x + r * 0.1, y + s * 0.75), (x + r * 0.1, y + s * 1.05)], fill=color, width=wdt)  # stem
+    dot = max(wdt, int(s * 0.10))
+    d.ellipse([x + r * 0.1 - dot, y + s * 1.25 - dot, x + r * 0.1 + dot, y + s * 1.25 + dot], fill=color)  # dot
 
 
 class _SimulatedBackend:

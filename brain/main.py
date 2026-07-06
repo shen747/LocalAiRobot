@@ -710,9 +710,10 @@ def main():
     log.info("conversation: follow-ups %s%s", "ON" if followup_enable else "OFF (wake word every turn)",
              f" (sleep after %ds of silence)" % followup_silence_s if followup_enable else "")
 
+    waiting_face = "idle"   # face while waiting for the wake word; becomes "sleeping" once a chat has ended
     try:
         while True:
-            fc.set_expression("idle")
+            fc.set_expression(waiting_face)
             # IDLE: quiesce the ultrasonics so their software-timed threads don't starve the wake-word mic
             # while we wait (the "runs forever" fix). A wake / drive / HTTP command below resumes them.
             driver.pause_sensing()
@@ -725,6 +726,7 @@ def main():
                 continue   # a background voice-abort listen was cancelled; just re-enter the wait
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
+                fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record
                 snd.play("wake_ack")       # wake-ack: "yes?/hi" -- responding to being summoned, before recording
                 # Snap + person-check IN PARALLEL with the record+transcribe below (so it's ~free on remote).
                 if _person_check_enabled() and getattr(cam, "available", False):
@@ -735,8 +737,11 @@ def main():
             #     followup_silence_s of quiet (or a capture error) drops us back to the wake word. The
             #     person-check + wake-ack above are wake-ONLY -- follow-ups just listen. ---
             last_voice = time.monotonic()
+            first_turn = True   # hold the inquisitive wake face through the FIRST record; then show "listening"
             while True:
-                fc.set_expression("listening")
+                if not first_turn:
+                    fc.set_expression("listening")
+                first_turn = False
                 try:
                     text = listen_and_transcribe(cfg)
                 except Exception as e:
@@ -753,6 +758,10 @@ def main():
                     if silent_for >= followup_silence_s:
                         log.info("conversation: %.0fs of silence -> sleeping (say the wake word to talk again)",
                                  silent_for)
+                        fc.set_expression("sleeping")   # peaceful closed-eyes + Zzz
+                        snd.play_blocking("sleep")      # say goodbye + how to wake me, FULLY, before we re-enter
+                                                        # the wake listen (which then holds audio_lock)
+                        waiting_face = "sleeping"       # stay "asleep" until the next wake
                         break
                     fc.set_expression("idle")   # nothing heard yet; keep waiting for a follow-up
                     continue
