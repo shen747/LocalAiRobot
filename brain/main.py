@@ -18,6 +18,7 @@
 
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -70,16 +71,28 @@ def load_config():
     }
 
 
-# Common whisper hallucinations on silence/noise -- ignore these outright.
+# Common whisper hallucinations on silence -- ignore these outright (they're real words, not sound tags).
 WHISPER_NOISE = {
     "", ".", "you", "bye.", "thank you.",
     "thanks for watching.", "thank you for watching.",
-    "[blank_audio]", "(silence)", "(buzzing)",
 }
+
+# whisper writes NON-SPEECH events as bracketed/starred tags: "(machine whirring)", "[BLANK_AUDIO]",
+# "*buzzing*", "(clicking)". Matching ONE tag lets us strip them all and see if any real words remain --
+# so we don't have to hardcode every ambient sound (the Pi's own fans alone produce many variants).
+_NOISE_TAG = re.compile(r"[\(\[\*][^\)\]\*]*[\)\]\*]")
 
 
 def is_noise(text):
-    return text.strip().lower() in WHISPER_NOISE
+    """True if the transcript is silence, a known whisper hallucination, or ONLY non-speech sound tags
+    (e.g. '(machine whirring)' from the Pi's own cooling fans). Such a transcript must NOT burn an LLM
+    call, and (mid-conversation) must NOT reset the silence timer -- else the fan noise keeps it awake."""
+    t = text.strip().lower()
+    if t in WHISPER_NOISE:
+        return True
+    # Strip every bracketed sound tag; if only punctuation/space is left, it's pure noise (no real words).
+    remainder = _NOISE_TAG.sub("", t).strip(" .,!?-–—…\"'")
+    return len(remainder) < 2
 
 
 # --- Autonomy trigger gate: EXPLORE/FIND only fire if the transcript contains one of these. ---
