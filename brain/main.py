@@ -339,6 +339,14 @@ def main():
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Board HAL: resolve the target board and apply its metadata BEFORE any hardware is built.
+    # hal.current() also applies the board's launch env (e.g. the Pi's GPIOZERO_PIN_FACTORY=lgpio) via
+    # os.environ.setdefault; here we seed the board's default pin map the same way -- so config/robot.env
+    # and run_me.sh need not hard-code per-board pins/factory, yet anything already set still wins.
+    import hal
+    _board = hal.current()   # logs "board selected: ..." and applies the board's launch env
+    for _pin, _val in _board.default_pins().items():
+        os.environ.setdefault(_pin, str(_val))
     cfg = load_config()
     driver = RobotDriver()
     cam = Camera()
