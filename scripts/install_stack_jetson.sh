@@ -156,7 +156,7 @@ fi
 
 echo ">> DONE -- Jetson AI stack installed (Ollama+CUDA, whisper.cpp+CUDA, Piper, OpenCV camera, face libs, venv)."
 echo
-echo "Next -- Jetson-specific bring-up (see JETSON_NANO_SUPPORT.md):"
+echo "Next -- Jetson-specific bring-up:"
 echo "   * Reboot so the group membership + any jetson-io pin changes take effect:   sudo reboot"
 echo "   * Set the board + I2C bus in config/robot.env:  ROBOT_BOARD=jetson (or auto), ROBOT_I2C_BUS=7"
 echo "     and swap the ultrasonic pins to the Jetson header profile (BOARD SELECT section)."

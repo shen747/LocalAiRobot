@@ -3,7 +3,7 @@
 # This module holds the board-agnostic POLICY (enable flag, dry-run, target size, the shared
 # letterbox/JPEG helper) and delegates the actual capture to a board-selected backend from the HAL:
 #   Pi 5   -> Picamera2 / libcamera            (brain/picamera2_backend.py, brain/boards/pi5.py)
-#   Jetson -> GStreamer/V4L2                    (added in JETSON_NANO_SUPPORT.md Phase 4)
+#   Jetson -> GStreamer/V4L2                    (brain/gst_camera.py, brain/boards/jetson.py)
 # Every backend exposes the same .capture_jpeg()/.close()/.available surface, so the rest of the vision
 # pipeline (vision.py, the REMEMBER/LOOK/EXPLORE actions) only ever sees JPEG bytes and never a board.
 #

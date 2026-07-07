@@ -177,12 +177,23 @@ class RobotDriver:
         # actively reads all 3 beams, which adds a little load -- fine for a diagnosis run, not for "forever").
         self.sensor_verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
         self.sensor_log_period = _envf("ROBOT_SENSOR_LOG_PERIOD_S", 2.0)
-        trig = _envi("ROBOT_TRIG_PIN", 23)
-        echo = _envi("ROBOT_ECHO_PIN", 24)
-        left_trig = _envi("ROBOT_LEFT_TRIG_PIN", 5)
-        left_echo = _envi("ROBOT_LEFT_ECHO_PIN", 6)
-        right_trig = _envi("ROBOT_RIGHT_TRIG_PIN", 20)
-        right_echo = _envi("ROBOT_RIGHT_ECHO_PIN", 21)
+        # Resolve the board once via the HAL. Its default_pins() supply the PER-BOARD pin fallback below,
+        # so core carries no board-specific pin constants: a Jetson gets its header pins, a Pi gets BCM.
+        # An explicit env value (config/robot.env) still wins. hal.current() also applies the board's launch
+        # env and is safe in dry-run (metadata only, no hardware); main.py already called it, so it's cached.
+        import hal
+        self._board = hal.current()
+        _pins = self._board.default_pins()
+
+        def _pin(key, pi_default):
+            return _envi(key, _pins.get(key, pi_default))
+
+        trig = _pin("ROBOT_TRIG_PIN", 23)
+        echo = _pin("ROBOT_ECHO_PIN", 24)
+        left_trig = _pin("ROBOT_LEFT_TRIG_PIN", 5)
+        left_echo = _pin("ROBOT_LEFT_ECHO_PIN", 6)
+        right_trig = _pin("ROBOT_RIGHT_TRIG_PIN", 20)
+        right_echo = _pin("ROBOT_RIGHT_ECHO_PIN", 21)
 
         # --- Failsafe: absolute cap on how long one command may keep the motor running ---
         self.max_move_ms = _envi("ROBOT_MAX_MOVE_MS", 5000)
@@ -213,8 +224,7 @@ class RobotDriver:
         self.sensor_quiesce = os.environ.get("ROBOT_SENSOR_IDLE_QUIESCE", "1") == "1"
         self._sense_lock = threading.Lock()
         self._sensing_paused = False
-        self._board = None               # hal board (set in the live branch); builds the PWM kit + sensors
-        self._sensor_pins = {}           # {name: (trig, echo)} kept for the rebuild on resume
+        self._sensor_pins = {}           # {name: (trig, echo)} kept for the rebuild on resume (self._board set above)
 
         if self.dry_run:
             _mode = "DRY RUN -- no hardware will be driven"
@@ -224,15 +234,24 @@ class RobotDriver:
         else:
             _mode = "LIVE HARDWARE"
         log.info("*** %s ***", _mode)
-        log.info("PCA9685 I2C 0x40 (SDA GPIO2 / SCL GPIO3): ESC (Electronic Speed Controller) ch=%d, steer ch=%d | "
+        log.info("PCA9685 I2C 0x40 (board=%s, bus=%s): ESC (Electronic Speed Controller) ch=%d, steer ch=%d | "
                  "FWD throttle %.2f..%.2f  REV %.2f..%.2f  invert=%d  neutral=%.2f(%.0fus)",
+                 self._board.name, os.environ.get("ROBOT_I2C_BUS", "").strip() or "default",
                  self.esc_ch, self.steer_ch, self.fwd_floor, self.fwd_ceil,
                  self.rev_floor, self.rev_ceil, int(self.invert),
                  self.neutral, 1500.0 + self.neutral * 500.0)
-        log.info("HC-SR04P x3: front TRIG=GPIO%d/ECHO=GPIO%d  left TRIG=GPIO%d/ECHO=GPIO%d  "
-                 "right TRIG=GPIO%d/ECHO=GPIO%d", trig, echo, left_trig, left_echo, right_trig, right_echo)
+        log.info("HC-SR04P x3 (%s pins): front TRIG=%d/ECHO=%d  left TRIG=%d/ECHO=%d  right TRIG=%d/ECHO=%d",
+                 self._board.pin_scheme, trig, echo, left_trig, left_echo, right_trig, right_echo)
         log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
                  self.obstacle_cm, self.side_obstacle_cm)
+        # Multi-board pin footgun: if the board uses BOARD (physical-header) numbering but the resolved pins
+        # are exactly the Pi BCM defaults, the config almost certainly still has the Pi pins -- warn loudly
+        # rather than silently drive the wrong header pins.
+        if self._board.pin_scheme != "BCM" and \
+                (trig, echo, left_trig, left_echo, right_trig, right_echo) == (23, 24, 5, 6, 20, 21):
+            log.warning("SENSOR PINS are the Raspberry Pi BCM defaults (23/24/5/6/20/21) but board=%s uses %s "
+                        "numbering -- set the board's header pins in config/robot.env (BOARD SELECT) or the "
+                        "ultrasonics will read the WRONG pins.", self._board.name, self._board.pin_scheme)
 
         self.hw_failed = False   # set True below if a LIVE device init fails and we fall back to a fake
         if self.dry_run:
@@ -248,8 +267,7 @@ class RobotDriver:
             # and on a Pi with no PCA9685 the ServoKit constructor raises -- the board's factory guards both.
             # Each device is built defensively: a hardware failure is LOGGED (naming the device and how to
             # fix it) and swapped for a fake, so the brain keeps running instead of crashing with a traceback.
-            import hal
-            self._board = hal.current()
+            # (self._board was resolved above, before the pin defaults were read.)
             # gpiozero emits a DistanceSensorNoEcho warning on EVERY read with no echo -- ~15/sec with the
             # 3-sensor array unwired, which buries the real log. Collapse it to one line (Pi/gpiozero only; a
             # no-op where gpiozero isn't installed). The forward gate already fail-closes on a bad read.
@@ -275,9 +293,10 @@ class RobotDriver:
                 try:
                     self.kit = self._board.make_pwm_kit(channels)
                 except Exception as e:
-                    log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40 (SDA GPIO2 / SCL GPIO3): %s", e)
-                    log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and `i2cdetect -y 1` "
-                              "(expect 0x40); on the bench run with ROBOT_DRY_RUN=1. Motors are DISABLED.")
+                    log.error("HARDWARE FAILURE: PCA9685 not found on I2C 0x40: %s", e)
+                    log.error("  fix: check the PCA9685 VCC/SDA/SCL/GND wiring + power and run `i2cdetect` on "
+                              "the board's I2C bus (expect 0x40; Pi = bus 1, Jetson 40-pin header ~ bus 7 via "
+                              "ROBOT_I2C_BUS). On the bench run with ROBOT_DRY_RUN=1. Motors are DISABLED.")
                     self.kit = FakeServoKit(channels=channels)
                     self.hw_failed = True
 

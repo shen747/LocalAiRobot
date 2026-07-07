@@ -10,8 +10,9 @@
 # too -- importing `boards` must never require the Jetson libraries. Only when this board is SELECTED and a
 # factory is CALLED (live mode on an actual Jetson) are Jetson.GPIO / cv2 / adafruit imports touched.
 #
-# See JETSON_NANO_SUPPORT.md. Pin numbers here are BOARD (physical 40-pin header) numbering -- they are
-# PLACEHOLDERS: verify against the Orin Nano pinout and free the pins in `jetson-io` before wiring.
+# The board interface this implements is documented in brain/hal.py. Pin numbers here are BOARD (physical
+# 40-pin header) numbering -- they are PLACEHOLDERS: verify against the Orin Nano pinout and free the pins
+# in `jetson-io` before wiring.
 
 import os
 
