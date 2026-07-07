@@ -1,5 +1,5 @@
 @startuml basic_control_flow
-' LocalAiRobot — how a spoken command becomes action (everything runs on the Pi 5).
+' LocalAiRobot — how a spoken command becomes action (everything runs on the on-board computer: Pi 5 / Jetson).
 ' This source lives next to its render. Regenerate in place (writes basic_control_flow.png here):
 '   plantuml -tpng docs/images/basic_control_flow.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
@@ -11,7 +11,7 @@
 '                orange = control logic   red = the motors/wheels
 !pragma layout smetana
 hide stereotype
-title LocalAiRobot — how a spoken command becomes action (all on the Pi 5)
+title LocalAiRobot — how a spoken command becomes action (all on the robot's on-board computer)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -102,6 +102,6 @@ rectangle " \n \n " as pad <<pad>>
 dmotor -[hidden]-> pad
 
 note bottom of brain
-  Runs entirely on the Pi -- no internet.
+  Runs on-board (Pi 5 or Jetson) -- offline by default.
 end note
 @enduml

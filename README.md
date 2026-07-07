@@ -5,12 +5,18 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
+> **Boards.** The reference build is a **Raspberry Pi 5**; the same brain also runs on an **NVIDIA Jetson
+> Orin Nano** via a board HAL ([`brain/hal.py`](brain/hal.py)) that swaps only the GPIO/PWM/camera backends.
+> Jetson setup uses [`scripts/install_stack_jetson.sh`](scripts/install_stack_jetson.sh) + the
+> [board keys](config/README.md#board-pi-5--jetson) (`ROBOT_BOARD`, physical **BOARD** pins, I²C bus 7). The
+> rest of this README is the **Pi 5** walkthrough.
+
 ## Quickstart — 5 steps to a talking robot
 
 Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
-2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in.
+2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(On a Jetson, run `./scripts/install_stack_jetson.sh` instead.)*
 3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)

@@ -22,6 +22,26 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | `ROBOT_MOTORS_OFF` | `0` | `1` = **stationary / tabletop** mode: runs **fully live** (wake word, voice, camera, sensors, RAG, face) but the **ESC + steering get no PWM** — the console still logs the throttle/steer commands (like dry-run) yet the **wheels never move**. For talking to the assembled car on a desk without it driving off. Needs `ROBOT_DRY_RUN=0` (dry-run already fakes everything). |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
+## Board (Pi 5 / Jetson)
+
+The brain runs on more than one single-board computer via a small hardware-abstraction layer
+([`brain/hal.py`](../brain/hal.py) + `brain/boards/`). The board is **auto-detected** from
+`/proc/device-tree/model`; it picks the GPIO, PWM and camera backends and the pin numbering (Pi = **BCM**,
+Jetson = physical **BOARD** header pins). Install with the matching script — [`install_stack.sh`](../scripts/install_stack.sh)
+on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on the Jetson.
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_BOARD` | `auto` | `auto` = detect the board, else `pi5` \| `jetson`. Force it if detection is wrong (e.g. on a dev laptop it falls back to `pi5`). |
+| `ROBOT_I2C_BUS` | *(empty)* | PCA9685 I²C bus number. Empty = Blinka default (**Pi = bus 1**). **Jetson: set `7`** (the 40-pin header) — needs the `adafruit-extended-bus` package. |
+| `ROBOT_CAMERA_BACKEND` | *(empty)* | Empty = board default (**pi5 → picamera2**, **jetson → gstreamer**). Override: `picamera2` \| `gstreamer` \| `v4l2`. |
+| `ROBOT_CAMERA_SOURCE` | *(empty)* | `v4l2`: USB webcam index (e.g. `0`). `gstreamer`: a full pipeline string. Empty = CSI sensor 0 via Argus (Jetson). |
+
+> **Jetson pins differ.** The `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` values in the sensors section are Pi **BCM**
+> numbers. On a Jetson set the physical **BOARD** header pins instead (a placeholder profile is commented in
+> `robot.env`; free them with `sudo /opt/nvidia/jetson-io/jetson-io.py`). Left unset, the jetson board supplies
+> its own defaults.
+
 ## AI backend (local Ollama vs remote Gemini)
 
 The "brain" — **text-intent and camera vision** — runs either **locally** on Ollama (default, fully
@@ -36,7 +56,7 @@ sensors, motors, face and the wake word are **always local**. Getting a key + fu
 | `ROBOT_GEMINI_MODEL` | `gemini-2.5-flash` | Remote **text/intent** model. Flash-tier is the low-latency sweet spot for command→JSON + chat; `gemini-3.1-pro` is smarter but slower. |
 | `ROBOT_GEMINI_VISION_MODEL` | `gemini-robotics-er-1.6-preview` | Remote **vision** model. **Robotics-ER 1.6** is Google's embodied-reasoning VLM (spatial reasoning, object localization, agentic navigation) — best fit for describe/LOOK/explore/person-check. Empty → reuse `ROBOT_GEMINI_MODEL`. |
 | `ROBOT_GEMINI_VISION_THINKING_BUDGET` | `0` | Gemini **thinking** budget for the vision path: `0` = off (fast, deterministic, no JSON truncation — recommended for Robotics-ER), `-1` = dynamic, `N` = fixed budget, `auto` = omit the field (for a model that rejects it). |
-| `ROBOT_GEMINI_THINKING_BUDGET` | *(empty)* | Thinking budget for the **text** model; empty = the model's own default. Same value rules as the vision one. |
+| `ROBOT_GEMINI_THINKING_BUDGET` | `0` | Thinking budget for the **text** model. `0` = off — a thinking model (e.g. `gemini-3.5-flash`) left on its default can spiral to 85–120 s on ambiguous "should I look?" prompts and trip `ROBOT_LLM_TIMEOUT_S`; `0` keeps command→JSON snappy. Raise (e.g. `512`) if intent decisions degrade; empty/`auto` = model default. |
 | `ROBOT_GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta` | API base; override for a proxy/region. |
 
 The remote path reuses the existing call timeouts (`ROBOT_LLM_TIMEOUT_S` for text, `ROBOT_VISION_TIMEOUT_S`

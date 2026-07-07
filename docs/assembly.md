@@ -14,6 +14,15 @@ wire each peripheral with its own check, build the chassis, then calibrate live.
 > laptop, not PowerShell. Flash the SD with SSH enabled (Phase 1), `ssh YOUR_USER@raspberrypi.local` in,
 > and work there. Every multi-step task is a `./scripts/*.sh` helper — you never run Python by hand.
 
+> 🧩 **On a Jetson Orin Nano?** The mechanical build, PCA9685 wiring, sensors, camera and face are the same;
+> only the SBC and its stacks differ, handled by the board HAL ([`brain/hal.py`](../brain/hal.py)). Swap these
+> Pi steps for the Jetson equivalents: **install** with [`scripts/install_stack_jetson.sh`](../scripts/install_stack_jetson.sh)
+> (CUDA Ollama/whisper; no SD flash — JetPack 6 is pre-installed); **GPIO** is `Jetson.GPIO` with **physical
+> BOARD** header pins (not Pi BCM) — set `ROBOT_TRIG_PIN`/etc. to the header pins and free them with
+> `sudo /opt/nvidia/jetson-io/jetson-io.py`; **I²C** for the PCA9685 is the 40-pin header — `ROBOT_I2C_BUS=7`;
+> **camera** is a USB webcam via GStreamer/OpenCV (`ROBOT_CAMERA_BACKEND`/`ROBOT_CAMERA_SOURCE`) — the Arducam
+> IMX519 CSI driver is a separate, JetPack-specific install. See the [board keys](../config/README.md#board-pi-5--jetson).
+
 > ⚙️ **What's an ESC?** It sits between the battery and the drive motor and turns a throttle PWM into
 > motor power + direction. Here that PWM comes from **PCA9685 channel 0** (Phase 3), not an RC receiver,
 > and the ESC's **BEC** (its built-in supply) back-feeds the PCA9685 `V+` rail to power the steering

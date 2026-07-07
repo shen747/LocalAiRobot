@@ -59,5 +59,7 @@ note bottom of periph
   Tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC <-> UBEC) or the PWM won't register.
   **PCA9685 V+ rail = the ESC BEC** (servo power), not the Pi (use an HV servo, or a separate 5-6V BEC).
   All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
+  **Jetson Orin Nano** also runs this (board HAL): same PCA9685 / servo / sensor wiring, but **physical BOARD**
+  GPIO pins (not the Pi BCM 23/24 · 5/6 · 20/21 shown) and PCA9685 on **I2C bus 7** -- see config/robot.env.
 end note
 @enduml
