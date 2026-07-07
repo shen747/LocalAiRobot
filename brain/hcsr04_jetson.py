@@ -16,6 +16,12 @@ import time
 log = logging.getLogger("robot.hw")
 
 _SPEED_OF_SOUND = 343.0   # m/s (dry air, ~20C)
+# While waiting for the echo to START (the no-echo case busy-waits the whole timeout), sleep-poll instead of
+# spinning: time.sleep RELEASES the GIL, so a dead/open-space sensor can't starve the wake-word predict
+# thread (the Pi's "went deaf" failure, in the shared CPython interpreter). ~200us keeps the rising-edge
+# detection tight; detecting the edge slightly late only shifts `start` later -> the pulse reads SHORTER ->
+# a nearer (more conservative/safer) distance, never farther. The pulse-timing loop stays a tight busy-wait.
+_RISING_POLL_S = 0.0002
 
 
 class JetsonDistanceSensor:
@@ -56,8 +62,9 @@ class JetsonDistanceSensor:
         while GPIO.input(self._echo) == 0:       # wait for the echo rising edge
             if time.perf_counter() - t0 > timeout:
                 return None
+            time.sleep(_RISING_POLL_S)           # yield the GIL (this is the no-echo busy-wait that starves it)
         start = time.perf_counter()
-        while GPIO.input(self._echo) == 1:       # ...then the falling edge
+        while GPIO.input(self._echo) == 1:       # ...then the falling edge (tight loop = precise pulse timing)
             if time.perf_counter() - start > timeout:
                 return None
         return min(self.max_distance, (time.perf_counter() - start) * _SPEED_OF_SOUND / 2.0)

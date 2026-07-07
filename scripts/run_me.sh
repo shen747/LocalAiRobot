@@ -34,7 +34,7 @@ fi
 # GPIO backend (gpiozero pin factory) is chosen by the board HAL now, not hard-coded here: brain/boards/pi5.py
 # reports GPIOZERO_PIN_FACTORY=lgpio for the Pi 5 (pigpio can't reach the Pi 5's RP1 I/O controller), and
 # brain/main.py / hal.current() apply it via os.environ.setdefault BEFORE any device is built. An explicit
-# override in your environment or config/robot.env still wins. See JETSON_NANO_SUPPORT.md (Phase R).
+# override in your environment or config/robot.env still wins. See brain/hal.py (the board HAL).
 # (This does NOT remove the software-timing jitter -- ROBOT_OBSTACLE_DEBOUNCE handles that.)
 
 # --- boot-service helpers (systemd autostart; kept in here so there's no extra script file) ---
