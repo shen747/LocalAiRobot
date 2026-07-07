@@ -33,8 +33,10 @@ sensors, motors, face and the wake word are **always local**. Getting a key + fu
 |---|---|---|
 | `ROBOT_AI_BACKEND` | `local` | `local` = Ollama on the Pi (offline) \| `gemini` = Google Gemini (remote — needs network + a key, and camera frames leave the device). |
 | `ROBOT_GEMINI_API_KEY` | *(empty)* | Google AI Studio key — **required** when `gemini`. Keep it secret (don't commit). [How to get one →](../docs/gemini-setup.md) |
-| `ROBOT_GEMINI_MODEL` | `gemini-2.5-flash` | Remote **text/intent** model. |
-| `ROBOT_GEMINI_VISION_MODEL` | *(empty)* | Remote **vision** model; empty → reuse `ROBOT_GEMINI_MODEL` (Gemini is multimodal). |
+| `ROBOT_GEMINI_MODEL` | `gemini-2.5-flash` | Remote **text/intent** model. Flash-tier is the low-latency sweet spot for command→JSON + chat; `gemini-3.1-pro` is smarter but slower. |
+| `ROBOT_GEMINI_VISION_MODEL` | `gemini-robotics-er-1.6-preview` | Remote **vision** model. **Robotics-ER 1.6** is Google's embodied-reasoning VLM (spatial reasoning, object localization, agentic navigation) — best fit for describe/LOOK/explore/person-check. Empty → reuse `ROBOT_GEMINI_MODEL`. |
+| `ROBOT_GEMINI_VISION_THINKING_BUDGET` | `0` | Gemini **thinking** budget for the vision path: `0` = off (fast, deterministic, no JSON truncation — recommended for Robotics-ER), `-1` = dynamic, `N` = fixed budget, `auto` = omit the field (for a model that rejects it). |
+| `ROBOT_GEMINI_THINKING_BUDGET` | *(empty)* | Thinking budget for the **text** model; empty = the model's own default. Same value rules as the vision one. |
 | `ROBOT_GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta` | API base; override for a proxy/region. |
 
 The remote path reuses the existing call timeouts (`ROBOT_LLM_TIMEOUT_S` for text, `ROBOT_VISION_TIMEOUT_S`

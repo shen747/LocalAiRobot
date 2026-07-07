@@ -652,7 +652,10 @@ def main():
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
     if cfg.get("ai_backend") == "gemini":
         if cfg.get("gemini_api_key"):
-            print(f"AI brain: REMOTE Gemini ({cfg.get('gemini_model')}) — text + vision (needs network).")
+            _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
+            _split = f"text={cfg.get('gemini_model')}, vision={_vm}" if _vm != cfg.get("gemini_model") \
+                else f"text + vision on {cfg.get('gemini_model')}"
+            print(f"AI brain: REMOTE Gemini ({_split}) (needs network).")
         else:
             print("AI brain: ROBOT_AI_BACKEND=gemini but ROBOT_GEMINI_API_KEY is EMPTY — commands will "
                   "fail. Set the key (see docs/gemini-setup.md) or switch back to local.", file=sys.stderr)

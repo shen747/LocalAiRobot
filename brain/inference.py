@@ -173,6 +173,23 @@ def _to_gemini_schema(schema):
     return out
 
 
+def _gemini_thinking_budget(is_vision):
+    """Gemini 'thinking budget'. Thinking models (Gemini Robotics-ER, the *-flash models) reason BEFORE
+    answering, which adds latency and can burn the token budget so the structured JSON truncates. For the
+    robot's schema-constrained vision we want fast, deterministic replies, so the VISION path DEFAULTS to 0
+    (thinking off) -- the value the Robotics-ER docs recommend. Text keeps the model's own default.
+      ROBOT_GEMINI_VISION_THINKING_BUDGET / ROBOT_GEMINI_THINKING_BUDGET: int (0 = off, -1 = dynamic/model
+      decides, N = fixed budget); a non-integer (e.g. 'auto') OMITS the field for a model that rejects it."""
+    key = "ROBOT_GEMINI_VISION_THINKING_BUDGET" if is_vision else "ROBOT_GEMINI_THINKING_BUDGET"
+    raw = (os.environ.get(key) or "").strip()
+    if raw == "":
+        return 0 if is_vision else None      # vision -> off (fast/no truncation); text -> model default
+    try:
+        return int(raw)
+    except ValueError:
+        return None                          # 'auto'/'default'/etc -> don't send thinkingConfig at all
+
+
 def _gemini_generate(cfg, payload, timeout):
     """POST one Gemini generateContent request (under model_lock) and return the model's JSON text."""
     api_key = (cfg.get("gemini_api_key") or "").strip()
@@ -202,6 +219,9 @@ def _gemini_generate(cfg, payload, timeout):
         schema = _to_gemini_schema(fmt)
         if schema:
             gen["responseSchema"] = schema
+    tb = _gemini_thinking_budget(is_vision)   # vision defaults to thinking OFF (Robotics-ER: fast, no truncation)
+    if tb is not None:
+        gen["thinkingConfig"] = {"thinkingBudget": tb}
 
     body = json.dumps({"contents": [{"parts": parts}], "generationConfig": gen}).encode("utf-8")
     base = (cfg.get("gemini_url") or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
