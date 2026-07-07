@@ -5,4 +5,5 @@
 # Adding a board = add brain/boards/<name>.py (implementing the hal.Board surface + register(...)) and add
 # one import line below. No core file changes.
 
-from . import pi5  # noqa: F401  -- Raspberry Pi 5 (the reference build)
+from . import pi5     # noqa: F401  -- Raspberry Pi 5 (the reference build)
+from . import jetson  # noqa: F401  -- NVIDIA Jetson (Orin Nano); lazy hw imports, safe to import anywhere
