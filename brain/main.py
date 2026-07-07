@@ -339,6 +339,18 @@ def main():
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+    # CRIT-02: catch SIGTERM (systemd stop / run_me.sh --reload) and route it through the SAME graceful
+    # cleanup as Ctrl-C. Without this, Python's default SIGTERM disposition kills the process instantly --
+    # the control thread dies, the finally-block never runs, and the PCA9685 holds its LAST pulse (an
+    # in-flight FORWARD keeps driving). CPython runs the handler on the main thread, so the KeyboardInterrupt
+    # lands in wake.wait/handle_command and falls through to the existing except/finally that neutralises the
+    # ESC + closes devices. Installed BEFORE RobotDriver() so it covers the whole live run.
+    def _sigterm(_signum, _frame):
+        raise KeyboardInterrupt   # reuse the existing Ctrl-C cleanup path
+    try:
+        signal.signal(signal.SIGTERM, _sigterm)
+    except (ValueError, OSError):
+        pass
     # Board HAL: resolve the target board and apply its metadata BEFORE any hardware is built.
     # hal.current() also applies the board's launch env (e.g. the Pi's GPIOZERO_PIN_FACTORY=lgpio) via
     # os.environ.setdefault; here we seed the board's default pin map the same way -- so config/robot.env
@@ -391,9 +403,12 @@ def main():
         ).start()
 
     # Shared abort for autonomous behaviours (explore/find): tripped by HTTP /stop, the wake word during a
-    # behaviour (listener below), or Ctrl-C. behavior_active lets on_stop report whether anything is
-    # actually running. Cleared at the start of each behaviour so a stale /stop can't pre-abort the next.
+    # behaviour (listener below), or Ctrl-C. behavior_active lets on_stop report whether anything is running.
+    # CRIT-03: behavior_abort + estop are cleared at the start of each TURN (in handle_command), NOT each
+    # behaviour -- so a /stop that lands mid-turn (e.g. during the spoken confirmation) survives into the
+    # behaviour and aborts it, instead of being erased by a fresh-run clear.
     behavior_abort = threading.Event()
+    estop = threading.Event()   # CRIT-03: latches an out-of-band /stop so an in-flight turn can't override it
     behavior_active = threading.Event()
     voice_abort_active = threading.Event()   # set while the background voice-abort listener runs (say() pauses the mic)
 
@@ -418,8 +433,7 @@ def main():
             installed = True
         except (ValueError, OSError):
             pass   # not the main thread -> Ctrl-C falls through to the outer handler (quits)
-        behavior_abort.clear()          # fresh run: ignore any earlier /stop
-        behavior_active.set()
+        behavior_active.set()   # CRIT-03: behavior_abort/estop are cleared per-TURN in handle_command, not here
         # Voice abort: listen for the wake word in the BACKGROUND during the behaviour; "hey jarvis" trips
         # on_stop(). Live + working wake word only (dry-run/no-model rely on HTTP /stop + Ctrl-C). say()
         # pauses this mic (voice_abort_active) so the listener never records the robot's own narration.
@@ -461,6 +475,7 @@ def main():
         during a behaviour). Trips the abort flag AND neutralises the ESC immediately. Safe to call anytime;
         returns whether a behaviour was actually running."""
         active = behavior_active.is_set()
+        estop.set()             # CRIT-03: latch BEFORE driver.stop() so an in-flight turn can't override it
         behavior_abort.set()
         try:
             driver.stop()
@@ -513,6 +528,8 @@ def main():
         `source` is "voice" or "http"; over HTTP the CAMERA actions (REMEMBER/FIND/EXPLORE) are blocked
         unless ROBOT_HTTP_ALLOW_CAMERA=1. Returns (action, reply)."""
         with turn_lock:
+            estop.clear()
+            behavior_abort.clear()         # CRIT-03: a /stop belongs to the turn it arrived in, not the next one
             fc.set_expression("thinking")
             _start_thinking()              # proof-of-life cue while the model runs (backend-aware timing)
             t_think = time.monotonic()
@@ -610,10 +627,18 @@ def main():
                 say(reply)
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")
+                if estop.is_set():   # CRIT-03: /stop landed during this turn -> don't launch the behaviour
+                    reply = "Okay, stopping."
+                    say(reply)
+                    return "STOP", reply
                 say(reply)
                 run_behavior(behavior.run_find, cfg, driver, cam, mem, fc, say, snd, str(target))
             elif action == "EXPLORE":
                 print("action=EXPLORE")
+                if estop.is_set():   # CRIT-03: /stop landed during this turn -> don't launch the behaviour
+                    reply = "Okay, stopping."
+                    say(reply)
+                    return "STOP", reply
                 say(reply)
                 run_behavior(behavior.run_explore, cfg, driver, cam, mem, fc, say, snd)
             else:  # DRIVE (and any unknown action falls here as plain teleop)
@@ -636,7 +661,13 @@ def main():
                     if dur < 300:      # clamp tiny/zero durations up to a usable move
                         dur = 1500
                 print(f"action=DRIVE drive={drive} steer={steer} speed={speed} dur={dur}ms reply={reply!r}")
-                driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
+                if estop.is_set():   # CRIT-03: /stop arrived during this turn (e.g. while the LLM was thinking)
+                    log.info("estop: stop arrived during this turn -- suppressing drive")
+                    driver.stop()
+                else:
+                    driver.command(drive, steer, speed, dur)  # non-blocking; motion in driver thread
+                    if estop.is_set():   # stop landed between the check and command(): re-assert it
+                        driver.stop()
                 say(reply)                                 # synchronous; returns after playback
             return action, reply
 
@@ -746,8 +777,16 @@ def main():
                 driver.stop()
                 print("Bye.")
                 return
-            if trigger == "CANCELLED":
-                continue   # a background voice-abort listen was cancelled; just re-enter the wait
+            if trigger == "FAILED":
+                # MIC-03: the wake listener gave up after repeated faults (e.g. a wedged USB mic). Exit
+                # NON-ZERO so systemd's Restart=on-failure relaunches a fresh process (a full ALSA/PortAudio
+                # re-init from scratch -- the only reliable recovery). SystemExit isn't caught by the
+                # KeyboardInterrupt handler, so the cleanup finally still neutralises the ESC + closes devices.
+                driver.stop()
+                log.error("wake listener failed permanently -- exiting 1 so systemd restarts the brain")
+                sys.exit(1)
+            if trigger in ("CANCELLED", "RETRY"):
+                continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record

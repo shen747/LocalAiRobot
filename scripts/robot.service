@@ -20,6 +20,13 @@ WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
 # this to systemd's EnvironmentFile= -- that parser keeps trailing "# comments" as part of each
 # value, silently corrupting most settings in robot.env (numbers fall back to code defaults).
 ExecStart=/bin/bash -c 'if [ -f /home/YOUR_USER/LocalAiRobot/config/robot.env ]; then set -a; . /home/YOUR_USER/LocalAiRobot/config/robot.env; set +a; fi; exec /home/YOUR_USER/LocalAiRobot/brain/.venv/bin/python /home/YOUR_USER/LocalAiRobot/brain/main.py'
+# CRIT-02: stop with SIGINT (Python raises KeyboardInterrupt natively -> the graceful cleanup that
+# NEUTRALISES the ESC + closes devices runs) instead of the default SIGTERM (a hard kill that leaves the
+# PCA9685 holding its last pulse). TimeoutStopSec gives the bounded device closes time before SIGKILL.
+# NOTE: this is a template -- after editing, re-run ./scripts/run_me.sh --install-boot on any robot that
+# already has the boot service (or edit the installed unit + `sudo systemctl daemon-reload`).
+KillSignal=SIGINT
+TimeoutStopSec=15
 Restart=on-failure
 RestartSec=3
 

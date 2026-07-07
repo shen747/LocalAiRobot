@@ -498,8 +498,12 @@ class RobotDriver:
         with self._io:
             try:
                 self._write_throttle(self.neutral)
-            except Exception:
-                pass
+            except Exception as e:
+                # CRIT-01: a FAILED emergency-neutral write must NOT be silently swallowed. Invalidate the
+                # write cache so the next control-loop tick is forced to retry, and log it LOUD -- otherwise
+                # the ESC can keep driving with no trace.
+                self._log_throttle = None
+                log.error("NEUTRAL write FAILED (ESC may still be driving!): %s -- will retry each tick", e)
 
     def _speed_to_throttle(self, drive, speed):
         """Map a 0..100 speed onto the ESC's usable band for `drive`, returning the ACTUAL SIGNED throttle
@@ -534,20 +538,22 @@ class RobotDriver:
         # PCA9685 holds the pulse in hardware. A STOP/obstacle still changes the value -> still writes.
         if rv == self._log_throttle:
             return
-        self._log_throttle = rv
         log.info("I2C->PCA9685 ESC (Electronic Speed Controller)   ch=%d throttle=%+.3f pulse_us=%.0f",
                  self.esc_ch, value, self._esc_pulse_us(value))
         self.kit.continuous_servo[self.esc_ch].throttle = value
+        self._log_throttle = rv    # CRIT-01: cache ONLY after the write succeeds -- a raised I2C write must
+                                   # leave the cache stale so the next tick retries (else a poisoned cache
+                                   # skips every retry and the ESC keeps its last pulse -> can't neutralise)
 
     def _write_steer(self, steer):       # caller MUST hold self._io
         angle = {"LEFT": self.steer_left, "RIGHT": self.steer_right}.get(steer, self.steer_center)
         angle = max(0.0, min(180.0, angle))
         if steer == self._log_steer:     # write-on-change (same reasoning as _write_throttle)
             return
-        self._log_steer = steer
         log.info("I2C->PCA9685 SERVO ch=%d steer=%-6s angle=%.1fdeg pulse_us=%.0f",
                  self.steer_ch, steer, angle, self._steer_pulse_us(angle))
         self.kit.servo[self.steer_ch].angle = angle
+        self._log_steer = steer          # CRIT-01: cache only after the write succeeds (see _write_throttle)
 
     def _control_loop(self):
         # Runs at ~20 Hz. This loop is the failsafe AND the sole normal-operation writer of

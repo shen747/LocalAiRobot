@@ -17,12 +17,16 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # on every boot (see scripts/robot.service + run_me.sh --install-boot). Off by default -- a plain install
 # never touches boot behaviour.
 BOOTSTRAP=0
+IMX519_AF=0
 for arg in "$@"; do
   case "$arg" in
     --bootstrap) BOOTSTRAP=1 ;;
-    -h|--help)   echo "usage: $(basename "$0") [--bootstrap]"; \
-                 echo "  --bootstrap  also install the systemd boot service (brain auto-starts on boot)"; exit 0 ;;
-    *) echo "unknown option: $arg (use --bootstrap)" >&2; exit 2 ;;
+    --imx519-af) IMX519_AF=1 ;;
+    -h|--help)   echo "usage: $(basename "$0") [--bootstrap] [--imx519-af]"; \
+                 echo "  --bootstrap  also install the systemd boot service (brain auto-starts on boot)"; \
+                 echo "  --imx519-af  install Arducam's IMX519 AUTOFOCUS tuning (opt-in: replaces system libcamera"; \
+                 echo "               with Arducam's fork so ROBOT_CAMERA_AUTOFOCUS works -- see the camera step)"; exit 0 ;;
+    *) echo "unknown option: $arg (use --bootstrap / --imx519-af)" >&2; exit 2 ;;
   esac
 done
 
@@ -64,12 +68,41 @@ case "$CAMERA_OVERLAY" in
       else
         echo "dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]" | sudo tee -a "$CAMCFG" >/dev/null
       fi
-      echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519 autofocus; live after the reboot)"
+      echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519; live after the reboot)"
       echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam1"
+      case "$CAMERA_OVERLAY" in imx519*)
+        [ "$IMX519_AF" = 1 ] || echo "   AUTOFOCUS NOTE: the stock Bookworm tuning has NO AF algorithm ('Could not set AF_MODE'), so ROBOT_CAMERA_AUTOFOCUS does nothing (close-up 'remember' shots stay soft). Add AF with:  ./scripts/install_stack.sh --imx519-af  (or use the official Camera Module 3 for first-class AF)." ;;
+      esac
     else
       echo "   (boot config not found -- skipping camera overlay; not a Pi?)"
     fi ;;
 esac
+
+# Camera AUTOFOCUS (IMX519), opt-in via --imx519-af. The Pi's stock Bookworm libcamera tuning for the
+# IMX519 ships WITHOUT an autofocus algorithm, so the sensor runs fixed-focus and ROBOT_CAMERA_AUTOFOCUS is a
+# no-op (log: "Could not set AF_MODE - no AF algorithm"). Arducam's packages REPLACE the system libcamera
+# with their fork, which carries the IMX519 AF tuning. This is a THIRD-PARTY system change that can conflict
+# with a stock camera and with later apt libcamera updates -- so it is OPT-IN, never part of a plain install
+# (mirrors the supply-chain caution elsewhere). If it ever breaks, the official Camera Module 3 (IMX708) has
+# first-class AF with no third-party fork. Jetson: IMX519 has no Argus support -- use an IMX219 instead.
+if [ "$IMX519_AF" = 1 ]; then
+  echo ">> [camera AF] installing Arducam IMX519 autofocus tuning (opt-in; replaces system libcamera with Arducam's fork)"
+  AF_TMP="$(mktemp -d)"
+  AF_URL="https://github.com/ArduCAM/Arducam-Pivariety-V4L2-Driver/releases/download/install_script/install_pivariety_pkgs.sh"
+  if curl -fsSLo "$AF_TMP/install_pivariety_pkgs.sh" "$AF_URL"; then
+    chmod +x "$AF_TMP/install_pivariety_pkgs.sh"
+    if ( cd "$AF_TMP" && ./install_pivariety_pkgs.sh -p libcamera_dev && ./install_pivariety_pkgs.sh -p libcamera_apps ); then
+      echo "   IMX519 AF tuning installed. REBOOT, then verify:  rpicam-hello --list-cameras"
+      echo "   (the 'Could not set AF_MODE - no AF algorithm' warning should be GONE; ROBOT_CAMERA_AUTOFOCUS=1 now focuses per shot)."
+    else
+      echo "   !! Arducam AF install FAILED. Your camera still works fixed-focus. See https://docs.arducam.com/Raspberry-Pi-Camera/"
+      echo "      or switch to the official Raspberry Pi Camera Module 3 (IMX708) for first-class autofocus."
+    fi
+  else
+    echo "   !! could not download Arducam's install script (network?). Skipping AF tuning."
+  fi
+  rm -rf "$AF_TMP"
+fi
 
 echo ">> [3/8] enable I2C + hardware group access (PCA9685 I2C, 3x HC-SR04 GPIO, USB-C panel, framebuffer)"
 sudo raspi-config nonint do_i2c 0 || echo "   (raspi-config not found -- enable I2C manually: dtparam=i2c_arm=on)"

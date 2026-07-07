@@ -94,6 +94,12 @@ class WakeWord:
         # (~q_max chunks of jitter buffer, chunk = 80ms) while this loop predicts. Bigger = absorbs longer
         # predict spikes before a chunk is dropped, at the cost of a little worst-case wake latency.
         self._q_max = max(4, _envi("ROBOT_WAKEWORD_QUEUE_MAX", 32))
+        # MIC-02/03 recovery: a raised listen error retries (RETRY) up to max_errors, then FAILED (-> main
+        # exits 1 -> systemd restarts). A dead stream is rebuilt in-process (PortAudio re-init) and, if no
+        # clean audio returns within rebuild_max_s, also FAILED -- so the mic can never wedge deaf forever.
+        self._listen_errors = 0
+        self.max_listen_errors = max(1, _envi("ROBOT_WAKEWORD_MAX_ERRORS", 10))
+        self.rebuild_max_s = _envf("ROBOT_WAKEWORD_REBUILD_MAX_S", 60.0)
         # A non-voice turn (e.g. an HTTP command) needs the audio path WHILE we're listening. pause_mic()
         # sets _yield so the listen loop drops audio_lock + the mic (confirmed via _yielded); resume_mic()
         # clears it. Without this the listener holds audio_lock forever and the HTTP turn's TTS deadlocks.
@@ -243,6 +249,11 @@ class WakeWord:
         skipped = 0          # chunks below the silence floor (predict skipped)
         qdepth_max = 0
         empty_since = 0.0    # first time get() came back empty in a stall (0 = not stalling)
+        consec_drops = 0     # MIC-01: consecutive dropped chunks -- a SINGLE drop is bridged, not reset
+        drop_reset_n = max(1, _envi("ROBOT_WAKEWORD_DROP_RESET_N", 3))
+        rebuilding = False   # MIC-02: last stream (re)open followed a stream-death -> re-init PortAudio first
+        rebuild_since = 0.0  # MIC-02: when the current dead-mic outage began (0 = healthy)
+        rebuild_backoff = 1.0
         logged = False
         try:
             while result is None:
@@ -262,6 +273,26 @@ class WakeWord:
                         break
                     self._model.reset()
                     hits = 0
+                # MIC-02: this iteration follows a STREAM DEATH. Re-initialize PortAudio so a re-plugged /
+                # re-enumerated USB mic is rediscovered (sounddevice caches the device table; the reopen
+                # against a stale/wedged device is exactly the ~163 s hang seen in the field). Back off
+                # between attempts, and if no clean audio has returned within rebuild_max_s, give up with
+                # FAILED -> main exits 1 (cleanly neutralising the ESC) -> systemd restarts -- the only
+                # reliable recovery from a wedged USB audio stack, and far better than wedging deaf forever.
+                if rebuilding:
+                    if rebuild_since == 0.0:
+                        rebuild_since = time.time()
+                    down = time.time() - rebuild_since
+                    if self.rebuild_max_s > 0 and down >= self.rebuild_max_s:
+                        log.critical("wake: mic dead for %.0fs -- giving up (FAILED, exit for restart).", down)
+                        return "FAILED"
+                    try:
+                        sd._terminate(); time.sleep(0.5); sd._initialize()   # force device re-enumeration
+                    except Exception as e:
+                        log.warning("wake: PortAudio re-init failed (%s)", e)
+                    if self._cancel.wait(rebuild_backoff):
+                        return "CANCELLED"
+                    rebuild_backoff = min(rebuild_backoff * 2, 8.0)
                 # Hold audio_lock while the stream is open: the wake mic must not be live while Piper or an
                 # earcon plays (self-trigger defense). It's dropped above whenever another turn asks (yield).
                 with audio_lock:
@@ -337,6 +368,7 @@ class WakeWord:
                                     log.warning("wake: NO audio from the mic for %.0fs -- the capture callback "
                                                 "stopped (stream dead); rebuilding PortAudio.",
                                                 time.time() - empty_since)
+                                    rebuilding = True   # MIC-02: re-init PortAudio before the reopen
                                     break
                                 continue
                             empty_since = 0.0
@@ -349,10 +381,19 @@ class WakeWord:
                                     pa_drops += 1
                                 else:
                                     q_drops += 1
-                                # A chunk was DROPPED -> openWakeWord's rolling buffer is torn -> reset so it
-                                # rebuilds from contiguous audio. (See the HEALTH line for WHY it's dropping.)
-                                self._model.reset()
-                                hits = 0
+                                consec_drops += 1
+                                # MIC-01: a SINGLE missing 80ms chunk is BRIDGED with one chunk of model-rate
+                                # silence (keeps openWakeWord's rolling mel/embedding buffer time-aligned),
+                                # NOT reset. A full reset flushes the whole phrase context; at the ~7% drop
+                                # rate a cheap USB mic shows, a reset-every-drop makes "hey jarvis" unscorable
+                                # (field log: loud speech, best score 0.00). Only a real GAP (drop_reset_n
+                                # consecutive drops) or a queue-full drop (a larger discarded backlog, drop==2)
+                                # tears the buffer enough to warrant a reset.
+                                if drop == 2 or consec_drops >= drop_reset_n:
+                                    self._model.reset()      # a real gap -> rebuild from contiguous audio
+                                    hits = 0
+                                else:
+                                    self._model.predict(np.zeros(_CHUNK, dtype=np.int16))   # 16kHz model rate
                                 if time.time() >= next_overflow_log:
                                     log.warning("wake: mic chunk DROPPED (%s) -- model reset. See 'wake HEALTH' "
                                                 "for predict-ms / load / queue depth.",
@@ -365,9 +406,18 @@ class WakeWord:
                                     log.warning("wake: rebuilding the mic stream after %.0fs with no clean "
                                                 "audio (self-heal -- reopening PortAudio).",
                                                 time.time() - last_clean)
+                                    rebuilding = True   # MIC-02: re-init PortAudio before the reopen
                                     break
                                 continue
                             last_clean = time.time()   # a clean chunk landed -> reset the rebuild watchdog
+                            consec_drops = 0           # MIC-01: contiguous audio resumed
+                            self._listen_errors = 0    # MIC-03: clean audio proves the listener is healthy
+                            if rebuilding:             # MIC-02: recovered from a stream death -> announce + clear
+                                log.warning("wake: mic stream reopened after %.1fs",
+                                            time.time() - (rebuild_since or last_clean))
+                                rebuilding = False
+                                rebuild_since = 0.0
+                                rebuild_backoff = 1.0
                             if audio.ndim > 1:
                                 audio = audio.flatten()
                             if rate != _SAMPLE_RATE:
@@ -440,8 +490,21 @@ class WakeWord:
                                 qdepth_max = 0
                                 next_report = time.time() + 15.0
         except Exception as e:
-            log.warning("wake listen failed (%s) -- live has no ENTER fallback, stopping.", e)
-            return "QUIT"
+            # MIC-03: a raised listen fault (USB mic re-enumerating -> PortAudioError on reopen, an ALSA
+            # hiccup, a transient ONNX error) used to return "QUIT" == a CLEAN exit-0, so systemd's
+            # Restart=on-failure never restarted -> the robot went permanently deaf. Instead RETRY (main
+            # re-enters the listen) up to max_listen_errors, then FAILED (main exits 1 -> systemd restarts).
+            # A clean chunk resets the counter (above). 'q'-typed QUIT + the no-model refusal stay exit-0.
+            self._listen_errors += 1
+            if self._listen_errors >= self.max_listen_errors:
+                log.error("wake listen failed %d times (last: %s) -- giving up (FAILED, exit for restart).",
+                          self._listen_errors, e)
+                return "FAILED"
+            log.warning("wake listen failed (%s) -- retrying (%d/%d).", e, self._listen_errors,
+                        self.max_listen_errors)
+            if self._cancel.wait(2.0):   # honour cancel_listen() during the backoff (voice-abort listener)
+                return "CANCELLED"
+            return "RETRY"
         time.sleep(0.2)   # let PortAudio/ALSA release the mic before arecord grabs it
         return result
 
