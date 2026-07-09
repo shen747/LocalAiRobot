@@ -205,7 +205,8 @@ class Diag:
             return self.skip(label, "ROBOT_SOUNDS_ENABLE=0")
         piper = os.path.expanduser(os.environ.get("ROBOT_PIPER_BIN", "~/piper/piper/piper"))
         voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
-        text = ("Hello, I am Jarvis, your friendly robot car, powered by AI and created by Ramesh.")
+        name = os.environ.get("ROBOT_NAME", "Jarvis").strip() or "Jarvis"
+        text = (f"Hello, I am {name}, your friendly robot car, powered by A I.")
         wav = os.path.join(OUTDIR, "diag_speaker.wav")
         # 1) Synthesize with Piper -- this exercises the REAL voice pipeline. If Piper fails we STILL want
         #    to prove the speaker, so we fall back to a guaranteed ALSA test tone (the exact 'default' path

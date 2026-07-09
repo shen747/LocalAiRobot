@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cleanup_pi.sh -- undo scripts/install_stack.sh and free the disk it used.
+# cleanup_pi.sh -- undo scripts/install_stack_pi5.sh and free the disk it used.
 # Three phases: (1) DRY RUN that lists exactly what exists and will be removed/reset,
 # (2) asks "Shall I proceed?", (3) only on y/yes does it execute. Re-runnable.
 #

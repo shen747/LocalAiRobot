@@ -21,7 +21,7 @@ H="${HOME}"
 TOOLS="${H}/.localairobot-tools"
 VENV="${TOOLS}/venv"
 PIPER_DIR="${H}/piper"
-PIPER_REL="2023.11.14-2"            # keep in step with scripts/install_stack.sh
+PIPER_REL="2023.11.14-2"            # keep in step with scripts/install_stack_pi5.sh + install_stack_jetson.sh
 VOICE="en_US-lessac-medium"
 
 DRYRUN=0; YES=0

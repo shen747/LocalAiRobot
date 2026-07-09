@@ -3,7 +3,7 @@
 # (one per state) under brain/faces/<state>/01.png. Edit them, add 02.png+ to animate, then commit.
 # Run this ON YOUR PC after ./scripts/host_setup.sh (it installs the Pillow it needs).
 #
-#   ./scripts/generate_faces.sh                  # 320x480 (USB-C panel); skips frames you already have
+#   ./scripts/generate_faces.sh                  # 480x320 (USB-C panel, landscape); skips frames you already have
 #   ./scripts/generate_faces.sh --size 800x480   # Freenove 5" DSI panel
 #   ./scripts/generate_faces.sh --force          # overwrite existing 01.png
 set -uo pipefail
@@ -28,7 +28,7 @@ import argparse, os, sys
 repo = os.environ["LAR_REPO"]
 ap = argparse.ArgumentParser()
 ap.add_argument("--out", default=os.path.join(repo, "brain", "faces"))
-ap.add_argument("--size", default="320x480", help="WxH: 320x480 USB-C panel, 800x480 Freenove DSI")
+ap.add_argument("--size", default="480x320", help="WxH: 480x320 USB-C panel (landscape), 800x480 Freenove DSI")
 ap.add_argument("--force", action="store_true")
 a = ap.parse_args()
 try:

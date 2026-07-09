@@ -58,6 +58,11 @@ class Memory:
             """CREATE TABLE IF NOT EXISTS facts (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                    ts REAL, name TEXT, fact TEXT, description TEXT, image_path TEXT)""")
+        # Singleton key/value facts. The robot's OWN identity (who it is + what it can do) lives here and is
+        # injected FIRST into every prompt (prompt_context) -- top-priority memory so the robot always knows
+        # itself, and the marker used to detect a first run (introduce itself) or a name change.
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT, ts REAL)")
         self._db.commit()
         n = self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
         log.info("memory: %s (%d observations)", self.path, n)
@@ -138,6 +143,42 @@ class Memory:
             log.warning("memory: photo save failed (%s)", e)
             return None
 
+    # ---------- the robot's own identity (top-priority memory) ----------
+    def get_meta(self, key):
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key, value):
+        try:
+            with self._lock:
+                self._db.execute("INSERT OR REPLACE INTO meta (key, value, ts) VALUES (?,?,?)",
+                                 (key, value, time.time()))
+                self._db.commit()
+        except Exception as e:
+            log.warning("memory: set_meta(%s) failed (%s) -- continuing", key, e)
+
+    def ensure_identity(self, name, summary):
+        """Persist the robot's own identity (name + what it can do) as top-priority memory. Returns 'new'
+        the FIRST time any identity is stored (fresh DB -> the robot introduces itself), 'renamed' if the
+        configured ROBOT_NAME differs from what was stored (say the new name once), else 'known'."""
+        name = (name or "").strip() or "Jarvis"
+        prev = self.get_meta("robot_name")
+        self.set_meta("robot_name", name)
+        self.set_meta("robot_identity", (summary or "").strip())
+        if prev is None:
+            return "new"
+        return "renamed" if prev.strip().lower() != name.lower() else "known"
+
+    def identity_string(self):
+        """The robot's identity, for the FRONT of the LLM prompt context (top priority). Empty if unset."""
+        name = self.get_meta("robot_name")
+        if not name:
+            return ""
+        summary = (self.get_meta("robot_identity") or "").strip()
+        return f"Your own identity (most important -- this is you): {summary}" if summary \
+            else f"Your name is {name}."
+
     def facts_string(self, max_items=12):
         """One-line summary of taught people/things (newest first, deduped) for the LLM prompt."""
         with self._lock:
@@ -184,7 +225,9 @@ class Memory:
         scenes = self.recent_scenes()
         scene_str = ("Earlier, while exploring, I saw (from MEMORY -- NOT the current camera view): "
                      + " | ".join(s[:160] for s in scenes)) if scenes else ""
-        return " ".join(p for p in (self.facts_string(), self.context_string(max_items), scene_str) if p)
+        # identity_string() goes FIRST -- it is top-priority memory (who the robot is + what it can do).
+        return " ".join(p for p in (self.identity_string(), self.facts_string(),
+                                    self.context_string(max_items), scene_str) if p)
 
     def context_string(self, max_items=None):
         """One-line rolling summary of recent distinct seen objects, for the LLM prompt.

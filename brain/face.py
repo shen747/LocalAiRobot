@@ -121,9 +121,10 @@ def _render(state, w, h, frame=0):
     draw_eye(lx)
     draw_eye(rx)
 
-    # mouth
-    mx, my = w * 0.5, h * 0.66
-    mw = w * 0.24
+    # mouth. Size it off the SHORT axis (min(w,h)) so a wide landscape canvas doesn't blow the smile up
+    # until it runs off the bottom, and sit it a little higher (0.60h) so the big 'happy' smile clears the edge.
+    mx, my = w * 0.5, h * 0.60
+    mw = min(w, h) * 0.24
     style = m["mouth"]
     line = max(3, int(h * 0.012))
     if style == "smile_s":
@@ -202,9 +203,22 @@ class _SimulatedBackend:
 
 
 class _TuringBackend:
-    """USB-C panel via mathoudebine/turing-smart-screen-python (serial protocol)."""
+    """USB-C panel via mathoudebine/turing-smart-screen-python (serial protocol).
 
-    def __init__(self, w, h, port, revision, brightness, libdir):
+    Orientation: the panel is portrait-native (e.g. 320x480). ROBOT_FACE_ORIENTATION rotates the rendered
+    face into the panel's frame so a panel MOUNTED SIDEWAYS reads upright. 'landscape'/'reverse_landscape'
+    draw the face on a WIDE logical canvas (e.g. 480x320) -- so the whole face system (procedural renderer
+    + PNG assets) lays out horizontally -- and show() rotates it 90deg into the native portrait frame right
+    before the serial push. 'portrait' is the native frame; 'reverse_landscape'/'reverse_portrait' flip
+    which edge is 'up' (use them if the face comes out upside-down for your mounting).
+
+    Speed: a full frame is a slow serial paint on rev A (you watch it 'slide' in). When only PART of the
+    face changed between frames (e.g. the talking mouth), we send just that bounding box via a positioned
+    DisplayPILImage -- far less serial traffic -- and skip the push entirely when nothing changed. A big
+    change (a mood switch repaints most of the screen) still sends a full frame. ROBOT_FACE_PARTIAL=0
+    forces full frames (set it if a panel mis-renders positioned sub-images)."""
+
+    def __init__(self, w, h, port, revision, brightness, libdir, orientation="landscape", partial=True):
         import sys
         sys.path.insert(0, os.path.expanduser(libdir))
         rev = (revision or "A").upper()
@@ -212,8 +226,24 @@ class _TuringBackend:
             from library.lcd.lcd_comm_rev_b import LcdCommRevB as Lcd
         else:
             from library.lcd.lcd_comm_rev_a import LcdCommRevA as Lcd
-        # Native portrait orientation (width <= height); render to that.
-        self.width, self.height = min(w, h), max(w, h)
+        # Panel NATIVE geometry is portrait (width <= height); the library always talks to it in that frame.
+        self._nw, self._nh = min(w, h), max(w, h)
+        self._orient = (orientation or "landscape").lower()
+        # LOGICAL canvas the face is DRAWN on (what a viewer sees). Landscape swaps the axes so the renderer
+        # and PNG assets lay out wide; show() rotates back to native before the push.
+        if self._orient in ("landscape", "reverse_landscape"):
+            self.width, self.height = self._nh, self._nw
+        else:
+            self.width, self.height = self._nw, self._nh
+        self._partial = partial
+        self._np = None
+        if partial:
+            try:
+                import numpy as np                    # only needed for the changed-region diff
+                self._np = np
+            except Exception:
+                self._partial = False                 # no numpy -> full frames only
+        self._last = None                             # last image pushed, in NATIVE orientation (diff basis)
         # The turing library's openSerial() does `try: sys.exit(0) except: os._exit(0)` when it can't
         # auto-find the panel's COM port. os._exit() is UNCATCHABLE -- it hard-kills the whole brain
         # (our _try's `except SystemExit` never sees it). So when the port is AUTO, detect the panel
@@ -227,19 +257,66 @@ class _TuringBackend:
                 raise RuntimeError("no turing panel detected on any serial port "
                                    "(plug it in + set ROBOT_FACE_PORT, or ROBOT_FACE_BACKEND=simulated)")
             com = found
-        self._lcd = Lcd(com_port=com, display_width=self.width, display_height=self.height)
+        self._lcd = Lcd(com_port=com, display_width=self._nw, display_height=self._nh)
         self._lcd.Reset()
         self._lcd.InitializeComm()
         try:
             self._lcd.SetBrightness(level=brightness)
         except Exception:
             pass
-        log.info("face backend: turing USB-C panel rev%s (%dx%d, port=%s)",
-                 rev, self.width, self.height, port or "AUTO")
+        log.info("face backend: turing USB-C panel rev%s (native %dx%d, %s %dx%d, port=%s, partial=%s)",
+                 rev, self._nw, self._nh, self._orient, self.width, self.height, port or "AUTO", self._partial)
+
+    def _to_native(self, img):
+        """Rotate the logical (viewer-space) face into the panel's native portrait frame. PIL rotate() is
+        counter-clockwise; a 90/180/270 rotation of a rectangle needs no padding (expand keeps every pixel)."""
+        if self._orient == "landscape":
+            return img.rotate(-90, expand=True)       # 90 CW:  480x320 -> 320x480
+        if self._orient == "reverse_landscape":
+            return img.rotate(90, expand=True)        # 90 CCW: the other way up
+        if self._orient == "reverse_portrait":
+            return img.rotate(180, expand=True)
+        return img                                    # portrait: already native
+
+    def _changed_box(self, a_img, b_img):
+        """(left, top, right, bottom) of pixels that differ between two same-size images (right/bottom
+        exclusive, PIL-crop convention), or None if identical."""
+        np = self._np
+        a = np.asarray(a_img.convert("RGB"))
+        b = np.asarray(b_img.convert("RGB"))
+        diff = np.any(a != b, axis=2)
+        if not diff.any():
+            return None
+        rows = np.where(diff.any(axis=1))[0]
+        cols = np.where(diff.any(axis=0))[0]
+        return int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1
 
     def show(self, state, img):
-        if img is not None:
-            self._lcd.DisplayPILImage(img)
+        if img is None:
+            return
+        cur = self._to_native(img)
+        if cur.size != (self._nw, self._nh):          # safety: match the panel frame exactly
+            cur = cur.resize((self._nw, self._nh))
+        try:
+            if self._partial and self._last is not None and self._last.size == cur.size:
+                box = self._changed_box(self._last, cur)
+                if box is None:
+                    return                            # nothing changed -> skip the serial push entirely
+                left, top, right, bottom = box
+                frac = ((right - left) * (bottom - top)) / float(self._nw * self._nh)
+                if frac < 0.7:                        # small change -> push only that region (fast)
+                    self._lcd.DisplayPILImage(cur.crop(box), left, top)
+                    self._last = cur
+                    return
+            self._lcd.DisplayPILImage(cur)            # first frame / big change / no numpy -> full frame
+            self._last = cur
+        except Exception as e:
+            log.warning("face: turing update failed (%s) -- retrying full frame", e)
+            try:
+                self._lcd.DisplayPILImage(cur)
+                self._last = cur
+            except Exception:
+                pass
 
     def close(self):
         try:
@@ -336,25 +413,35 @@ class Face:
         port = os.environ.get("ROBOT_FACE_PORT", "AUTO")
         rev = os.environ.get("ROBOT_FACE_REVISION", "A")
         libdir = os.environ.get("ROBOT_FACE_LIB", "~/turing-smart-screen-python")
+        orient = os.environ.get("ROBOT_FACE_ORIENTATION", "landscape").strip().lower()
+        partial = (os.environ.get("ROBOT_FACE_PARTIAL", "1").strip() != "0")
         try:
             bright = int(os.environ.get("ROBOT_FACE_BRIGHTNESS", "80") or 80)
         except ValueError:
             bright = 80
 
+        def _turing():
+            return _TuringBackend(w, h, port, rev, bright, libdir, orient, partial)
+
         if self.dry_run or want == "simulated":
             self.backend = _SimulatedBackend(w, h)
         elif want == "turing":
-            self.backend = self._try(lambda: _TuringBackend(w, h, port, rev, bright, libdir)) \
-                or _SimulatedBackend(w, h)
+            self.backend = self._try(_turing) or _SimulatedBackend(w, h)
         elif want == "framebuffer":
             self.backend = self._try(lambda: _FramebufferBackend(w, h)) or _SimulatedBackend(w, h)
         else:  # auto
-            self.backend = (self._try(lambda: _TuringBackend(w, h, port, rev, bright, libdir))
+            self.backend = (self._try(_turing)
                             or self._try(lambda: _FramebufferBackend(w, h))
                             or _SimulatedBackend(w, h))
 
-        # Serial-bound turing panel can't sustain high fps; clamp it. Framebuffer/simulated are fine.
-        self._max_fps = 8.0 if isinstance(self.backend, _TuringBackend) else 30.0
+        # Serial-bound turing panel can't sustain high fps; clamp it (partial updates make the talking mouth
+        # cheap, so it can run a little higher than a full-frame panel). ROBOT_FACE_MAX_FPS overrides.
+        default_cap = 10.0 if isinstance(self.backend, _TuringBackend) else 30.0
+        try:
+            cap = float(os.environ.get("ROBOT_FACE_MAX_FPS", "") or 0)
+        except ValueError:
+            cap = 0.0
+        self._max_fps = cap if cap > 0 else default_cap
 
         self._thread = threading.Thread(target=self._animate, daemon=True)
         self._thread.start()

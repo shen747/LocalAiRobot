@@ -22,13 +22,20 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | `ROBOT_MOTORS_OFF` | `0` | `1` = **stationary / tabletop** mode: runs **fully live** (wake word, voice, camera, sensors, RAG, face) but the **ESC + steering get no PWM** — the console still logs the throttle/steer commands (like dry-run) yet the **wheels never move**. For talking to the assembled car on a desk without it driving off. Needs `ROBOT_DRY_RUN=0` (dry-run already fakes everything). |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
+## Robot identity
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_NAME` | `Jarvis` | What the robot calls **itself** — it identifies as this in speech and the LLM persona, **introduces itself out loud on first run** (and once more if you rename it), and stores *"who I am + what I can do"* as **top-priority memory** in the RAG SQLite db (injected first into every prompt). **Not** the wake word — that's a fixed openWakeWord model (`hey jarvis`). Rename: `sed -i 's/^ROBOT_NAME=.*/ROBOT_NAME=Rosie/' config/robot.env`. |
+
 ## Board (Pi 5 / Jetson)
 
 The brain runs on more than one single-board computer via a small hardware-abstraction layer
 ([`brain/hal.py`](../brain/hal.py) + `brain/boards/`). The board is **auto-detected** from
 `/proc/device-tree/model`; it picks the GPIO, PWM and camera backends and the pin numbering (Pi = **BCM**,
-Jetson = physical **BOARD** header pins). Install with the matching script — [`install_stack.sh`](../scripts/install_stack.sh)
-on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on the Jetson.
+Jetson = physical **BOARD** header pins). Install with [`install_stack.sh`](../scripts/install_stack.sh) — it
+**auto-detects the board** and runs the matching per-board installer ([`install_stack_pi5.sh`](../scripts/install_stack_pi5.sh)
+on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on the Jetson); you can also run one directly.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -37,10 +44,10 @@ on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on th
 | `ROBOT_CAMERA_BACKEND` | *(empty)* | Empty = board default (**pi5 → picamera2**, **jetson → gstreamer**). Override: `picamera2` \| `gstreamer` \| `v4l2`. |
 | `ROBOT_CAMERA_SOURCE` | *(empty)* | `v4l2`: USB webcam index (e.g. `0`). `gstreamer`: a full pipeline string. Empty = CSI sensor 0 via Argus (Jetson). |
 
-> **Jetson pins differ.** The `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` values in the sensors section are Pi **BCM**
-> numbers. On a Jetson set the physical **BOARD** header pins instead (a placeholder profile is commented in
-> `robot.env`; free them with `sudo /opt/nvidia/jetson-io/jetson-io.py`). Left unset, the jetson board supplies
-> its own defaults.
+> **Jetson pins differ.** The `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` values in the sensors section ship **SET** to
+> Pi **BCM** numbers. On a Jetson those six lines must be **commented out** — `install_stack_jetson.sh` does this
+> for you (and sets `ROBOT_BOARD`/`ROBOT_I2C_BUS`); only then do the Jetson board's own **BOARD**-pin defaults
+> apply (an uncommented Pi pin always wins). Free the header pins with `sudo /opt/nvidia/jetson-io/jetson-io.py`.
 
 ## AI backend (local Ollama vs remote Gemini)
 

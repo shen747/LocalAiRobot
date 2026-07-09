@@ -8,11 +8,18 @@
 #   - the camera uses system OpenCV (apt python3-opencv) via --system-site-packages, not a pip wheel.
 # The AI stack (Ollama, whisper.cpp, Piper, arecord/aplay) is set up by scripts/install_stack_jetson.sh.
 
-adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in Blinka + Jetson.GPIO + PlatformDetect)
+adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in Blinka + PlatformDetect;
+                                  # NOTE: Blinka does NOT depend on Jetson.GPIO -- it only imports it at
+                                  # runtime on a Jetson, which is why Jetson.GPIO is pinned explicitly below)
 adafruit-extended-bus             # bind ServoKit to an arbitrary numbered I2C bus (Jetson header ~ bus 7)
 Jetson.GPIO                       # 3x HC-SR04P ultrasonic sensors (front / left / right) -- see hcsr04_jetson.py
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
-numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
+numpy<2                           # RGB565 packing for the framebuffer face fallback. PINNED <2: the venv is
+                                  # --system-site-packages and JetPack's apt python3-opencv is compiled against
+                                  # numpy 1.x -- a pip numpy 2.x here SHADOWS the system copy and `import cv2`
+                                  # dies ("_ARRAY_API not found"), silently killing the camera. pip MUST install
+                                  # a numpy (onnxruntime needs >=1.21.6; jammy ships 1.21.5), so this pin keeps
+                                  # it at 1.26.x, which the numpy-1-built cv2 ABI accepts.
 pyserial                          # USB-C face panel (turing-smart-screen serial protocol)
 
 # --- Wake word (only when ROBOT_WAKEWORD_ENABLE=1; still 100% offline) ---

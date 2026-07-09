@@ -50,60 +50,69 @@ usb_playback_ids() {
 if [ -z "$SPK" ]; then
   mapfile -t cards < <(usb_playback_ids)
   case "${#cards[@]}" in
-    0) echo ">> No USB speaker found in 'aplay -l'."
+    0) echo ">> No USB speaker found in 'aplay -l' -- skipping speaker setup (the mic keys are still written below)."
        echo "   Plug your USB speaker in and re-run, or pass its card id explicitly:"
        echo "      $(basename "$0") <CARD_ID>     (CARD_ID = the name after 'card N:' in 'aplay -l')"
-       exit 0 ;;
+       SPK="" ;;
     1) SPK="${cards[0]}" ; echo ">> Detected one USB speaker: $SPK" ;;
-    *) echo ">> Multiple USB playback cards found: ${cards[*]}"
+    *) echo ">> Multiple USB playback cards found: ${cards[*]} -- skipping speaker setup (mic keys still written)."
        echo "   Re-run naming the one you want:  $(basename "$0") <CARD_ID>"
-       exit 0 ;;
+       SPK="" ;;
   esac
 fi
 
-# Validate the chosen id is really a playback card (catches typos / a mic id).
-if ! aplay -l 2>/dev/null | grep -q "^card [0-9]*: ${SPK} "; then
-  echo "!! '$SPK' is not a playback card in 'aplay -l'. Check the name and retry." >&2
-  exit 1
-fi
+# Speaker configuration (~/.asoundrc default output + volume) only runs when exactly one USB speaker was
+# resolved. With none/many we skip it but STILL fall through to the mic/config writes below -- an early
+# speaker exit used to leave ROBOT_MIC / ROBOT_WAKEWORD_DEVICE holding a different build's stale ids.
+if [ -n "$SPK" ]; then
+  # Validate the chosen id is really a playback card (catches typos / a mic id).
+  if ! aplay -l 2>/dev/null | grep -q "^card [0-9]*: ${SPK} "; then
+    echo "!! '$SPK' is not a playback card in 'aplay -l'. Check the name and retry." >&2
+    exit 1
+  fi
 
-# Preserve a hand-written ~/.asoundrc we didn't generate (so we never silently clobber the user's).
-if [ -f "$ASOUND" ] && ! grep -qF "$MARKER" "$ASOUND"; then
-  cp -f "$ASOUND" "$ASOUND.bak"
-  echo "   (backed up your existing ~/.asoundrc -> ~/.asoundrc.bak)"
-fi
+  # Preserve a hand-written ~/.asoundrc we didn't generate (so we never silently clobber the user's).
+  if [ -f "$ASOUND" ] && ! grep -qF "$MARKER" "$ASOUND"; then
+    cp -f "$ASOUND" "$ASOUND.bak"
+    echo "   (backed up your existing ~/.asoundrc -> ~/.asoundrc.bak)"
+  fi
 
-cat > "$ASOUND" <<EOF
+  cat > "$ASOUND" <<EOF
 $MARKER
 # Makes the USB speaker '$SPK' the system DEFAULT output, so the robot's VOICE (Piper -> aplay with no
 # -D) comes out of it. Delete this file (or run scripts/cleanup_pi.sh) to restore the previous default.
 pcm.!default { type plug; slave.pcm "hw:CARD=$SPK,DEV=0" }
 ctl.!default { type hw; card $SPK }
 EOF
-echo ">> wrote ~/.asoundrc  (default output -> $SPK)"
+  echo ">> wrote ~/.asoundrc  (default output -> $SPK)"
 
-# Set a sane volume + persist across reboots. The control name varies by device (PCM / Master / Speaker),
-# and tiny USB speakers often expose NONE -- that's fine, the level is just fixed in hardware, not an error.
-vol_ctl=""
-for ctl in PCM Master Speaker; do
-  if amixer -c "$SPK" sset "$ctl" 100% >/dev/null 2>&1; then vol_ctl="$ctl"; break; fi
-done
-if [ -n "$vol_ctl" ]; then
-  if [ "$AUDIO_ONLY" = 1 ]; then
-    echo "   volume re-applied 100% ('$vol_ctl')"
+  # Set a sane volume + persist across reboots. The control name varies by device (PCM / Master / Speaker),
+  # and tiny USB speakers often expose NONE -- that's fine, the level is just fixed in hardware, not an error.
+  vol_ctl=""
+  for ctl in PCM Master Speaker; do
+    if amixer -c "$SPK" sset "$ctl" 100% >/dev/null 2>&1; then vol_ctl="$ctl"; break; fi
+  done
+  if [ -n "$vol_ctl" ]; then
+    if [ "$AUDIO_ONLY" = 1 ]; then
+      echo "   volume re-applied 100% ('$vol_ctl')"
+    else
+      sudo alsactl store >/dev/null 2>&1 || true
+      echo "   volume set to 100% ('$vol_ctl') and persisted (alsactl store)"
+    fi
   else
-    sudo alsactl store >/dev/null 2>&1 || true
-    echo "   volume set to 100% ('$vol_ctl') and persisted (alsactl store)"
+    echo "   ('$SPK' exposes no volume control -- level is fixed in hardware; nothing to set)"
   fi
-else
-  echo "   ('$SPK' exposes no volume control -- level is fixed in hardware; nothing to set)"
 fi
 
 # --audio-only stops here: the launchers just re-apply the default + volume; they must NOT rewrite config on
 # every run (that would clobber any hand-tuning). A FULL run continues and writes the matching device names
 # into config/robot.env (by NAME so a reboot/replug can't shift them). Idempotent -- a re-run rewrites same.
 if [ "$AUDIO_ONLY" = 1 ]; then
-  echo ">> audio re-applied (default output + volume -> $SPK)."
+  if [ -n "$SPK" ]; then
+    echo ">> audio re-applied (default output + volume -> $SPK)."
+  else
+    echo ">> audio: no single USB speaker to re-apply (skipped)."
+  fi
   exit 0
 fi
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -119,8 +128,12 @@ mic_id="$(arecord -l 2>/dev/null | sed -n 's/^card \([0-9]\+\): \([^ ]\+\).*/\1 
 mic_name="$(arecord -l 2>/dev/null | sed -n "s/^card [0-9]\+: $mic_id \[\([^]]*\)\].*/\1/p" | head -n1)"
 echo
 if [ -f "$ENV" ]; then
-  set_kv ROBOT_SOUNDS_DEVICE "plughw:CARD=$SPK,DEV=0"
-  echo ">> config/robot.env set:  ROBOT_SOUNDS_DEVICE=plughw:CARD=$SPK,DEV=0"
+  if [ -n "$SPK" ]; then
+    set_kv ROBOT_SOUNDS_DEVICE "plughw:CARD=$SPK,DEV=0"
+    echo ">> config/robot.env set:  ROBOT_SOUNDS_DEVICE=plughw:CARD=$SPK,DEV=0"
+  else
+    echo ">> config/robot.env set (no USB speaker resolved this run -- ROBOT_SOUNDS_DEVICE left as-is):"
+  fi
   if [ -n "${mic_id:-}" ]; then
     set_kv ROBOT_MIC "plughw:CARD=$mic_id,DEV=0"
     # ROBOT_WAKEWORD_DEVICE must be the PortAudio PRETTY name (see the comment where mic_name is derived).
@@ -141,7 +154,7 @@ if [ -f "$ENV" ]; then
       echo "      Their ALSA ids can swap across reboot/replug; if capture goes silent later, re-run this script."
     fi
   else
-    echo "   (no USB mic detected -- left ROBOT_MIC as-is; set it from 'arecord -l' if voice input stays silent)"
+    echo "   (no USB mic detected -- ROBOT_MIC/ROBOT_WAKEWORD_DEVICE still hold the shipped build's ids; set them from 'arecord -l' if voice input stays silent)"
   fi
 else
   echo "   (config/robot.env not found -- couldn't set the audio device names)"

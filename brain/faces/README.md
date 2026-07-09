@@ -22,17 +22,21 @@ Rules (`brain/face.py`):
 - Frames are sorted by the number in the filename — both `04.png` and `thinking 04.png` work.
 - A state with **≥2 frames animates**; **1 frame** is a static image; **0 frames** falls back to the
   procedural drawing for that state. So you can theme one state at a time; the rest stay procedural.
-- Frames are **resized to fit the panel**, so you can author at any size: the USB-C panel is **320×480
-  portrait**, a DSI/HDMI panel like the **Freenove 5"** is **800×480 landscape** — both just work (the
-  framebuffer backend auto-reads its own size).
-- The USB-C (turing) panel is serial-bound, so its effective frame rate is clamped; the DSI/HDMI
-  framebuffer can go faster.
+- Frames are **resized to fit the panel**, so you can author at any size, but match the aspect to avoid
+  distortion: the USB-C (turing) panel is **320×480 native portrait** and the robot draws the face in
+  **landscape** on it by default (`ROBOT_FACE_ORIENTATION=landscape`), so author **480×320 landscape**
+  (the committed defaults are 480×320). A DSI/HDMI panel like the **Freenove 5"** is **800×480 landscape**
+  and the framebuffer backend auto-reads its own size. Mounted the other way up? set
+  `ROBOT_FACE_ORIENTATION=reverse_landscape` (or `portrait` for the native portrait layout).
+- The USB-C (turing) panel is serial-bound, so a full frame paints slowly; the face pushes only the
+  **changed region** each frame (`ROBOT_FACE_PARTIAL=1`) so talking/animation stays quick, and its frame
+  rate is still clamped (`ROBOT_FACE_MAX_FPS`). The DSI/HDMI framebuffer can go faster.
 
 ## Generating the frames (on your PC)
 
 Author face PNGs **on your PC** (WSL / macOS / Linux), not the Pi — the Pi only ever runs
 `scripts/install_stack.sh` and reads `config/robot.env`. Match the panel size to avoid upscaling:
-**320×480** (USB-C panel) or **800×480** (Freenove 5" DSI); any size is resized to fit.
+**480×320** (USB-C panel, landscape) or **800×480** (Freenove 5" DSI); any size is resized to fit.
 
 **1. One-time: install the tools.**
 ```bash

@@ -90,11 +90,133 @@ def _post(cfg, payload, timeout):
             return json.loads(resp.read())
 
 
+def _lenient_object(text):
+    """Recover a dict from the almost-JSON models emit even in JSON mode: a truncated tail (missing a closing
+    quote/brace when the reply hit a token / thinking-budget limit -- e.g. gemini-*-flash returning
+    `{"action":"LOOK","reply":"..."` with no closing brace), a stray quote or other junk between a value and
+    the next ',' / '}' (e.g. `..."reply":"...baby."\\n"\\n}`), or a trailing comma. Returns a dict, or None if
+    there is no object-looking span. Never fabricates values: a value that was cut off is kept as far as it
+    parsed, or dropped if it never started. This is the LAST resort, after strict/fence/outermost-span fail."""
+    n = len(text)
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    def skip_ws(p):
+        while p < n and text[p] in " \t\r\n":
+            p += 1
+        return p
+
+    def read_string(p):
+        p += 1  # consume opening quote
+        out = []
+        while p < n:
+            c = text[p]
+            if c == "\\":
+                if p + 1 >= n:
+                    p += 1
+                    break
+                nx = text[p + 1]
+                out.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
+                            '"': '"', "\\": "\\", "/": "/"}.get(nx, nx))
+                p += 2
+                continue
+            if c == '"':
+                return "".join(out), p + 1
+            out.append(c)
+            p += 1
+        return "".join(out), p  # truncated string (EOF before the closing quote)
+
+    def read_value(p):
+        p = skip_ws(p)
+        if p >= n:
+            return None, p, False
+        c = text[p]
+        if c == '"':
+            v, p = read_string(p)
+            return v, p, True
+        if c == '{':
+            v, p = read_object(p)
+            return v, p, True
+        if c == '[':
+            v, p = read_array(p)
+            return v, p, True
+        j = p                                      # scalar: number / true / false / null / bare word
+        while j < n and text[j] not in ',}]"':
+            j += 1
+        tok = text[p:j].strip()
+        if not tok:
+            return None, j, False
+        low = tok.lower()
+        if low == "true":
+            return True, j, True
+        if low == "false":
+            return False, j, True
+        if low in ("null", "none"):
+            return None, j, True
+        try:
+            return json.loads(tok), j, True        # a number
+        except Exception:
+            return tok, j, True                    # keep the bare token as a string
+
+    def read_array(p):
+        arr = []
+        p += 1  # consume '['
+        while True:
+            p = skip_ws(p)
+            if p >= n or text[p] == ']':
+                return arr, (p + 1 if p < n else p)
+            v, p, ok = read_value(p)
+            if ok:
+                arr.append(v)
+            p = skip_ws(p)
+            while p < n and text[p] not in ',]':   # resync past stray junk
+                p += 1
+            if p < n and text[p] == ',':
+                p += 1
+            elif p < n and text[p] == ']':
+                return arr, p + 1
+            if p >= n:
+                return arr, p
+
+    def read_object(p):
+        obj = {}
+        p += 1  # consume '{'
+        while True:
+            p = skip_ws(p)
+            if p >= n or text[p] == '}':
+                return obj, (p + 1 if p < n else p)
+            if text[p] != '"':                     # junk where a key should be -> skip to a key or the end
+                while p < n and text[p] not in '"}':
+                    p += 1
+                continue
+            key, p = read_string(p)
+            p = skip_ws(p)
+            if p < n and text[p] == ':':
+                p += 1
+            v, p, ok = read_value(p)
+            if ok:
+                obj[key] = v
+            p = skip_ws(p)
+            while p < n and text[p] not in ',}':   # resync -- this is what eats a stray '"' after a value
+                p += 1
+            if p < n and text[p] == ',':
+                p += 1
+            elif p < n and text[p] == '}':
+                return obj, p + 1
+            if p >= n:
+                return obj, p
+
+    obj, _ = read_object(start)
+    return obj if isinstance(obj, dict) else None
+
+
 def _loads_lenient(text):
     """Parse a model's JSON reply, tolerating the markdown fences / stray prose some models add EVEN in
     JSON mode (the classic cause of 'Expecting value: line 1 column 1 (char 0)' -- e.g. Gemini vision
     wrapping the object in ```json ... ```). Tries strict first, then a fenced block, then the outermost
-    {...} span. Raises ValueError WITH a snippet if none parse, so the log shows what actually came back."""
+    {...} span, then a tolerant reader (_lenient_object) that recovers truncated / stray-quote / trailing-comma
+    near-JSON. Raises ValueError WITH a snippet if none parse, so the log shows what actually came back."""
     s = (text or "").strip()
     try:
         return json.loads(s)
@@ -115,7 +237,10 @@ def _loads_lenient(text):
             return json.loads(s[i:j + 1])
         except Exception:
             pass
-    raise ValueError(f"model did not return parseable JSON: {s[:200]!r}")
+    recovered = _lenient_object(s)                    # last resort: truncated / stray-quote / trailing-comma
+    if recovered:                                     # non-empty dict only; {} or None falls through to raise
+        return recovered
+    raise ValueError(f"model did not return parseable JSON (len={len(s)}): {s[:500]!r}")
 
 
 def ollama_generate(cfg, payload, timeout):

@@ -45,9 +45,15 @@ class GstCamera:
             self._cv2 = cv2
             src = os.environ.get("ROBOT_CAMERA_SOURCE", "").strip()
             if self.backend == "v4l2":
-                cap = cv2.VideoCapture(int(src) if src.isdigit() else 0)   # USB webcam index
+                # digit -> USB webcam index; a /dev/videoN path is used verbatim (v4l2-ctl --list-devices
+                # emits paths, and once the CSI driver claims /dev/video0 the USB cam is no longer index 0).
+                cap = cv2.VideoCapture(int(src) if src.isdigit() else (src or 0))
             else:                                                          # CSI camera via Argus
-                cap = cv2.VideoCapture(src or self._gst(), cv2.CAP_GSTREAMER)
+                # A bare digit (e.g. a leftover ROBOT_CAMERA_SOURCE=0 from the USB bring-up step) is a SENSOR
+                # id, not a pipeline -- build the Argus pipeline for it. Only a non-numeric value is treated
+                # as a full GStreamer pipeline string; empty -> the default CSI sensor 0 pipeline.
+                pipeline = self._gst(int(src)) if src.isdigit() else (src or self._gst())
+                cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             if not cap.isOpened():
                 raise RuntimeError("cv2.VideoCapture could not open the camera "
                                    f"(backend={self.backend}, source={src or 'CSI sensor 0'})")
@@ -62,8 +68,8 @@ class GstCamera:
                         "fakesink`)", e)
             self.available = False
 
-    def _gst(self):
-        return (f"nvarguscamerasrc sensor-id=0 ! "
+    def _gst(self, sensor_id=0):
+        return (f"nvarguscamerasrc sensor-id={sensor_id} ! "
                 f"video/x-raw(memory:NVMM),width={_CSI_W},height={_CSI_H},framerate=30/1 ! "
                 f"nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! "
                 f"video/x-raw,format=BGR ! appsink drop=1 max-buffers=1")

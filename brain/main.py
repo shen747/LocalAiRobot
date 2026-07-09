@@ -68,6 +68,10 @@ def load_config():
         # Optional dedicated vision model (e.g. moondream). Empty -> vision shares cfg["model"]
         # (slower, and only if that model can see). Keep moondream set. See vision.py.
         "vision_model": env("ROBOT_VISION_MODEL", ""),
+        # The robot's own name/identity (default Jarvis). It identifies as this in speech + the LLM persona,
+        # introduces itself on first run, and stores it as top-priority RAG memory. NOT the wake word -- that
+        # is a fixed openWakeWord model ('hey jarvis' unless you train/point ROBOT_WAKEWORD_MODEL elsewhere).
+        "robot_name": (env("ROBOT_NAME", "Jarvis").strip() or "Jarvis"),
     }
 
 
@@ -239,9 +243,13 @@ def _llm_timeout():
 
 
 def query_ollama(cfg, user_text, context=""):
-    prompt = SYSTEM_PROMPT
+    name = cfg.get("robot_name") or "Jarvis"
+    # Identity preamble so the robot answers as its configured name. (context, from mem.prompt_context(),
+    # already leads with the stored top-priority identity -- who it is + what it can do.)
+    prompt = (f"You are {name}, a friendly voice-controlled RC crawler robot car. If the user asks who you "
+              f"are, your name, or what you can do, answer as {name}.\n") + SYSTEM_PROMPT
     if context:
-        prompt += "Known surroundings: " + context + "\n"
+        prompt += "Known surroundings and memory: " + context + "\n"
     prompt += "User command: " + user_text
     # Routed through inference.ollama_generate: one shared model_lock serialises this with the
     # vision call (so they never hit Ollama concurrently), and keep_alive keeps the model warm.
@@ -366,6 +374,14 @@ def main():
     fc = Face()
     snd = Sounds(audio_lock, cfg)
     wake = WakeWord(cfg)
+
+    # Robot identity: persist who it is (name + what it can do) as top-priority RAG memory, and detect a
+    # first run / rename so it introduces itself below. Name comes from ROBOT_NAME (default Jarvis).
+    robot_name = cfg.get("robot_name") or "Jarvis"
+    robot_caps = (f"I am {robot_name}, a friendly voice-controlled RC crawler robot car. I can drive around "
+                  "(forward, reverse, and turn), explore a room on my own, find and go to objects, look at "
+                  "and describe what my camera sees, remember people and places you show me, and chat.")
+    identity_status = mem.ensure_identity(robot_name, robot_caps)
 
     def say(text):
         text = (text or "").strip()
@@ -717,6 +733,21 @@ def main():
         ok = inference.warm_up(cfg, _llm_timeout())
         print(f"Model warmup: {'ready' if ok else 'skipped (will cold-load on first command)'}")
     snd.play("greeting")
+
+    # First run (or a name change): introduce itself out loud so a new owner learns who it is and what it can
+    # do. Only on 'new'/'renamed' -- every later run stays quiet. speak() is best-effort (no speaker = logged).
+    if identity_status in ("new", "renamed"):
+        wakeword_label = (getattr(wake, "label", "") or "the wake word").replace("_", " ")
+        if identity_status == "new":
+            intro = f"Hello! {robot_caps} Say {wakeword_label} to talk to me."
+        else:
+            intro = f"Hello! My name is now {robot_name}. Say {wakeword_label} and I am ready to help."
+        print(f"Intro ({identity_status}): {intro}")
+        fc.set_expression("happy")
+        try:
+            speak(cfg, intro)
+        except Exception as e:
+            log.warning("intro speak failed (%s) -- continuing", e)
 
     # Phone command endpoint (HTTP; ON BY DEFAULT). A tiny stdlib server runs INSIDE the brain so your
     # phone can POST text commands over Wi-Fi -> handle_command (same pipeline as the wake word). run_me.sh

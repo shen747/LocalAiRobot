@@ -3,7 +3,7 @@
 # for the RC crawler: Ollama + gemma4/moondream (GPU/CUDA), whisper.cpp (CUDA), Piper, OpenCV camera, the
 # face-panel library, and the Python venv. Needs internet for THIS step only. Re-runnable.
 #
-# This is the Jetson counterpart of scripts/install_stack.sh. Differences vs the Pi:
+# This is the Jetson counterpart of scripts/install_stack_pi5.sh. Differences vs the Pi:
 #   - GPIO: Jetson.GPIO (via pip) instead of python3-lgpio/gpiozero.
 #   - Camera: system OpenCV (apt python3-opencv) for a USB webcam; the Arducam IMX519 CSI driver is a
 #             SEPARATE, JetPack-version-specific install (printed at the end), not automated here.
@@ -37,7 +37,7 @@ if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 # hardware factories will only work on an actual Jetson.
 if [ -r /proc/device-tree/model ] && ! grep -qiE 'jetson|orin|tegra' /proc/device-tree/model; then
   echo "!! /proc/device-tree/model does not look like a Jetson ($(tr -d '\0' </proc/device-tree/model)) --"
-  echo "   this script targets the Jetson; on a Pi use scripts/install_stack.sh instead."
+  echo "   this script targets the Jetson; on a Pi use scripts/install_stack_pi5.sh (or ./scripts/install_stack.sh, which auto-detects)."
 fi
 
 echo ">> [1/8] system packages"
@@ -97,6 +97,16 @@ fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements-jetson.txt
 
+# Re-verify cv2 AFTER pip: a pip package can shadow a system lib JetPack's cv2 was compiled against (classic:
+# a pip numpy 2.x over apt numpy 1.x -> "import cv2" dies with "_ARRAY_API not found"). The pre-pip check
+# above cannot see that, and a silent cv2 break means the camera is dead at runtime -- so fail HERE, named.
+./.venv/bin/python -c "import numpy, cv2; print('   cv2', cv2.__version__, 'OK with numpy', numpy.__version__)" || {
+  echo "!! import cv2 BROKE inside the venv after pip install -- usually a pip package (e.g. numpy 2.x)" >&2
+  echo "   shadowing the system numpy that JetPack's cv2 was built against. Check the numpy pin in" >&2
+  echo "   brain/requirements-jetson.txt; the camera/vision would be silently dead otherwise." >&2
+  exit 1
+}
+
 # openWakeWord feature models (version-tolerant; same as the Pi installer).
 echo "   checking openWakeWord wake-word models..."
 ./.venv/bin/python - <<'PY' || echo "   (model check failed -- if the wake word won't load, LIVE has no trigger; use --dry)"
@@ -131,6 +141,32 @@ if [ -f "${REPO}/config/robot.env" ]; then
   echo ">> config: whisper/piper paths set to /home/$(whoami)/...  (YOUR_USER -> $(whoami))"
 fi
 
+# Apply the JETSON profile to config/robot.env idempotently (same spirit as the YOUR_USER sed above), so a
+# skipped hand-edit can't leave the robot driving with the stock Pi BCM pins on the BOARD-numbered header --
+# where every ultrasonic gate reads 'clear' and the forward obstacle cut never fires. Gated on the device
+# tree so a mistaken run on a Pi can NEVER rewrite a Pi config; each sed rewrites ONLY the stock/empty value,
+# so re-runs and later hand-edits are safe. ROBOT_BOARD is forced (not left 'auto') so a mis-detect can't
+# silently fall back to the pi5 board profile.
+if [ -f "${REPO}/config/robot.env" ] && grep -qiE 'jetson|orin|tegra' /proc/device-tree/model 2>/dev/null; then
+  ENVF="${REPO}/config/robot.env"
+  sed -i -E 's/^ROBOT_BOARD=auto([[:space:]]|$)/ROBOT_BOARD=jetson\1/'   "$ENVF"   # force the board id
+  sed -i -E 's/^(ROBOT_I2C_BUS=)([[:space:]]|#|$)/\17\2/'                "$ENVF"   # 40-pin header bus (empty -> 7)
+  # Comment out the six LIVE Pi BCM pin lines so brain/boards/jetson.py's BOARD defaults apply (an env value
+  # always beats a board default -- driver.py). No-op on already-commented lines, so re-runs are safe.
+  sed -i -E 's/^(ROBOT_(LEFT_|RIGHT_)?(TRIG|ECHO)_PIN=)/# \1/'           "$ENVF"
+  echo ">> config: ROBOT_BOARD=jetson, ROBOT_I2C_BUS=7; Pi BCM sensor pins commented out"
+  echo "           (jetson BOARD defaults 16/18/29/31/32/33 now apply -- VERIFY them against your wiring +"
+  echo "            'sudo /opt/nvidia/jetson-io/jetson-io.py' before driving)."
+  # Camera: this script provisions the USB/V4L2 path (the IMX519 CSI driver is the separate step below). If a
+  # USB cam node is present and no CSI sensor subdevice is, and the keys are still empty, point them at the USB
+  # cam -- empty otherwise means the CSI/Argus pipeline, which has no sensor on a USB-only build.
+  if [ -c /dev/video0 ] && ! ls /dev/v4l-subdev* >/dev/null 2>&1; then
+    sed -i -E 's/^(ROBOT_CAMERA_BACKEND=)([[:space:]]|#|$)/\1v4l2\2/'    "$ENVF"
+    sed -i -E 's/^(ROBOT_CAMERA_SOURCE=)([[:space:]]|#|$)/\10\2/'        "$ENVF"
+    echo ">> config: ROBOT_CAMERA_BACKEND=v4l2, ROBOT_CAMERA_SOURCE=0 (USB webcam detected)"
+  fi
+fi
+
 # Auto-load config/robot.env in every NEW interactive shell (idempotent).
 BASHRC="${H}/.bashrc"
 if [ -f "$BASHRC" ] && grep -qF "LocalAiRobot: auto-load robot.env" "$BASHRC"; then
@@ -150,20 +186,40 @@ bash "${REPO}/scripts/setup_audio.sh" || true
 
 if [ "$BOOTSTRAP" = 1 ]; then
   echo
-  echo ">> [bootstrap] enabling boot autostart (systemd)..."
-  bash "${REPO}/scripts/run_me.sh" --install-boot || echo "   (bootstrap: boot-service install failed -- run it by hand.)"
+  echo ">> [bootstrap] enabling boot autostart (systemd) so the brain launches on every boot..."
+  # JetPack 6 is Ubuntu 22.04 + NetworkManager, so make network-online.target a REAL wait (matches the Pi
+  # installer) -- otherwise robot.service's After=network-online.target completes instantly and the phone
+  # HTTP endpoint can come up before Wi-Fi. The brain is offline-capable, so this is convenience ordering.
+  if bash "${REPO}/scripts/run_me.sh" --install-boot; then
+    if sudo systemctl enable NetworkManager-wait-online.service 2>/dev/null; then
+      echo "   network wait enabled -- brain starts after the network is up."
+      echo "   (offline robot: if booting away from known Wi-Fi is slow, 'sudo systemctl disable NetworkManager-wait-online.service')"
+    else
+      echo "   (NetworkManager-wait-online not enabled -- NetworkManager may be inactive; the After= ordering still applies.)"
+    fi
+  else
+    echo "   (bootstrap: boot-service install failed -- run './scripts/run_me.sh --install-boot' by hand.)"
+  fi
 fi
 
 echo ">> DONE -- Jetson AI stack installed (Ollama+CUDA, whisper.cpp+CUDA, Piper, OpenCV camera, face libs, venv)."
 echo
 echo "Next -- Jetson-specific bring-up:"
 echo "   * Reboot so the group membership + any jetson-io pin changes take effect:   sudo reboot"
-echo "   * Set the board + I2C bus in config/robot.env:  ROBOT_BOARD=jetson (or auto), ROBOT_I2C_BUS=7"
-echo "     and swap the ultrasonic pins to the Jetson header profile (BOARD SELECT section)."
-echo "   * PWM board:  i2cdetect -y 7   (expect 0x40).   Camera (USB):  ROBOT_CAMERA_BACKEND=v4l2 ROBOT_CAMERA_SOURCE=0"
+echo "   * Board + pins: this script set ROBOT_BOARD=jetson + ROBOT_I2C_BUS=7 and commented out the Pi BCM"
+echo "     pins in config/robot.env -- VERIFY the jetson BOARD pins (16/18/29/31/32/33) match your wiring."
+echo "   * PWM board:  i2cdetect -y 7   (expect 0x40)."
+echo "   * Patch in your ESC's tested defaults:   ./scripts/patches/<your-esc>.sh   (e.g. hb_qr_1060.sh)"
+echo "   * Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
+echo "   * Camera (USB webcam): this script set ROBOT_CAMERA_BACKEND=v4l2 if it found one; else set it by hand."
 echo "   * Arducam IMX519 (CSI) is a SEPARATE, JetPack-version-specific driver:"
 echo "       wget https://github.com/ArduCAM/MIPI_Camera/releases/download/v0.0.3/install_full.sh"
-echo "       chmod +x install_full.sh && ./install_full.sh -m imx519   (match your exact JetPack; then ROBOT_CAMERA_BACKEND=gstreamer)"
+echo "       chmod +x install_full.sh && ./install_full.sh -m imx519   (match your exact JetPack; then set"
+echo "       ROBOT_CAMERA_BACKEND=gstreamer AND clear ROBOT_CAMERA_SOURCE -- gstreamer reads a non-empty"
+echo "       SOURCE as a full pipeline string, so a leftover '0' from the USB path silently kills the camera)."
+echo "       NOTE: the Arducam deb pins to your EXACT L4T kernel build ('Cannot find the corresponding deb"
+echo "       package' = your kernel was apt-upgraded past Arducam's list); after it works, run"
+echo "       'sudo apt-mark hold nvidia-l4t-kernel' so a later apt upgrade can't silently revert the driver."
 echo "   * Drive it:   ./scripts/run_me.sh        (bench: ./scripts/run_me.sh --dry)"
 echo
 echo "${GRN}==============================================================${RST}"

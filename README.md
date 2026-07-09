@@ -16,7 +16,7 @@
 Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
-2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(On a Jetson, run `./scripts/install_stack_jetson.sh` instead.)*
+2. **Install it** — `./scripts/install_stack.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(It auto-detects the board — Pi 5 vs Jetson — and runs the matching `scripts/install_stack_<board>.sh`; you can also run one directly.)*
 3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
