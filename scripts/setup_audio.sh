@@ -113,15 +113,33 @@ set_kv() {   # set_kv KEY VALUE -- replace only KEY's VALUE in place; preserve a
 }
 mic_id="$(arecord -l 2>/dev/null | sed -n 's/^card \([0-9]\+\): \([^ ]\+\).*/\1 \2/p' | sort -u \
             | while read -r n id; do [ -e "/proc/asound/card$n/usbid" ] && echo "$id"; done | head -n1)"
+# PortAudio (the wake stream) matches devices by the card's PRETTY name (the [bracketed] text in
+# `arecord -l`), NOT the ALSA card id -- ids grow dedupe suffixes (_1) that never appear in
+# PortAudio's names. ROBOT_MIC keeps the id (arecord's namespace); ROBOT_WAKEWORD_DEVICE gets the name.
+mic_name="$(arecord -l 2>/dev/null | sed -n "s/^card [0-9]\+: $mic_id \[\([^]]*\)\].*/\1/p" | head -n1)"
 echo
 if [ -f "$ENV" ]; then
   set_kv ROBOT_SOUNDS_DEVICE "plughw:CARD=$SPK,DEV=0"
   echo ">> config/robot.env set:  ROBOT_SOUNDS_DEVICE=plughw:CARD=$SPK,DEV=0"
   if [ -n "${mic_id:-}" ]; then
     set_kv ROBOT_MIC "plughw:CARD=$mic_id,DEV=0"
-    set_kv ROBOT_WAKEWORD_DEVICE "$mic_id"
+    # ROBOT_WAKEWORD_DEVICE must be the PortAudio PRETTY name (see the comment where mic_name is derived).
+    # set_kv's value regex stops at the first space, and pretty names can contain spaces (e.g. "USB PnP
+    # Sound Device"), so write it with a dedicated sed that double-quotes the value (space-safe through
+    # `set -a` sourcing) and also tolerates an already-quoted current value. Fall back to the id only if
+    # the pretty name couldn't be parsed. Delimiter is '@' (not '|' like set_kv) because the value regex
+    # needs the ERE alternation '|' -- reusing '|' as the delimiter would end the pattern early; '@'
+    # never occurs in an ALSA card name. The end-anchor is written '\$' so the shell can't eat "$@".
+    sed -i -E "s@^(ROBOT_WAKEWORD_DEVICE=)(\"[^\"]*\"|[^[:space:]#]*)(.*)\$@\1\"${mic_name:-$mic_id}\"\3@" "$ENV"
     echo "                          ROBOT_MIC=plughw:CARD=$mic_id,DEV=0"
-    echo "                          ROBOT_WAKEWORD_DEVICE=$mic_id"
+    echo "                          ROBOT_WAKEWORD_DEVICE=\"${mic_name:-$mic_id}\""
+    # Layer-2 collision: a mic that shares the speaker's USB product string gets a _N dedupe suffix, and
+    # that suffix is enumeration-order dependent -- a reboot/replug can swap the two ALSA ids (breaking
+    # ROBOT_MIC and ~/.asoundrc). Warn so the failure mode is self-describing; re-running this script re-fixes it.
+    if [ "${mic_id%_[0-9]*}" = "${SPK%_[0-9]*}" ] && [ "$mic_id" != "$SPK" ]; then
+      echo "   !! NOTE: mic id '$mic_id' and speaker id '$SPK' differ only by a _N suffix (same USB product string)."
+      echo "      Their ALSA ids can swap across reboot/replug; if capture goes silent later, re-run this script."
+    fi
   else
     echo "   (no USB mic detected -- left ROBOT_MIC as-is; set it from 'arecord -l' if voice input stays silent)"
   fi
