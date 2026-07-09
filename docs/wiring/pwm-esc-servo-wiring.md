@@ -155,7 +155,7 @@ corner pin, usually marked with a square pad / `1` on the board) and count from 
 After wiring, on the Pi (over SSH):
 
 ```bash
-sudo apt install -y i2c-tools     # once, if missing (install_stack.sh normally adds it)
+sudo apt install -y i2c-tools     # once, if missing (install_stack_pi5.sh normally adds it)
 i2cdetect -y 1                    # -y = no prompt;  1 = I²C bus 1 = the GPIO2/3 pins
 ```
 
@@ -173,7 +173,7 @@ It prints a grid of every address `00`–`77`. A detected PCA9685 shows as **`40
 - **`40` appears** → board is powered and talking on I²C — done.
 - **All `--`** → not seen: check `VCC` has 3.3 V, `SDA`/`SCL` aren't swapped, `GND` is common, and that
   I²C is enabled (`sudo raspi-config` → *Interface Options* → *I2C* → enable, then reboot — usually
-  already on from `install_stack.sh`).
+  already on from `install_stack_pi5.sh`).
 - A second address **`36`** only shows up if you later fit the UPS HAT (its fuel gauge) — not a conflict.
 
 ---

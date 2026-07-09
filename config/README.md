@@ -5,7 +5,7 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 (re)loaded:
 
 - `scripts/run_me.sh` / `scripts/shutdown.sh` **source it for you** on every launch.
-- `install_stack.sh` adds an auto-load line to `~/.bashrc`, so **new SSH sessions** load it too.
+- `install_stack_pi5.sh` adds an auto-load line to `~/.bashrc`, so **new SSH sessions** load it too.
 - After editing it in a shell you keep using, re-source by hand: `set -a; source config/robot.env; set +a`.
 - For a robot that's already running detached / as the boot service: `./scripts/run_me.sh --reload`.
 
@@ -33,9 +33,8 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 The brain runs on more than one single-board computer via a small hardware-abstraction layer
 ([`brain/hal.py`](../brain/hal.py) + `brain/boards/`). The board is **auto-detected** from
 `/proc/device-tree/model`; it picks the GPIO, PWM and camera backends and the pin numbering (Pi = **BCM**,
-Jetson = physical **BOARD** header pins). Install with [`install_stack.sh`](../scripts/install_stack.sh) — it
-**auto-detects the board** and runs the matching per-board installer ([`install_stack_pi5.sh`](../scripts/install_stack_pi5.sh)
-on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on the Jetson); you can also run one directly.
+Jetson = physical **BOARD** header pins). Install with the per-board script: [`install_stack_pi5.sh`](../scripts/install_stack_pi5.sh)
+on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on the Jetson.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -58,6 +57,16 @@ on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on th
 | `ROBOT_TOF_ADDR_FRONT/LEFT/RIGHT` | `0x2A/0x2B/0x29` | **`vl53l1x` only.** The distinct I²C address each sensor is moved to at startup (`i2cdetect` should then show all three). |
 
 > ToF sensors are I²C, so the six `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` keys are **ignored** when `ROBOT_SENSOR_TYPE=vl53l1x`. The `adafruit-circuitpython-vl53l1x` driver is in both requirements files; if you add ToF after installing, `./brain/.venv/bin/pip install adafruit-circuitpython-vl53l1x`.
+
+## Optional add-on sensors (IMU / encoder) — off by default
+
+New capabilities, **disabled by default** (empty = the robot behaves exactly as before). Each lands only the
+reader + config seam; wiring them into closed-loop turns / odometry is future work.
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_IMU_TYPE` / `ROBOT_IMU_ADDR` | *(empty)* / `0x4A` | `bno085` enables a BNO085/BNO08x 9-DOF IMU (heading + yaw over I2C, `brain/imu.py`). Enable: `./scripts/patches/imu_bno085.sh`. |
+| `ROBOT_ENCODER_TYPE` / `ROBOT_ENCODER_ADDR` | *(empty)* / `0x36` | `as5600` enables an AS5600 12-bit magnetic angle encoder (`brain/encoder.py`). Enable: `./scripts/patches/encoder_as5600.sh`. **`0x36` clashes with the UPS-HAT fuel gauge** — use a separate I²C bus if you fit both. |
 
 ## AI backend (local Ollama vs remote Gemini)
 

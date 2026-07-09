@@ -17,7 +17,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$REPO/brain/.venv/bin/python"
 DB="${ROBOT_MEMORY_DB:-$HOME/.localairobot/memory.db}"
 DB="${DB/#\~/$HOME}"   # expand a leading ~ if robot.env left it literal
-[ -x "$PY" ] || { echo "venv python not found ($PY) -- run scripts/install_stack.sh first." >&2; exit 1; }
+[ -x "$PY" ] || { echo "venv python not found ($PY) -- run scripts/install_stack_pi5.sh first." >&2; exit 1; }
 
 run() {  # run "<SQL>" [params...] -- prints an aligned table for SELECT, a rowcount for writes
   local sql="$1"; shift

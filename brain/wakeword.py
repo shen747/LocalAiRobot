@@ -29,7 +29,7 @@
 #
 # NOTE: openWakeWord needs its feature models (melspectrogram/embedding). The pinned 0.4.0 wheel
 # BUNDLES them (and stock wake words) inside the package; 0.5+ would download them instead --
-# install_stack.sh handles either. The "Richard" model itself is a small keyword classifier you
+# install_stack_pi5.sh handles either. The "Richard" model itself is a small keyword classifier you
 # train separately (NOT TTS voice cloning). A ready-made one ships at models/hey_richard.onnx (the
 # ROBOT_WAKEWORD_MODEL default); swap it, or point at a bundled stock model
 # (find brain/.venv -path "*openwakeword*" -name "*.onnx"). See docs/opnewakeword/.

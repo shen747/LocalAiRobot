@@ -17,7 +17,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 PY="$REPO/brain/.venv/bin/python"
 if [ ! -x "$PY" ]; then
-  echo "brain venv not found ($PY) -- run ./scripts/install_stack.sh on the Pi first." >&2
+  echo "brain venv not found ($PY) -- run ./scripts/install_stack_pi5.sh on the Pi first." >&2
   exit 1
 fi
 

@@ -6,7 +6,7 @@
 Description=Local AI Robot Brain (RC crawler)
 # network-online.target: the brain runs FULLY OFFLINE, so it doesn't NEED the network -- this ordering just
 # brings Wi-Fi/SSH (and the Comitup portal) up FIRST. The wait is only actually enforced when
-# NetworkManager-wait-online.service is enabled (./scripts/install_stack.sh --bootstrap does that). If
+# NetworkManager-wait-online.service is enabled (./scripts/install_stack_pi5.sh --bootstrap does that). If
 # booting away from known Wi-Fi feels slow, disable that wait -- see docs/change-pi-wifi.md.
 # ollama.service: the local LLM the brain talks to.
 After=network-online.target ollama.service

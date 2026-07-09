@@ -35,7 +35,7 @@ folder is empty, it just won't make that cue.
 ## Generating the spoken cues (on your PC)
 
 Cues are made with **Piper** so they match the robot's own voice. **Do this on your PC** (WSL / macOS /
-Linux), not the Pi — the Pi only ever runs `scripts/install_stack.sh` and reads `config/robot.env`.
+Linux), not the Pi — the Pi only ever runs `scripts/install_stack_pi5.sh` and reads `config/robot.env`.
 
 **1. One-time: install the tools.**
 ```bash

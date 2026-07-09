@@ -150,7 +150,7 @@ if [ "$SVC" = 1 ]; then
   echo ">> remove robot.service"
   sudo systemctl disable --now robot.service 2>/dev/null || true
   sudo rm -f /etc/systemd/system/robot.service
-  # undo the network wait that install_stack.sh --bootstrap enables alongside the boot service
+  # undo the network wait that install_stack_pi5.sh --bootstrap enables alongside the boot service
   sudo systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
   sudo systemctl daemon-reload 2>/dev/null || true
 fi

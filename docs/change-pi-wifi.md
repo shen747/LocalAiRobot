@@ -137,6 +137,6 @@ terminal app drops you **straight to a shell — no password**.
 ---
 
 > ▶️ **Want the robot's brain to start on boot too** (no SSH at all)? Install the systemd boot service —
-> `./scripts/install_stack.sh --bootstrap` (or `./scripts/run_me.sh --install-boot`). It's ordered
+> `./scripts/install_stack_pi5.sh --bootstrap` (or `./scripts/run_me.sh --install-boot`). It's ordered
 > **after the network is up**, so Wi-Fi/SSH and this portal are ready before the brain launches. Full
 > details in the [assembly guide](assembly.md).

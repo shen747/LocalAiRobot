@@ -37,7 +37,7 @@ if [ "${EUID:-$(id -u)}" -eq 0 ]; then
   echo "Run as your normal user (not root/sudo): it writes ~/.asoundrc in YOUR home." >&2
   exit 1
 fi
-command -v aplay >/dev/null 2>&1 || { echo "alsa-utils not installed -- run scripts/install_stack.sh first." >&2; exit 1; }
+command -v aplay >/dev/null 2>&1 || { echo "alsa-utils not installed -- run scripts/install_stack_pi5.sh first." >&2; exit 1; }
 
 # A card is "USB" iff /proc/asound/card<N>/usbid exists. Collect USB *playback* cards from `aplay -l`,
 # whose lines look like:  card 2: UACDemoV10 [UACDemoV10], device 0: USB Audio [USB Audio]

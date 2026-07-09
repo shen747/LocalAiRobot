@@ -15,7 +15,7 @@ doc to fix it.
 
 ## Prerequisites
 - Wired per [PWM/ESC/servo](wiring/pwm-esc-servo-wiring.md) + [ultrasonic sensors](wiring/ultrasonic-sensors-wiring.md), camera ([Phase 5](assembly.md)) and face ([Phase 6](assembly.md)).
-- The stack installed (`./scripts/install_stack.sh`) — the venv, `i2c-tools`, `alsa-utils`, libcamera apps.
+- The stack installed (`./scripts/install_stack_pi5.sh`) — the venv, `i2c-tools`, `alsa-utils`, libcamera apps.
 - `config/robot.env` set up (pins, `ROBOT_MIC`, whisper/piper paths). The wrapper sources it and **forces
   live** (`ROBOT_DRY_RUN=0 ROBOT_MOTORS_OFF=0`) so a stray bench setting can't fake the hardware under test.
 

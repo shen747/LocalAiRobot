@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # host_setup.sh -- install the ASSET-AUTHORING toolkit on YOUR PC (not the Pi), so you can design
 # custom face frames + earcons and commit them to the repo. Runs on WSL (Windows), macOS, or Linux --
-# all bash. (Native Windows: use WSL.) The robot itself is still set up on the Pi by install_stack.sh.
+# all bash. (Native Windows: use WSL.) The robot itself is still set up on the Pi by install_stack_pi5.sh.
 #
 # Installs ONLY what's missing, after a plan + confirm (the cleanup_pi.sh pattern):
 #   - ImageMagick + ffmpeg            -> faces: resize/pad, extract frames from a clip

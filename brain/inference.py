@@ -31,7 +31,9 @@
 import json
 import logging
 import os
+import socket
 import threading
+import urllib.error
 import urllib.request
 
 log = logging.getLogger("robot.infer")
@@ -243,18 +245,51 @@ def _loads_lenient(text):
     raise ValueError(f"model did not return parseable JSON (len={len(s)}): {s[:500]!r}")
 
 
+def _llm_retries():
+    """Retries for a TRANSIENT model network failure (read timeout / dropped connection). Default 1 -- a
+    stalled request gets ONE fresh-connection retry; 0 disables. Total wall-clock stays within
+    ROBOT_LLM_TIMEOUT_S because the budget is split across attempts (see _generate_with_retries)."""
+    try:
+        return max(0, int(os.environ.get("ROBOT_LLM_RETRIES", "1") or 1))
+    except ValueError:
+        return 1
+
+
+def _generate_with_retries(cfg, payload, timeout):
+    """Fetch the raw model response string, retrying a TRANSIENT network failure on a FRESH connection.
+    The field 'The read operation timed out' is a stalled TCP read that never delivers data within the
+    timeout; a second, fresh attempt usually returns fast. The timeout budget is SPLIT across attempts
+    (per_attempt = timeout / (retries+1), floored at 20 s) so the TOTAL wall-clock stays ~ROBOT_LLM_TIMEOUT_S
+    instead of multiplying it -- the point is to avoid the long dead-air, not to wait even longer. Content
+    errors (_gemini_generate's ValueError for a blocked/empty answer) are NOT network errors, so they
+    propagate immediately without a retry."""
+    attempts = max(1, _llm_retries() + 1)
+    per_attempt = max(timeout / attempts, 20.0)
+    is_gemini = cfg.get("ai_backend") == "gemini"
+    for i in range(attempts):
+        try:
+            if is_gemini:
+                return _gemini_generate(cfg, payload, per_attempt)
+            return _post(cfg, payload, per_attempt).get("response")
+        except urllib.error.HTTPError:
+            raise                      # a real HTTP status (404 model / 400 bad-request / 429) -- surface it (its body is the useful error), don't retry
+        except (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionError) as e:
+            if i + 1 >= attempts:
+                raise
+            log.warning("llm network attempt %d/%d failed (%s) -- retrying on a fresh connection",
+                        i + 1, attempts, e)
+
+
 def ollama_generate(cfg, payload, timeout):
     """Run a generate call and return the model's parsed JSON OBJECT.
 
     Dispatches by backend (cfg['ai_backend'], from ROBOT_AI_BACKEND): 'gemini' -> Google Gemini
     (remote), anything else -> local Ollama (default). Both backends yield the model's response as
     a JSON *string*; the shared tail parses (leniently -- see _loads_lenient) + validates it to a dict,
-    so the two callers (text intent + vision) stay backend-agnostic. Raises ValueError on an empty/blocked
-    response or a non-dict body -- callers treat the raise as fail-safe (main.py -> STOP; vision.py -> 'not visible')."""
-    if cfg.get("ai_backend") == "gemini":
-        response = _gemini_generate(cfg, payload, timeout)
-    else:
-        response = _post(cfg, payload, timeout).get("response")
+    so the two callers (text intent + vision) stay backend-agnostic. A transient network failure is retried
+    on a fresh connection (see _generate_with_retries). Raises ValueError on an empty/blocked response or a
+    non-dict body -- callers treat the raise as fail-safe (main.py -> STOP; vision.py -> 'not visible')."""
+    response = _generate_with_retries(cfg, payload, timeout)
     if not response:
         raise ValueError(f"model returned no response (backend={cfg.get('ai_backend') or 'local'})")
     obj = _loads_lenient(response)

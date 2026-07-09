@@ -23,7 +23,7 @@ echo ">> Switching obstacle sensors to VL53L1X laser ToF:"
 set_kv ROBOT_SENSOR_TYPE vl53l1x
 echo
 echo "   XSHUT pins currently in config/robot.env (edit to match your wiring):"
-grep -E '^ROBOT_TOF_(XSHUT|ADDR)_' "$ENV" | sed 's/^/     /'
+grep -E '^ROBOT_TOF_(XSHUT|ADDR)_' "$ENV" | sed 's/^/     /' || true
 echo
 echo "   Dependency: if you added ToF AFTER installing, add the driver to the venv:"
 echo "       ./brain/.venv/bin/pip install adafruit-circuitpython-vl53l1x"

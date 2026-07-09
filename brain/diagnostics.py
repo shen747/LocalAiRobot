@@ -275,7 +275,7 @@ class Diag:
             if not piper_ok:
                 tts_note = f" -- Piper TTS failed: {syn.stderr.decode('utf-8', 'replace').strip()[-90:]}"
         except FileNotFoundError:
-            tts_note = " -- Piper binary missing (run ./scripts/install_stack.sh)"
+            tts_note = " -- Piper binary missing (run ./scripts/install_stack_pi5.sh)"
         except Exception as e:
             tts_note = f" -- Piper error: {e}"
         # 2) Play it, with a LOUD cue first so you know to listen RIGHT NOW (a big reason a greeting gets
@@ -290,7 +290,7 @@ class Diag:
                                     timeout=25, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
                 played = "test tone"
         except FileNotFoundError as e:
-            return self.bad(label, f"missing binary: {e} -- run ./scripts/install_stack.sh", DOC_ASM)
+            return self.bad(label, f"missing binary: {e} -- run ./scripts/install_stack_pi5.sh", DOC_ASM)
         except Exception as e:
             return self.bad(label, f"{e}", DOC_ASM)
         if pb.returncode != 0:
@@ -306,7 +306,7 @@ class Diag:
             self.ok(label)
         else:
             self.bad(label, f"speaker OK (tone heard) but the VOICE needs Piper{tts_note} -- "
-                     "re-run ./scripts/install_stack.sh", DOC_ASM)
+                     "re-run ./scripts/install_stack_pi5.sh", DOC_ASM)
 
     def check_camera(self):
         if os.environ.get("ROBOT_CAMERA_ENABLE", "1") == "0":

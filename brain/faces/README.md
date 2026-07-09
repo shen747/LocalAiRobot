@@ -35,7 +35,7 @@ Rules (`brain/face.py`):
 ## Generating the frames (on your PC)
 
 Author face PNGs **on your PC** (WSL / macOS / Linux), not the Pi — the Pi only ever runs
-`scripts/install_stack.sh` and reads `config/robot.env`. Match the panel size to avoid upscaling:
+`scripts/install_stack_pi5.sh` and reads `config/robot.env`. Match the panel size to avoid upscaling:
 **480×320** (USB-C panel, landscape) or **800×480** (Freenove 5" DSI); any size is resized to fit.
 
 **1. One-time: install the tools.**

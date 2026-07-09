@@ -3,10 +3,10 @@
 #   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 #
 # The AI stack (Ollama, whisper.cpp, Piper, arecord/aplay) is NOT pip-installed --
-# it is set up by scripts/install_stack.sh and invoked as external processes.
+# it is set up by scripts/install_stack_pi5.sh and invoked as external processes.
 #
 # picamera2 is also NOT pip-installed: it comes from apt (python3-picamera2) and is visible to
-# this venv because install_stack.sh creates the venv with --system-site-packages.
+# this venv because install_stack_pi5.sh creates the venv with --system-site-packages.
 
 adafruit-circuitpython-servokit   # ESC (Electronic Speed Controller) + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
 gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
@@ -18,7 +18,7 @@ pyserial                          # USB-C face panel (turing-smart-screen serial
 
 # --- Wake word "Richard" (only exercised when ROBOT_WAKEWORD_ENABLE=1; still 100% offline) ---
 # openWakeWord needs an ONNX runtime and a continuous mic stream (sounddevice/PortAudio); the
-# PortAudio system lib is installed by scripts/install_stack.sh (apt portaudio19-dev). When the
+# PortAudio system lib is installed by scripts/install_stack_pi5.sh (apt portaudio19-dev). When the
 # wake word is off these are unused -- but then LIVE has no trigger (ENTER works only in --dry).
 openwakeword==0.4.0               # PINNED: 0.5+ require tflite-runtime, which has no Python 3.13 /
                                   # aarch64 wheel, so pip backtracks unpredictably. 0.4.0 installs with

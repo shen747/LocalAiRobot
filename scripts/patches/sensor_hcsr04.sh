@@ -22,7 +22,7 @@ echo ">> Switching obstacle sensors back to HC-SR04P ultrasonics:"
 set_kv ROBOT_SENSOR_TYPE hcsr04
 echo
 echo "   The TRIG/ECHO pins in config/robot.env are used again:"
-grep -E '^ROBOT_(LEFT_|RIGHT_)?(TRIG|ECHO)_PIN=' "$ENV" | sed 's/^/     /'
+grep -E '^ROBOT_(LEFT_|RIGHT_)?(TRIG|ECHO)_PIN=' "$ENV" | sed 's/^/     /' || true
 echo "   Verify:  ./scripts/test_sensors.sh   ·   Reload a running robot:  ./scripts/run_me.sh --reload"
 echo
 echo "${GRN}===============================${RST}"

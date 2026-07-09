@@ -35,8 +35,7 @@ if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 
 # Sanity: warn (don't fail) if this looks like a Jetson -- mirrors the guard in scripts/install_stack_jetson.sh.
 # The script still installs, but the Pi-only steps (raspi-config, the camera boot overlay, lgpio/gpiozero)
-# and brain/requirements.txt only make sense on a Raspberry Pi. (install_stack.sh auto-detects the board and
-# dispatches here, so you normally only hit this by running install_stack_pi5.sh directly on the wrong board.)
+# and brain/requirements.txt only make sense on a Raspberry Pi -- on a Jetson use scripts/install_stack_jetson.sh.
 if [ -r /proc/device-tree/model ] && grep -qiE 'jetson|orin|tegra' /proc/device-tree/model; then
   echo "!! /proc/device-tree/model looks like a Jetson ($(tr -d '\0' </proc/device-tree/model)) --"
   echo "   this script targets the Raspberry Pi 5; on a Jetson use scripts/install_stack_jetson.sh instead."
@@ -57,13 +56,25 @@ sudo apt install -y --no-install-recommends python3-picamera2 || \
 # Camera boot overlay. The build uses an Arducam IMX519 16MP AUTOFOCUS module, which is THIRD-PARTY and so
 # is NOT auto-detected -- it needs an explicit dtoverlay in the boot config. We write it here (idempotent;
 # config.txt backed up once) so the reboot at the end of install brings the camera up with no hand-editing.
-#   Using an OFFICIAL Pi camera (OV5647/IMX219/IMX708)? those auto-detect -- run:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack.sh
-#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack.sh
+#   Using an OFFICIAL Pi camera (OV5647/IMX219/IMX708)? those auto-detect -- run:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh
+#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack_pi5.sh
 CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-imx519,cam0}"
 CAMCFG=/boot/firmware/config.txt; [ -f "$CAMCFG" ] || CAMCFG=/boot/config.txt
 case "$CAMERA_OVERLAY" in
   none|off|auto)
-    echo "   camera overlay: skipped (ROBOT_CAMERA_OVERLAY=$CAMERA_OVERLAY) -- official Pi cameras auto-detect." ;;
+    # Auto-detected sensors (OV5647/IMX219/IMX708/Camera Module 3) need camera_auto_detect=1 and NO
+    # dtoverlay=imx519. Actively UNDO a prior IMX519 install so a SWITCH from the reference build is clean
+    # (not just a fresh install): restore camera_auto_detect=1 and delete the LocalAiRobot dtoverlay=imx519
+    # line. A hand-added dtoverlay is left alone (only our tagged line is removed).
+    if [ -f "$CAMCFG" ]; then
+      if grep -qE '^[[:space:]]*camera_auto_detect=' "$CAMCFG"; then
+        sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=.*|camera_auto_detect=1   # [LocalAiRobot camera]|' "$CAMCFG"
+      fi
+      sudo sed -i -E '/^[[:space:]]*dtoverlay=imx519.*\[LocalAiRobot camera\]/d' "$CAMCFG"
+      echo "   camera overlay: none -- camera_auto_detect=1 restored + LocalAiRobot dtoverlay=imx519 removed (official/auto-detected sensors)."
+    else
+      echo "   camera overlay: skipped (ROBOT_CAMERA_OVERLAY=$CAMERA_OVERLAY; boot config not found -- not a Pi?)."
+    fi ;;
   *)
     if [ -f "$CAMCFG" ]; then
       [ -f "$CAMCFG.localairobot.bak" ] || sudo cp "$CAMCFG" "$CAMCFG.localairobot.bak"   # one-time backup
@@ -80,7 +91,7 @@ case "$CAMERA_OVERLAY" in
       echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519; live after the reboot)"
       echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam1"
       case "$CAMERA_OVERLAY" in imx519*)
-        [ "$IMX519_AF" = 1 ] || echo "   AUTOFOCUS NOTE: the stock Bookworm tuning has NO AF algorithm ('Could not set AF_MODE'), so ROBOT_CAMERA_AUTOFOCUS does nothing (close-up 'remember' shots stay soft). Add AF with:  ./scripts/install_stack.sh --imx519-af  (or use the official Camera Module 3 for first-class AF)." ;;
+        [ "$IMX519_AF" = 1 ] || echo "   AUTOFOCUS NOTE: the stock Bookworm tuning has NO AF algorithm ('Could not set AF_MODE'), so ROBOT_CAMERA_AUTOFOCUS does nothing (close-up 'remember' shots stay soft). Add AF with:  ./scripts/install_stack_pi5.sh --imx519-af  (or use the official Camera Module 3 for first-class AF)." ;;
       esac
     else
       echo "   (boot config not found -- skipping camera overlay; not a Pi?)"
@@ -261,7 +272,7 @@ if [ "$BOOTSTRAP" = 1 ]; then
   echo "   Boot autostart is ENABLED (--bootstrap): the brain starts on the next boot. Watch it with"
   echo "   'journalctl -u robot.service -f'; undo with './scripts/run_me.sh --disable-boot'."
 else
-  echo "   Auto-start the brain on every boot?   ./scripts/install_stack.sh --bootstrap   (or run_me.sh --install-boot)"
+  echo "   Auto-start the brain on every boot?   ./scripts/install_stack_pi5.sh --bootstrap   (or run_me.sh --install-boot)"
 fi
 echo "   Diagnostics (step 4) flags anything wrong -- audio not right? just re-run ./scripts/setup_audio.sh."
 echo "   Inspect the robot's memory any time:   ./scripts/rag.sh   (--seen | --all | --forget <name>)"

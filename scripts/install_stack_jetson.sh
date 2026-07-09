@@ -37,7 +37,7 @@ if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 # hardware factories will only work on an actual Jetson.
 if [ -r /proc/device-tree/model ] && ! grep -qiE 'jetson|orin|tegra' /proc/device-tree/model; then
   echo "!! /proc/device-tree/model does not look like a Jetson ($(tr -d '\0' </proc/device-tree/model)) --"
-  echo "   this script targets the Jetson; on a Pi use scripts/install_stack_pi5.sh (or ./scripts/install_stack.sh, which auto-detects)."
+  echo "   this script targets the Jetson; on a Pi use scripts/install_stack_pi5.sh instead."
 fi
 
 echo ">> [1/8] system packages"

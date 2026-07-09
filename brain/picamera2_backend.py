@@ -10,7 +10,7 @@
 # LAZILY so this module imports fine on a laptop / Jetson.
 #
 # Install on the Pi (NOT pip):  sudo apt install -y python3-picamera2 --no-install-recommends
-# and create the venv with --system-site-packages so it can see libcamera (see install_stack.sh).
+# and create the venv with --system-site-packages so it can see libcamera (see install_stack_pi5.sh).
 
 import logging
 import os

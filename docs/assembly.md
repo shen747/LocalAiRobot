@@ -76,7 +76,7 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
 4. **Install the stack and reboot:**
    ```bash
    git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot   # your GitHub username
-   cd ~/LocalAiRobot && ./scripts/install_stack.sh
+   cd ~/LocalAiRobot && ./scripts/install_stack_pi5.sh
    sudo reboot
    ```
 5. **Plug in the USB mic + speaker, then set up `config/robot.env`** — **three** things (leave the rest):
@@ -116,7 +116,7 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
    vcgencmd get_throttled            # 0x0 = healthy (no under-volt / throttling)
    watch -n1 vcgencmd measure_temp   # stays < 80 °C with the Active Cooler; Ctrl-C to stop
    ```
-   `moondream` is the vision model; missing either → re-run `./scripts/install_stack.sh`.
+   `moondream` is the vision model; missing either → re-run `./scripts/install_stack_pi5.sh`.
 
    > **Switch the local model later:** set `ROBOT_MODEL` (text) / `ROBOT_VISION_MODEL` (vision),
    > `ollama pull <new>`, re-run `source`, restart the brain. Reclaim the old model's disk:
@@ -179,7 +179,7 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
 > 🔊 **Audio devices — and the card-numbering trap.** Plugging in a USB speaker **renumbers the ALSA cards**
 > (they also shuffle on reboot), so address everything **by name**, not by number. **The easy way:**
 > **`./scripts/setup_audio.sh`** — it finds your USB *playback* card, makes it ALSA's **`default`** (writes
-> `~/.asoundrc`), sets + persists volume, and prints the `ROBOT_*` values to paste. `install_stack.sh` runs
+> `~/.asoundrc`), sets + persists volume, and prints the `ROBOT_*` values to paste. `install_stack_pi5.sh` runs
 > it once; re-run whenever you change speakers. By hand:
 > ```bash
 > SPK=UACDemoV10                 # speaker id from `aplay -l` (the word after card N:)
@@ -309,10 +309,10 @@ not GPIO/I2C, so it doesn't conflict with anything.
   `rpicam-jpeg -n -o /tmp/test.jpg`. *(Brain logs `camera unavailable`? libcamera saw **no** camera —
   reseat the ribbon. The brain runs fine without it; vision just reports "no frame".)*
 - **A third-party sensor (IMX519) needs a boot overlay** — `camera_auto_detect` only finds the *official*
-  OV5647/IMX219/IMX708. **`install_stack.sh` sets it up for you** (`camera_auto_detect=0` +
+  OV5647/IMX219/IMX708. **`install_stack_pi5.sh` sets it up for you** (`camera_auto_detect=0` +
   `dtoverlay=imx519,cam0`, backing up `config.txt`); the install's reboot brings it up. Is `rpicam-hello
   --list-cameras` empty afterwards? the camera's on the other CSI port — re-run with
-  `ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack.sh` and reboot. Official modules need no overlay
+  `ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack_pi5.sh` and reboot. Official modules need no overlay
   (install with `ROBOT_CAMERA_OVERLAY=none`).
 - **A NoIR module has no IR-cut filter:** reddish/magenta in daylight, and blind in the dark without an
   **IR illuminator** (850/940 nm). A *standard* module gives natural colour but is still dark-blind.
@@ -504,7 +504,7 @@ Two wrappers in `scripts/` source `config/robot.env` for you (and skip silently 
 > (set it up in Phase 1 step 8) — true for `--live` *and* the headless modes. For first live runs,
 > foreground `--live` is safest: you watch every command in the log and `q`/Ctrl-C stops instantly.
 
-**Auto-loading the config.** `install_stack.sh` adds a line to `~/.bashrc` so every new SSH session loads
+**Auto-loading the config.** `install_stack_pi5.sh` adds a line to `~/.bashrc` so every new SSH session loads
 `config/robot.env` (and `run_me.sh`/`shutdown.sh` source it themselves). To re-add it by hand:
 ```bash
 echo '[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAiRobot/config/robot.env"; set +a; }' >> ~/.bashrc
@@ -513,7 +513,7 @@ echo '[ -f "$HOME/LocalAiRobot/config/robot.env" ] && { set -a; . "$HOME/LocalAi
 **Start the brain automatically on boot (no SSH).** A systemd service (`scripts/robot.service`) auto-starts
 the brain every boot and relaunches it if it crashes. Two ways to install it:
 ```bash
-./scripts/install_stack.sh --bootstrap   # one-shot: install the AI stack AND enable boot autostart
+./scripts/install_stack_pi5.sh --bootstrap   # one-shot: install the AI stack AND enable boot autostart
 ./scripts/run_me.sh --install-boot        # OR just the service, on an already-installed stack
 sudo systemctl start robot.service        # (optional) start it now without rebooting
 journalctl -u robot.service -f            # watch its log live (the unit logs to journal; Ctrl-C to exit)
@@ -534,7 +534,7 @@ applies. `./scripts/cleanup_pi.sh` removes the service (and that network wait) a
 
 ## Appendix — Resetting the Pi (`cleanup_pi.sh`)
 
-Want your ~3.5 GB back? `scripts/cleanup_pi.sh` **undoes `install_stack.sh`** — it removes the AI stack,
+Want your ~3.5 GB back? `scripts/cleanup_pi.sh` **undoes `install_stack_pi5.sh`** — it removes the AI stack,
 models, venv and runtime data. It's safe: **(1)** a dry run listing exactly what would go, **(2)** a
 `Shall I proceed? [y/N]` prompt, **(3)** deletion **only** if you type `y`. Run it from your clone, as your
 normal user (not `sudo`):
