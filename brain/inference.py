@@ -70,6 +70,31 @@ def _num_ctx():
     return n if n > 0 else 0
 
 
+def _log_http_error(e, backend, model=None):
+    """Log the BODY of a model-backend HTTP error. The status line alone ('HTTP Error 403: Forbidden')
+    hides WHY -- Google/Ollama put the real reason (API_KEY_INVALID, PERMISSION_DENIED, 'API not enabled
+    for this project', an unknown-model 404, a 429 quota message) in the RESPONSE BODY, which urllib drops
+    from str(e). Read it once, truncate, and log at ERROR so the DEFAULT run log pinpoints it; add a short
+    actionable hint for the usual culprits. Never raises -- diagnostics must not mask the original error."""
+    detail = ""
+    try:
+        detail = e.read().decode("utf-8", "replace").strip()
+    except Exception:
+        pass
+    code = getattr(e, "code", None)
+    hint = {
+        400: "bad request -- often API_KEY_INVALID (a malformed/non-Gemini key) or a rejected field.",
+        401: "auth rejected -- ROBOT_GEMINI_API_KEY isn't a valid Gemini API key (AI Studio -> Get API key).",
+        403: "forbidden -- the key is invalid/restricted, the Generative Language API isn't enabled for its "
+             "project, or this key can't use this model. Verify the key and its model access.",
+        404: f"model not found -- check the model name ({model!r}) and ROBOT_GEMINI_URL.",
+        429: "rate/quota limit -- slow down, raise the tier, or switch to a lighter model.",
+    }.get(code, "")
+    where = f"{backend} model {model!r}" if model else backend
+    log.error("%s HTTP %s %s -- response body: %s%s", where, code, getattr(e, "reason", ""),
+              detail[:800] or "(empty body)", f"  HINT: {hint}" if hint else "")
+
+
 def _post(cfg, payload, timeout):
     """POST one /api/generate request under model_lock and return the parsed envelope dict.
     keep_alive is injected here so every path benefits. The lock spans only the HTTP call --
@@ -88,8 +113,12 @@ def _post(cfg, payload, timeout):
     req = urllib.request.Request(
         cfg["ollama_url"], data=data, headers={"Content-Type": "application/json"})
     with model_lock:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            _log_http_error(e, "ollama", body.get("model"))
+            raise
 
 
 def _lenient_object(text):
@@ -389,8 +418,12 @@ def _gemini_generate(cfg, payload, timeout):
         f"{base}/models/{model}:generateContent", data=body,
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
     with model_lock:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            envelope = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                envelope = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            _log_http_error(e, "gemini", model)
+            raise
     return _gemini_text(envelope)
 
 
