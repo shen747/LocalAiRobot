@@ -4,7 +4,7 @@ Each script here applies one hardware choice to `config/robot.env` in **one comm
 keys or remembering `sed` lines), then prints any follow-up (a boot-overlay reinstall, a `pip install`, a
 bench step). All are **idempotent** (re-runnable) and only touch the keys they own. Run the ones matching
 your build **after** `install_stack_pi5.sh` / `install_stack_jetson.sh`. Full rationale + the either/or
-hardware matrix: [`CODE_CHANGE_FOR_NEW_HARDWARE.md`](../../CODE_CHANGE_FOR_NEW_HARDWARE.md).
+hardware options + per-key rationale: [`config/README.md`](../../config/README.md).
 
 ## ESC (drive)
 ```bash
