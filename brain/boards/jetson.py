@@ -60,6 +60,12 @@ class JetsonBoard:
         from hcsr04_jetson import JetsonDistanceSensor
         return JetsonDistanceSensor(trigger=trigger, echo=echo, max_distance=max_distance)
 
+    def make_digital_output(self, pin):
+        # Drives a VL53L1X XSHUT line (ROBOT_SENSOR_TYPE=vl53l1x). Jetson.GPIO has no gpiozero factory, so a
+        # small BOARD-mode wrapper mirrors gpiozero's .on()/.off()/.close(); lives beside the HC-SR04 driver.
+        from hcsr04_jetson import JetsonDigitalOutput
+        return JetsonDigitalOutput(pin)
+
     def make_camera(self, size):
         from gst_camera import GstCamera
         backend = os.environ.get("ROBOT_CAMERA_BACKEND", "").strip().lower() or "gstreamer"

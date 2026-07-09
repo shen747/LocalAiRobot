@@ -11,6 +11,7 @@
 adafruit-circuitpython-servokit   # ESC (Electronic Speed Controller) + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
 gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
 lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5
+adafruit-circuitpython-vl53l1x    # 3x VL53L1X laser ToF sensors -- ONLY when ROBOT_SENSOR_TYPE=vl53l1x (I2C, no GPIO)
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
 numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
 pyserial                          # USB-C face panel (turing-smart-screen serial protocol)

@@ -136,7 +136,63 @@ class Diag:
                 return self.ok(label, "found 0x40 on bus 1")
         return self.bad(label, "0x40 NOT on the bus -- check VCC(3.3V)/SDA/SCL/GND and that I2C is enabled", DOC_PWM)
 
+    def _check_tof_sensors(self):
+        """VL53L1X ToF variant of check_sensors (ROBOT_SENSOR_TYPE=vl53l1x): assign the 3 addresses, then
+        read each beam. A plausible reading = PASS; a negative (I2C error) or no-target = a flagged FAIL."""
+        try:
+            import hal
+            import vl53l1x_sensor as tof
+        except Exception as e:
+            return self.bad("VL53L1X ToF sensors (import)", f"import failed: {e}", DOC_SENS)
+
+        def _addr(key, default):
+            v = os.environ.get(key, "").strip()
+            try:
+                return int(v, 0) if v else default
+            except ValueError:
+                return default
+        plan = [("front", os.environ.get("ROBOT_TOF_XSHUT_FRONT", ""), _addr("ROBOT_TOF_ADDR_FRONT", 0x2A)),
+                ("left",  os.environ.get("ROBOT_TOF_XSHUT_LEFT", ""),  _addr("ROBOT_TOF_ADDR_LEFT", 0x2B)),
+                ("right", os.environ.get("ROBOT_TOF_XSHUT_RIGHT", ""), _addr("ROBOT_TOF_ADDR_RIGHT", 0x29))]
+        sensors, xshuts = {}, None
+        try:
+            i2c = tof.make_i2c()
+            xshuts = tof.assign_addresses(i2c, [(int(p), a) for (_n, p, a) in plan],
+                                          hal.current().make_digital_output)
+            for name, _p, addr in plan:
+                sensors[name] = tof.VL53L1XSensor(i2c, addr, 4.0)
+            time.sleep(0.3)                       # let a sample or two land
+            for name, _p, addr in plan:
+                label = f"VL53L1X {name.upper()} @0x{addr:02x}"
+                reads = []
+                for _ in range(5):
+                    reads.append(sensors[name].distance * 100.0)
+                    time.sleep(0.06)
+                plausible = [r for r in reads if 1.0 <= r < 395.0]
+                if plausible:
+                    self.ok(label, f"reading {plausible[-1]:.0f} cm")
+                elif any(r < 0 for r in reads):
+                    self.bad(label, "I2C read error -- check wiring/address/ROBOT_I2C_BUS", DOC_SENS)
+                else:
+                    self.bad(label, "no target / out of range -- aim it at a wall", DOC_SENS)
+        except Exception as e:
+            self.bad("VL53L1X ToF sensors", f"setup failed: {e} -- check I2C wiring/bus + the "
+                     "ROBOT_TOF_XSHUT_* pins", DOC_SENS)
+        finally:
+            for s in sensors.values():
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            for x in (xshuts or []):
+                try:
+                    x.close()
+                except Exception:
+                    pass
+
     def check_sensors(self):
+        if os.environ.get("ROBOT_SENSOR_TYPE", "hcsr04").strip().lower() == "vl53l1x":
+            return self._check_tof_sensors()   # ROBOT_SENSOR_TYPE=vl53l1x -> I2C ToF path
         import warnings
         try:
             from gpiozero import DistanceSensor

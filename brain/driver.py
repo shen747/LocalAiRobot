@@ -113,6 +113,8 @@ class RobotDriver:
         self.dry_run = dry_run_enabled()
         # Stationary mode only matters when we're otherwise LIVE (dry_run already fakes the motors).
         self.motors_off = motors_off_enabled() and not self.dry_run
+        # Distance-sensor backend: 'hcsr04' (default -- 3x ultrasonic on GPIO) | 'vl53l1x' (3x I2C ToF).
+        self.sensor_type = (os.environ.get("ROBOT_SENSOR_TYPE", "hcsr04").strip().lower() or "hcsr04")
 
         # --- PCA9685 channels ---
         self.esc_ch = _envi("ROBOT_ESC_CHANNEL", 0)
@@ -305,6 +307,8 @@ class RobotDriver:
             # REBUILD them (gpiozero's ping threads can't be restarted, only recreated).
             self._sensor_pins = {
                 "front": (trig, echo), "left": (left_trig, left_echo), "right": (right_trig, right_echo)}
+            if self.sensor_type == "vl53l1x":
+                self._tof_setup()   # ToF (I2C) path: prep the address/XSHUT plan before the first build
             self._sensors = self._build_sensor_objs()
 
             if self.hw_failed:
@@ -422,13 +426,69 @@ class RobotDriver:
         with self._io:
             self._write_steer("CENTER")
         self._close_sensor_objs(list(self._sensors.values()))
+        for x in (getattr(self, "_tof_xshut", None) or []):   # release VL53L1X XSHUT lines (ToF path only)
+            try:
+                x.close()
+            except Exception:
+                pass
 
     # ---------- idle sensor quiescing (see the ROBOT_SENSOR_IDLE_QUIESCE note in __init__) ----------
+    def _tof_setup(self):
+        """Prepare VL53L1X ToF state (ROBOT_SENSOR_TYPE=vl53l1x): the (name, XSHUT pin, I2C address) plan
+        from the ROBOT_TOF_* keys. The I2C bus + one-time address assignment happen lazily in
+        _build_tof_objs so a rebuild (resume_sensing) reuses the already-powered, already-addressed sensors."""
+        def _addr(key, default):
+            v = os.environ.get(key, "").strip()
+            try:
+                return int(v, 0) if v else default          # accepts 0x2A / 42
+            except ValueError:
+                return default
+        self._tof_i2c = None
+        self._tof_xshut = None
+        self._tof_plan = [
+            ("front", _envi("ROBOT_TOF_XSHUT_FRONT", 0), _addr("ROBOT_TOF_ADDR_FRONT", 0x2A)),
+            ("left",  _envi("ROBOT_TOF_XSHUT_LEFT", 0),  _addr("ROBOT_TOF_ADDR_LEFT", 0x2B)),
+            ("right", _envi("ROBOT_TOF_XSHUT_RIGHT", 0), _addr("ROBOT_TOF_ADDR_RIGHT", 0x29)),
+        ]
+
+    def _build_tof_objs(self, quiet=False):
+        """Build the 3 VL53L1X ToF sensors (ROBOT_SENSOR_TYPE=vl53l1x). Addresses are assigned ONCE (first
+        build); rebuilds (resume_sensing) reuse the powered/addressed sensors -- the XSHUT handles are kept
+        on self._tof_xshut so the sensors stay up across a pause. A failure falls back to a fake that reads
+        'clear' for that beam, exactly like the HC-SR04 path, so one bad sensor never stalls the safety loop."""
+        import vl53l1x_sensor as tof
+        try:
+            if self._tof_i2c is None:
+                self._tof_i2c = tof.make_i2c()
+            if self._tof_xshut is None:                     # first build -> assign addresses from 0x29 once
+                plan = [(pin, addr) for (_n, pin, addr) in self._tof_plan]
+                self._tof_xshut = tof.assign_addresses(self._tof_i2c, plan, self._board.make_digital_output)
+        except Exception as e:
+            (log.debug if quiet else log.error)(
+                "HARDWARE FAILURE: VL53L1X setup failed: %s -> all ToF beams faked (obstacle gates DISABLED). "
+                "Check I2C wiring/bus (ROBOT_I2C_BUS) + the ROBOT_TOF_XSHUT_* pins.", e)
+            self.hw_failed = True
+            return {name: FakeDistanceSensor(cm=400.0) for (name, _p, _a) in self._tof_plan}
+        sensors = {}
+        for name, _pin, addr in self._tof_plan:
+            try:
+                sensors[name] = tof.VL53L1XSensor(self._tof_i2c, addr, self.sensor_max_m)
+            except Exception as e:
+                (log.debug if quiet else log.error)(
+                    "HARDWARE FAILURE: VL53L1X %s @0x%02x init failed: %s -> faked; its obstacle gate is "
+                    "DISABLED.", name, addr, e)
+                sensors[name] = FakeDistanceSensor(cm=400.0)
+                self.hw_failed = True
+        return sensors
+
     def _build_sensor_objs(self, quiet=False):
-        """Build the 3 distance sensors from self._sensor_pins via the board HAL (gpiozero's DistanceSensor
-        on the Pi). Each on its own so one bad pin doesn't take out the others; a failure falls back to a
-        fake (reads 'clear'). `quiet` softens the per-sensor failure log to DEBUG for rebuilds
-        (resume_sensing) so a turn-by-turn rebuild of an unwired sensor doesn't spam ERROR every wake."""
+        """Build the 3 distance sensors. ROBOT_SENSOR_TYPE selects the backend: 'vl53l1x' -> I2C ToF
+        (_build_tof_objs); 'hcsr04' (default) -> the HC-SR04 path below, built from self._sensor_pins via the
+        board HAL (gpiozero's DistanceSensor on the Pi). Each on its own so one bad pin doesn't take out the
+        others; a failure falls back to a fake (reads 'clear'). `quiet` softens the per-sensor failure log to
+        DEBUG for rebuilds (resume_sensing) so a turn-by-turn rebuild of an unwired sensor doesn't spam ERROR."""
+        if getattr(self, "sensor_type", "hcsr04") == "vl53l1x":
+            return self._build_tof_objs(quiet=quiet)
         sensors = {}
         for name, (t_pin, e_pin) in self._sensor_pins.items():
             try:

@@ -52,6 +52,7 @@ class Board(Protocol):
     def launch_env(self) -> dict: ...                     # {"GPIOZERO_PIN_FACTORY": "lgpio"} or {}
     def make_pwm_kit(self, channels: int): ...            # -> ServoKit-compatible object
     def make_distance_sensor(self, trigger, echo, max_distance) -> "DistanceSensor": ...
+    def make_digital_output(self, pin): ...               # -> .on()/.off()/.close() (VL53L1X XSHUT lines)
     def make_camera(self, size: int): ...                 # -> object with .capture_jpeg()/.close()
 
 

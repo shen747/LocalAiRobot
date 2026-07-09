@@ -51,6 +51,12 @@ class Pi5Board:
         return DistanceSensor(echo=echo, trigger=trigger, max_distance=max_distance,
                               queue_len=3, partial=True)
 
+    def make_digital_output(self, pin):
+        # Drives a VL53L1X XSHUT line (ROBOT_SENSOR_TYPE=vl53l1x). gpiozero.DigitalOutputDevice already
+        # exposes .on()/.off()/.close(); starts LOW (sensor held in reset until assign_addresses raises it).
+        from gpiozero import DigitalOutputDevice
+        return DigitalOutputDevice(int(pin))
+
     def make_camera(self, size):
         from picamera2_backend import PiCamera2Camera
         return PiCamera2Camera(size)

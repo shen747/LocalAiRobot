@@ -13,6 +13,7 @@ adafruit-circuitpython-servokit   # ESC + steering servo via PCA9685 (pulls in B
                                   # runtime on a Jetson, which is why Jetson.GPIO is pinned explicitly below)
 adafruit-extended-bus             # bind ServoKit to an arbitrary numbered I2C bus (Jetson header ~ bus 7)
 Jetson.GPIO                       # 3x HC-SR04P ultrasonic sensors (front / left / right) -- see hcsr04_jetson.py
+adafruit-circuitpython-vl53l1x    # 3x VL53L1X laser ToF sensors -- ONLY when ROBOT_SENSOR_TYPE=vl53l1x (I2C; XSHUT via Jetson.GPIO)
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
 numpy<2                           # RGB565 packing for the framebuffer face fallback. PINNED <2: the venv is
                                   # --system-site-packages and JetPack's apt python3-opencv is compiled against

@@ -86,3 +86,30 @@ class JetsonDistanceSensor:
             self._GPIO.cleanup((self._trig, self._echo))   # free just our two channels (leave others)
         except Exception:
             pass
+
+
+class JetsonDigitalOutput:
+    """A DigitalOutputDevice-like GPIO output on Jetson.GPIO (.on()/.off()/.close()) -- used to drive VL53L1X
+    XSHUT lines (ROBOT_SENSOR_TYPE=vl53l1x) board-neutrally, so vl53l1x_sensor.py imports no GPIO library.
+    BOARD (physical header) numbering; lazy Jetson.GPIO import; mirrors JetsonDistanceSensor's setmode/cleanup
+    discipline (setmode only if unset; cleanup just our own pin)."""
+
+    def __init__(self, pin, initial=False):
+        import Jetson.GPIO as GPIO
+        self._GPIO = GPIO
+        self._pin = int(pin)
+        if GPIO.getmode() is None:
+            GPIO.setmode(GPIO.BOARD)
+        GPIO.setup(self._pin, GPIO.OUT, initial=GPIO.HIGH if initial else GPIO.LOW)
+
+    def on(self):
+        self._GPIO.output(self._pin, self._GPIO.HIGH)
+
+    def off(self):
+        self._GPIO.output(self._pin, self._GPIO.LOW)
+
+    def close(self):
+        try:
+            self._GPIO.cleanup(self._pin)
+        except Exception:
+            pass

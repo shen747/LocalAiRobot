@@ -49,6 +49,16 @@ on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on th
 > for you (and sets `ROBOT_BOARD`/`ROBOT_I2C_BUS`); only then do the Jetson board's own **BOARD**-pin defaults
 > apply (an uncommented Pi pin always wins). Free the header pins with `sudo /opt/nvidia/jetson-io/jetson-io.py`.
 
+## Obstacle sensors (ultrasonic ↔ laser ToF)
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_SENSOR_TYPE` | `hcsr04` | Distance-sensor backend: `hcsr04` (3× HC-SR04P ultrasonic on the TRIG/ECHO pins) or `vl53l1x` (3× VL53L1X laser ToF over I²C — ~50 Hz, 400 cm, no TRIG/ECHO, immune to acoustic crosstalk). Switch with `./scripts/patches/sensor_vl53l1x.sh` (revert: `./scripts/patches/sensor_hcsr04.sh`). |
+| `ROBOT_TOF_XSHUT_FRONT/LEFT/RIGHT` | `17/27/22` | **`vl53l1x` only.** Each VL53L1X's XSHUT pin, board pin-scheme numbering (Pi = BCM, Jetson = BOARD). All three boot at `0x29`, so they're raised one at a time and re-addressed — set these to your wiring. |
+| `ROBOT_TOF_ADDR_FRONT/LEFT/RIGHT` | `0x2A/0x2B/0x29` | **`vl53l1x` only.** The distinct I²C address each sensor is moved to at startup (`i2cdetect` should then show all three). |
+
+> ToF sensors are I²C, so the six `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` keys are **ignored** when `ROBOT_SENSOR_TYPE=vl53l1x`. The `adafruit-circuitpython-vl53l1x` driver is in both requirements files; if you add ToF after installing, `./brain/.venv/bin/pip install adafruit-circuitpython-vl53l1x`.
+
 ## AI backend (local Ollama vs remote Gemini)
 
 The "brain" — **text-intent and camera vision** — runs either **locally** on Ollama (default, fully
