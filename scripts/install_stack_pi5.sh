@@ -4,7 +4,7 @@
 # and the Python venv. Needs internet for THIS step only. Re-runnable.
 set -euo pipefail
 
-MODEL="${ROBOT_MODEL:-gemma4:e4b-it-qat}"
+MODEL="${ROBOT_MODEL:-gemma4:e2b-it-qat}"   # e2b = the faster default (e4b is smarter but ~2x slower on the Pi 5 CPU)
 VISION_MODEL="${ROBOT_VISION_MODEL:-moondream}"
 WHISPER_MODEL="base.en"
 PIPER_REL="2023.11.14-2"      # check https://github.com/rhasspy/piper/releases
@@ -20,10 +20,10 @@ BOOTSTRAP=0
 for arg in "$@"; do
   case "$arg" in
     --bootstrap)  BOOTSTRAP=1 ;;
-    --imx519-af)  echo "note: IMX519 autofocus setup moved to a patch -- just run ./scripts/patches/camera_imx519.sh (no install flag needed)." >&2; exit 2 ;;
+    --imx519-af)  echo "note: IMX519 autofocus setup moved to a patch -- just run ./scripts/patches/pi5/3_camera_imx519.sh (no install flag needed)." >&2; exit 2 ;;
     -h|--help)    echo "usage: $(basename "$0") [--bootstrap]"; \
                   echo "  --bootstrap  also install the systemd boot service (brain auto-starts on boot)"; \
-                  echo "  (camera autofocus? no flag -- run ./scripts/patches/camera_imx519.sh for your camera)"; exit 0 ;;
+                  echo "  (camera autofocus? no flag -- run ./scripts/patches/pi5/3_camera_imx519.sh for your camera)"; exit 0 ;;
     *) echo "unknown option: $arg (use --bootstrap)" >&2; exit 2 ;;
   esac
 done
@@ -94,11 +94,11 @@ case "$CAMERA_OVERLAY" in
       # leaves the camera fixed-focus and the install continues. Set ROBOT_CAMERA_AF_INSTALL=0 to skip the fork.
       case "$CAMERA_OVERLAY" in imx519*)
         if [ "${ROBOT_CAMERA_AF_INSTALL:-1}" != 0 ]; then
-          echo "   [camera AF] auto-installing IMX519 autofocus tuning (./scripts/patches/camera_imx519.sh)..."
-          LAR_FROM_INSTALL=1 bash "${REPO}/scripts/patches/camera_imx519.sh" \
-            || echo "   (AF tuning step failed -- camera still works fixed-focus; re-run ./scripts/patches/camera_imx519.sh later)"
+          echo "   [camera AF] auto-installing IMX519 autofocus tuning (./scripts/patches/pi5/3_camera_imx519.sh)..."
+          LAR_FROM_INSTALL=1 bash "${REPO}/scripts/patches/pi5/3_camera_imx519.sh" \
+            || echo "   (AF tuning step failed -- camera still works fixed-focus; re-run ./scripts/patches/pi5/3_camera_imx519.sh later)"
         else
-          echo "   [camera AF] skipped (ROBOT_CAMERA_AF_INSTALL=0). Enable later:  ./scripts/patches/camera_imx519.sh"
+          echo "   [camera AF] skipped (ROBOT_CAMERA_AF_INSTALL=0). Enable later:  ./scripts/patches/pi5/3_camera_imx519.sh"
         fi ;;
       esac
     else
@@ -106,7 +106,7 @@ case "$CAMERA_OVERLAY" in
     fi ;;
 esac
 
-# Camera AUTOFOCUS (IMX519) is set up by a PATCH now, not an install flag: ./scripts/patches/camera_imx519.sh
+# Camera AUTOFOCUS (IMX519) is set up by a PATCH now, not an install flag: ./scripts/patches/pi5/3_camera_imx519.sh
 # installs Arducam's AF tuning (their libcamera fork). It's kept out of the plain install because it's a
 # THIRD-PARTY system change that can conflict with later apt libcamera updates -- so it stays an explicit,
 # discoverable per-camera step (no flag to remember). Camera Module 3 (IMX708) has first-class AF with no fork.
@@ -250,7 +250,7 @@ echo
 echo "   * Reboot so I2C + your new device groups take effect:   sudo reboot"
 echo "     ...then SSH back in:   cd ~/LocalAiRobot        (new shells auto-load config/robot.env)"
 echo
-echo "   3. Patch in your ESC's tested defaults:   ./scripts/patches/<your-esc>.sh   (e.g. hb_qr_1060.sh)"
+echo "   3. Patch in your ESC's tested defaults:   ./scripts/patches/common/<your-esc>.sh   (e.g. 1_esc_hb_qr_1060.sh)"
 echo "   4. Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
 echo "   5. Drive it:   ./scripts/run_me.sh         (live: say 'hey jarvis' | bench: ./scripts/run_me.sh --dry)"
 echo

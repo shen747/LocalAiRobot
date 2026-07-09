@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# scripts/patches/imu_bno085.sh -- enable the OPTIONAL BNO085/BNO08x 9-DOF IMU (heading + yaw). Opt-in.
+# scripts/patches/common/4_imu_bno085.sh -- enable the OPTIONAL BNO085/BNO08x 9-DOF IMU (heading + yaw). Opt-in.
 # Sets ROBOT_IMU_TYPE=bno085 in config/robot.env and installs its pip lib into the brain venv. This lands
-# only the reader (brain/imu.py) + config -- closed-loop turns / heading-hold are future work. Disable by
-# clearing ROBOT_IMU_TYPE (sed -i 's|^ROBOT_IMU_TYPE=.*|ROBOT_IMU_TYPE=|' config/robot.env).
+# only the reader (brain/imu.py) + config -- closed-loop turns / heading-hold are future work. Board-neutral.
+# Disable by clearing ROBOT_IMU_TYPE (sed -i 's|^ROBOT_IMU_TYPE=.*|ROBOT_IMU_TYPE=|' config/robot.env).
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"; ENV="$REPO/config/robot.env"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
+ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 set_kv() {

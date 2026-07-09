@@ -52,7 +52,7 @@ on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on th
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_SENSOR_TYPE` | `hcsr04` | Distance-sensor backend: `hcsr04` (3× HC-SR04P ultrasonic on the TRIG/ECHO pins) or `vl53l1x` (3× VL53L1X laser ToF over I²C — ~50 Hz, 400 cm, no TRIG/ECHO, immune to acoustic crosstalk). Switch with `./scripts/patches/sensor_vl53l1x.sh` (revert: `./scripts/patches/sensor_hcsr04.sh`). |
+| `ROBOT_SENSOR_TYPE` | `hcsr04` | Distance-sensor backend: `hcsr04` (3× HC-SR04P ultrasonic on the TRIG/ECHO pins) or `vl53l1x` (3× VL53L1X laser ToF over I²C — ~50 Hz, 400 cm, no TRIG/ECHO, immune to acoustic crosstalk). Switch with `./scripts/patches/common/2_sensor_vl53l1x.sh` (revert: `./scripts/patches/common/2_sensor_hcsr04.sh`). |
 | `ROBOT_TOF_XSHUT_FRONT/LEFT/RIGHT` | `17/27/22` | **`vl53l1x` only.** Each VL53L1X's XSHUT pin, board pin-scheme numbering (Pi = BCM, Jetson = BOARD). All three boot at `0x29`, so they're raised one at a time and re-addressed — set these to your wiring. |
 | `ROBOT_TOF_ADDR_FRONT/LEFT/RIGHT` | `0x2A/0x2B/0x29` | **`vl53l1x` only.** The distinct I²C address each sensor is moved to at startup (`i2cdetect` should then show all three). |
 
@@ -65,8 +65,26 @@ reader + config seam; wiring them into closed-loop turns / odometry is future wo
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_IMU_TYPE` / `ROBOT_IMU_ADDR` | *(empty)* / `0x4A` | `bno085` enables a BNO085/BNO08x 9-DOF IMU (heading + yaw over I2C, `brain/imu.py`). Enable: `./scripts/patches/imu_bno085.sh`. |
-| `ROBOT_ENCODER_TYPE` / `ROBOT_ENCODER_ADDR` | *(empty)* / `0x36` | `as5600` enables an AS5600 12-bit magnetic angle encoder (`brain/encoder.py`). Enable: `./scripts/patches/encoder_as5600.sh`. **`0x36` clashes with the UPS-HAT fuel gauge** — use a separate I²C bus if you fit both. |
+| `ROBOT_IMU_TYPE` / `ROBOT_IMU_ADDR` | *(empty)* / `0x4A` | `bno085` enables a BNO085/BNO08x 9-DOF IMU (heading + yaw over I2C, `brain/imu.py`). Enable: `./scripts/patches/common/4_imu_bno085.sh`. |
+| `ROBOT_ENCODER_TYPE` / `ROBOT_ENCODER_ADDR` | *(empty)* / `0x36` | `as5600` enables an AS5600 12-bit magnetic angle encoder (`brain/encoder.py`). Enable: `./scripts/patches/common/4_encoder_as5600.sh`. **`0x36` clashes with the UPS-HAT fuel gauge** — use a separate I²C bus if you fit both. |
+
+## Enclosure cooling fan — off by default
+
+For a robot **sealed in a box**: the active cooler only recirculates hot air, so a GPIO-switched **exhaust
+fan** pushes it out. A background thread (`brain/fan.py`) turns the fan **ON when the SoC runs hot and OFF
+once it cools** (hysteresis stops chatter) — rising load shows up as rising temperature, so temperature is
+the trigger. **Wiring:** a 3.3 V GPIO can't power a fan — drive it through a **logic-level N-MOSFET** (GPIO →
+gate, fan between +V and drain, common ground). The pin uses the board's scheme (Pi = BCM, Jetson = BOARD).
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_FAN_ENABLE` | `0` | `1` runs the enclosure exhaust fan; `0` = disabled (nothing changes; the active cooler still works). |
+| `ROBOT_FAN_PIN` | *(empty)* | GPIO pin driving the fan MOSFET (Pi BCM / Jetson BOARD number). **Required** when enabled; don't reuse a sensor/PWM pin. |
+| `ROBOT_FAN_ON_TEMP_C` | `70` | Turn the fan **ON** at/above this SoC temperature (°C). |
+| `ROBOT_FAN_OFF_TEMP_C` | `60` | Turn it **OFF** at/below this. The gap `ON`–`OFF` is the hysteresis (keep `OFF` a few °C below `ON`). |
+| `ROBOT_FAN_POLL_S` | `5` | How often to check the temperature (seconds; min 1). |
+
+> `run_diagnostics.sh` pulses the fan pin so you can confirm airflow, and prints the current SoC temperature.
 
 ## AI backend (local Ollama vs remote Gemini)
 

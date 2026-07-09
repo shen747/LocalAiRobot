@@ -2,7 +2,8 @@
 # run_diagnostics.sh -- pre-first-run HARDWARE WIRING SELF-TEST, on the Pi.
 #
 # The opposite of dry-run: forces LIVE hardware and checks every wired peripheral (ESC/PWM board,
-# motor, servo, 3x ultrasonic, camera, speaker, mic/wake, face), printing a green [v] / red [x] per
+# motor, servo, 3x ultrasonic (with a board-aware pin map), camera, speaker, mic/wake, face, enclosure fan),
+# printing a green [v] / red [x] per
 # item and a summary that points to the exact doc to fix anything that's wrong. Run it once the car is
 # built, wired and powered (LiPo + Pi) and you're SSH'd in.  See docs/diagnostics.md.
 #

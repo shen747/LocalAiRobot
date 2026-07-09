@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# scripts/patches/sensor_hcsr04.sh -- switch the obstacle sensors back to the 3x HC-SR04P ultrasonics
+# scripts/patches/common/2_sensor_hcsr04.sh -- switch the obstacle sensors back to the 3x HC-SR04P ultrasonics
 # (the reference/default). Sets ROBOT_SENSOR_TYPE=hcsr04; the TRIG/ECHO pins in config/robot.env take over
-# again (the ROBOT_TOF_* keys are then ignored). Re-runnable. Opposite of scripts/patches/sensor_vl53l1x.sh.
+# again (the ROBOT_TOF_* keys are then ignored). Board-neutral. Re-runnable. Opposite of
+# common/2_sensor_vl53l1x.sh.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 
-set_kv() {   # replace KEY's whole line in place (proven pattern from patches/hb_qr_1060.sh); append if absent
+set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_esc_hb_qr_1060.sh); append if absent
   local key="$1" val="$2"
   if grep -qE "^${key}=" "$ENV"; then
     sed -i -E "s|^${key}=.*|${key}=${val}|" "$ENV"

@@ -190,7 +190,63 @@ class Diag:
                 except Exception:
                     pass
 
+    def _board_label(self):
+        """(board name, pin scheme) for the pin map -- from the HAL, else a safe fallback."""
+        try:
+            import hal
+            b = hal.current()
+            return b.name, b.pin_scheme
+        except Exception:
+            return (os.environ.get("ROBOT_BOARD", "?") or "?"), "BCM"
+
+    def _resolved_hcsr04_pins(self):
+        """The TRIG/ECHO pins the DRIVER will actually use: an env value wins, else the board's default_pins()
+        (so a Jetson gets its BOARD pins, not the Pi BCM defaults), else the Pi hard default. Mirrors driver.py
+        so diagnostics tests + prints the SAME pins the robot drives."""
+        try:
+            import hal
+            defaults = hal.current().default_pins()
+        except Exception:
+            defaults = {}
+        def _pin(key, hard):
+            v = os.environ.get(key, "").strip()
+            try:
+                return int(v) if v else int(defaults.get(key, hard))
+            except (TypeError, ValueError):
+                return hard
+        return {
+            "front": (_pin("ROBOT_TRIG_PIN", 23), _pin("ROBOT_ECHO_PIN", 24)),
+            "left":  (_pin("ROBOT_LEFT_TRIG_PIN", 5), _pin("ROBOT_LEFT_ECHO_PIN", 6)),
+            "right": (_pin("ROBOT_RIGHT_TRIG_PIN", 20), _pin("ROBOT_RIGHT_ECHO_PIN", 21)),
+        }
+
+    def _sensor_pinmap(self):
+        """Print the pin/address map for the CONFIGURED sensor type + board, before the sensor checks run --
+        so a Jetson (BOARD numbering) or a ToF build can see exactly which pins/addresses to wire. Info only."""
+        stype = os.environ.get("ROBOT_SENSOR_TYPE", "hcsr04").strip().lower() or "hcsr04"
+        bname, scheme = self._board_label()
+        print(bold(f"Pin map -- board: {bname} ({scheme} numbering)  ·  sensor type: {stype}"))
+        if stype == "vl53l1x":
+            bus = os.environ.get("ROBOT_I2C_BUS", "").strip() or "default (Pi bus 1)"
+            def _a(key, d):
+                v = os.environ.get(key, "").strip()
+                try:
+                    return int(v, 0) if v else d
+                except ValueError:
+                    return d
+            print(dim(f"    VL53L1X laser ToF on I2C bus {bus} -- XSHUT pins + assigned addresses:"))
+            for name, xk, ak, ad in (("front", "ROBOT_TOF_XSHUT_FRONT", "ROBOT_TOF_ADDR_FRONT", 0x2A),
+                                     ("left",  "ROBOT_TOF_XSHUT_LEFT",  "ROBOT_TOF_ADDR_LEFT",  0x2B),
+                                     ("right", "ROBOT_TOF_XSHUT_RIGHT", "ROBOT_TOF_ADDR_RIGHT", 0x29)):
+                xshut = os.environ.get(xk, "").strip() or "?"
+                print(dim(f"      {name:<6} XSHUT={xshut}   addr=0x{_a(ak, ad):02x}"))
+        else:
+            print(dim(f"    HC-SR04P ultrasonic -- TRIG/ECHO ({scheme} pins):"))
+            for name, (tp, ep) in self._resolved_hcsr04_pins().items():
+                print(dim(f"      {name:<6} TRIG={tp}   ECHO={ep}"))
+
     def check_sensors(self):
+        self._sensor_pinmap()              # show the board + sensor-type pin/address map first
         if os.environ.get("ROBOT_SENSOR_TYPE", "hcsr04").strip().lower() == "vl53l1x":
             return self._check_tof_sensors()   # ROBOT_SENSOR_TYPE=vl53l1x -> I2C ToF path
         import warnings
@@ -201,11 +257,7 @@ class Diag:
         # Silence gpiozero's software-PWM spam; the no-echo warning we CAPTURE per sensor (below) to tell a
         # truly unwired sensor from one just aimed at open space.
         warnings.filterwarnings("ignore", message=".*PWMSoftwareFallback.*")
-        pins = {
-            "front": (os.environ.get("ROBOT_TRIG_PIN", "23"), os.environ.get("ROBOT_ECHO_PIN", "24")),
-            "left": (os.environ.get("ROBOT_LEFT_TRIG_PIN", "5"), os.environ.get("ROBOT_LEFT_ECHO_PIN", "6")),
-            "right": (os.environ.get("ROBOT_RIGHT_TRIG_PIN", "20"), os.environ.get("ROBOT_RIGHT_ECHO_PIN", "21")),
-        }
+        pins = self._resolved_hcsr04_pins()   # board-resolved (env > board default > Pi default); values are ints
         for name, (tp, ep) in pins.items():
             label = f"Ultrasonic sensor {name.upper()} (TRIG {tp} / ECHO {ep})"
             s = None
@@ -498,6 +550,39 @@ class Diag:
                     pass
 
     # ===================== orchestration =====================
+    def check_fan(self):
+        """Enclosure exhaust fan (ROBOT_FAN_ENABLE). Skips when disabled (still shows the SoC temp). When
+        enabled, PULSES the fan pin ON for ~2s so you can confirm airflow -- driving a GPIO output is harmless
+        (no motion). Also prints the current SoC temperature so you can sanity-check the ON/OFF thresholds."""
+        from fan import read_cpu_temp_c
+        label = "Enclosure exhaust fan (GPIO)"
+        t = read_cpu_temp_c()
+        tstr = f"{t:.1f}C" if t is not None else "unknown"
+        if os.environ.get("ROBOT_FAN_ENABLE", "0").strip().lower() not in ("1", "true", "yes", "on"):
+            return self.skip(label, f"disabled (ROBOT_FAN_ENABLE=0); SoC temp now {tstr}")
+        pin = os.environ.get("ROBOT_FAN_PIN", "").strip()
+        if not pin:
+            return self.bad(label, "ROBOT_FAN_ENABLE=1 but ROBOT_FAN_PIN is empty -- set the fan's GPIO pin", DOC_ASM)
+        out = None
+        try:
+            import hal
+            out = hal.current().make_digital_output(int(pin))
+            print(dim(f"    pulsing the fan ON for 2s (pin {pin}, SoC temp {tstr}) -- listen/feel for airflow..."))
+            out.on(); time.sleep(2.0); out.off()
+            if self.args.yes:
+                self.ok(label, f"drove pin {pin}; SoC temp now {tstr}")
+            else:
+                self.confirm_step(label, "Did the fan spin / did you feel airflow?",
+                                  "fan didn't spin -- check the MOSFET gate wiring + the fan's power", DOC_ASM)
+        except Exception as e:
+            self.bad(label, f"could not drive pin {pin}: {e} -- check ROBOT_FAN_PIN + the MOSFET wiring", DOC_ASM)
+        finally:
+            if out is not None:
+                try:
+                    out.off(); out.close()
+                except Exception:
+                    pass
+
     def run(self):
         os.makedirs(OUTDIR, exist_ok=True)
         print(bold("\nLocalAiRobot hardware diagnostics") +
@@ -515,6 +600,7 @@ class Diag:
         self.check_speaker()
         self.check_mic()
         self.check_face()
+        self.check_fan()
         self.check_motors_and_servo()
         return self.report()
 

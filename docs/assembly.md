@@ -392,6 +392,20 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
    roughly level. Mount the **camera** forward-facing near the sensors, and the **face panel** where you
    want the robot to "look at" you. Route the ribbons + USB cables away from the driveshafts.
 
+> 🌀 **Optional — enclosure exhaust fan (if the electronics live in a sealed box).** The active cooler only
+> recirculates hot air inside a box; add a small fan to push it OUT. **Mount it on the box wall blowing
+> outward** (with a low intake vent on the opposite side) so it pulls the cooler's hot air through and out.
+> A 3.3 V GPIO can't power a fan, so drive it through a **logic-level N-MOSFET**:
+> - **GPIO pin → MOSFET gate** (add a ~10 kΩ gate-to-ground pulldown so the fan stays off during boot).
+> - **Fan +** → the **+5 V rail** (the Pi's 5 V header pin for a small fan, or the UBEC 5 V rail for a bigger one).
+> - **Fan −** → **MOSFET drain**; **MOSFET source → common ground** (shared with the Pi). A flyback diode
+>   across the fan is good practice for a brushed/DC fan.
+>
+> Then set `ROBOT_FAN_ENABLE=1` + `ROBOT_FAN_PIN=<that GPIO>` in `config/robot.env` — the brain turns it on
+> when the SoC heats up and off when it cools
+> ([config/README.md](../config/README.md#enclosure-cooling-fan--off-by-default)). `run_diagnostics.sh`
+> pulses the pin so you can confirm airflow, and prints the current SoC temperature.
+
 ---
 
 ## Phase 8 — Live calibration & bring-up (wheels OFF the ground)
@@ -409,6 +423,12 @@ device failed and runs degraded** (motors off) instead of crashing — read that
 > 🪑 **Test voice/vision without driving:** **`ROBOT_MOTORS_OFF=1`** (keep `ROBOT_DRY_RUN=0`) runs fully
 > live — wake word, camera, sensors, face — with the **ESC/steering getting no signal** (wheels won't
 > move). Ideal for desk-testing the brain on the assembled car before the throttle steps below.
+
+> 🧩 **Apply your hardware patches first.** If your build differs from the reference, drop the tested config
+> in with a one-command patch before calibrating — run the numbered patches for your hardware: your **ESC**,
+> **sensors** and any **IMU/encoder** from [`scripts/patches/common/`](../scripts/patches/README.md), and
+> your **camera** from your board's folder (`pi5/` or `jetson/` — the Jetson default is a USB webcam). Full
+> catalog: [scripts/patches/README.md](../scripts/patches/README.md).
 
 1. **Program the ESC (one-time, with the card).** Plug the card onto the ESC's BEC lead and power the ESC,
    then set: **Max Reverse Force** (your taste), **Drag Brake Force** (~70–80% for a gentle hold), **Low

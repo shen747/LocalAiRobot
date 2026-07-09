@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# scripts/patches/camera_imx519.sh -- select the reference Arducam IMX519 16MP camera AND install its
+# scripts/patches/pi5/3_camera_imx519.sh -- select the reference Arducam IMX519 16MP camera AND install its
 # autofocus tuning so ROBOT_CAMERA_AUTOFOCUS actually works. No flags to remember: this ONE patch does the
-# whole job for the IMX519. Re-runnable. Switch to another camera with camera_ov5647.sh / camera_cm3.sh.
+# whole job for the IMX519 on a Pi 5. Re-runnable. Switch cameras with 3_camera_ov5647.sh / 3_camera_cm3.sh.
+# (PI-ONLY: it edits the Pi boot config + installs the Pi libcamera fork. On a Jetson use the jetson/ camera
+# patches instead.)
 #
 # Why the AF install: the Pi's STOCK Bookworm libcamera tuning ships with NO autofocus algorithm, so the
 # IMX519 runs fixed-focus and ROBOT_CAMERA_AUTOFOCUS is a no-op (log: "Could not set AF_MODE"). Arducam's
 # packages REPLACE the system libcamera with their fork, which carries the IMX519 AF tuning. That is a
 # THIRD-PARTY system change that can conflict with later apt libcamera updates -- best-effort here: if it
 # fails the camera still works fixed-focus. If it ever breaks, the official Camera Module 3 (IMX708) has
-# first-class AF with no fork -> ./scripts/patches/camera_cm3.sh.
+# first-class AF with no fork -> ./scripts/patches/pi5/3_camera_cm3.sh.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"; ENV="$REPO/config/robot.env"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 set_kv() {
@@ -35,7 +37,7 @@ if curl -fsSLo "$AF_TMP/install_pivariety_pkgs.sh" "$AF_URL"; then
     echo "   AF tuning installed (after a reboot the 'Could not set AF_MODE' warning should be GONE)."
   else
     echo "   !! Arducam AF install FAILED -- the camera still works fixed-focus. See https://docs.arducam.com/Raspberry-Pi-Camera/"
-    echo "      or switch to the official Camera Module 3 (IMX708) for first-class AF: ./scripts/patches/camera_cm3.sh"
+    echo "      or switch to the official Camera Module 3 (IMX708) for first-class AF: ./scripts/patches/pi5/3_camera_cm3.sh"
   fi
 else
   echo "   !! could not download Arducam's install script (network?). Skipping AF tuning -- camera stays fixed-focus."

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# scripts/patches/hb_qr_1060.sh -- apply the bench-tested config for a HobbyWing QuicRun WP-1060 brushed
-# ESC in F/R ("crawler") mode (Mode jumper cap OFF entirely; LIPO cap ON). Rewrites the ESC keys in
-# config/robot.env in place (incl. ROBOT_ESC_CHANNEL=14 for this build). Re-runnable (idempotent).
+# scripts/patches/common/1_esc_hb_qr_1060.sh -- apply the bench-tested config for a HobbyWing QuicRun WP-1060
+# brushed ESC in F/R ("crawler") mode (Mode jumper cap OFF entirely; LIPO cap ON). Rewrites the ESC keys in
+# config/robot.env in place (incl. ROBOT_ESC_CHANNEL=14 for this build). Board-neutral (Pi 5 or Jetson).
+# Re-runnable (idempotent).
 #
 # WHY these values (all bench-tested -- see docs/wiring/pwm-esc-servo-wiring.md):
 #   ROBOT_ESC_NEUTRAL=0.35   this ESC's neutral is OFFSET (~1675us, not 1500us). Holding it arms + stops
@@ -11,9 +12,9 @@
 #   ROBOT_ESC_REV_CEIL=0.10  it gets faster the LOWER you go, so ceil (fast) is below floor (crawl).
 #   ROBOT_ESC_REVERSE_DOUBLETAP=0   F/R jumper = direct reverse (no F/B/R "double-click").
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"
-[ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }
+[ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 # green success banner (only when writing to a real terminal)
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 

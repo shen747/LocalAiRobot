@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
-# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e4b-it-qat (intent JSON) -> Piper (TTS),
+# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e2b-it-qat (intent JSON) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
@@ -33,6 +33,7 @@ import vision
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
 from face import Face
+from fan import make_fan
 from memory import Memory
 from sounds import Sounds
 from wakeword import WakeWord
@@ -374,6 +375,7 @@ def main():
     fc = Face()
     snd = Sounds(audio_lock, cfg)
     wake = WakeWord(cfg)
+    fan = make_fan()   # optional enclosure exhaust fan (ROBOT_FAN_ENABLE=1 + ROBOT_FAN_PIN); None when disabled
 
     # Robot identity: persist who it is (name + what it can do) as top-priority RAG memory, and detect a
     # first run / rename so it introduces itself below. Name comes from ROBOT_NAME (default Jarvis).
@@ -897,7 +899,8 @@ def main():
                 remote_srv.stop()
             except Exception:
                 pass
-        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
+        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close) \
+                + ((fan.close,) if fan else ()):
             try:
                 closer()
             except Exception:

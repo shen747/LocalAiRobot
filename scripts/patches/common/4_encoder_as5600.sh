@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# scripts/patches/encoder_as5600.sh -- enable the OPTIONAL AS5600 12-bit magnetic rotary encoder. Opt-in.
-# Sets ROBOT_ENCODER_TYPE=as5600 in config/robot.env and installs its pip lib into the brain venv. Lands
-# only the reader (brain/encoder.py) + config -- steering-feedback / odometry are future work. Disable by
-# clearing ROBOT_ENCODER_TYPE.
+# scripts/patches/common/4_encoder_as5600.sh -- enable the OPTIONAL AS5600 12-bit magnetic rotary encoder.
+# Opt-in. Sets ROBOT_ENCODER_TYPE=as5600 in config/robot.env and installs its pip lib into the brain venv.
+# Lands only the reader (brain/encoder.py) + config -- steering-feedback / odometry are future work.
+# Board-neutral. Disable by clearing ROBOT_ENCODER_TYPE.
 # NB: the AS5600 default address 0x36 CLASHES with the UPS-HAT fuel gauge on the Pi build -- if you fit both,
 # put the encoder on a separate I2C bus (the AS5600 address is not runtime-remappable).
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"; ENV="$REPO/config/robot.env"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
+ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 set_kv() {

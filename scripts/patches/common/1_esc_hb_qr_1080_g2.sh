@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# scripts/patches/hb_qr_1080_g2.sh -- apply config for a HobbyWing QuicRun WP-1080-G2 brushed ESC in F/R
-# ("crawler") mode. Same QuicRun family as the WP-1060 (patches/hb_qr_1060.sh), so it starts from the same
-# tested F/R throttle map. It deliberately does NOT touch ROBOT_ESC_CHANNEL: hb_qr_1060.sh hard-codes ch14
-# for one specific build (that is INF-07, an unfixed quirk) -- a generic 1080-G2 build leaves the ESC on the
-# default ch0. If your ESC signal lead is elsewhere, set it yourself (printed below). Re-runnable.
+# scripts/patches/common/1_esc_hb_qr_1080_g2.sh -- apply config for a HobbyWing QuicRun WP-1080-G2 brushed ESC
+# in F/R ("crawler") mode. Same QuicRun family as the WP-1060 (common/1_esc_hb_qr_1060.sh), so it starts from
+# the same tested F/R throttle map. It deliberately does NOT touch ROBOT_ESC_CHANNEL: the 1060 patch hard-codes
+# ch14 for one specific build (that is INF-07, an unfixed quirk) -- a generic 1080-G2 build leaves the ESC on
+# the default ch0. If your ESC signal lead is elsewhere, set it yourself (printed below). Board-neutral.
+# Re-runnable.
 #
 # BENCH-VERIFY these on YOUR ESC (wheels OFF): the neutral/floor/ceil are family defaults, not per-unit
 # calibrated. If arming stops or throttle maps wrong, re-sweep them (docs/wiring/pwm-esc-servo-wiring.md).
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"
-[ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }
+[ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 
 set_kv() {   # replace the whole line (adds a [hb_qr_1080_g2] provenance tag), or append it

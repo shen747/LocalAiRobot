@@ -17,7 +17,7 @@ Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
 2. **Install it** — `./scripts/install_stack_pi5.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(On a Jetson Orin Nano, run `./scripts/install_stack_jetson.sh` instead.)*
-3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults. Running any hardware other than the reference build (different camera, laser sensors, …)? there's a one-command patch for each — **full catalog:** [scripts/patches/README.md](scripts/patches/README.md).
+3. **Patch it** — `./scripts/patches/common/1_esc_hb_qr_1060.sh` drops in your ESC's bench-tested defaults. Running any hardware other than the reference build (different camera, laser sensors, …)? there's a one-command patch for each, sorted into `common/` + your board's folder — **full catalog:** [scripts/patches/README.md](scripts/patches/README.md).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
 
@@ -57,6 +57,7 @@ Search terms are generic — use your preferred retailer.
 |---|---|---|
 | Raspberry Pi 5, 16GB | `Raspberry Pi 5 16GB` | the brain |
 | Active cooler | `Raspberry Pi 5 active cooler` | **mandatory** under sustained LLM/vision load; fit it first |
+| Enclosure exhaust fan (optional) | `5V blower fan` + `logic-level N-channel MOSFET` (e.g. IRLZ44N / AO3400) | only if the electronics sit in a **sealed box** — a GPIO-switched fan vents hot air (`ROBOT_FAN_*`, [config](config/README.md#enclosure-cooling-fan--off-by-default)) |
 | UPS HAT (pogo-pin) | `Raspberry Pi 5 UPS HAT 18650 pogo pin` | prefer the **pogo-pin, bottom-mount** type (e.g. Geekworm X1200/X1202) so it does **not** use the 40-pin header |
 | 2× 18650 cells | `18650 flat-top high-drain 3000mAh` | genuine (Samsung/Sony); if not bundled with the UPS |
 | Official PSU, 27 W | `Raspberry Pi 5 27W USB-C power supply` | **bench power while building (use this first, UPS later)** |
@@ -185,6 +186,32 @@ text-intent and vision calls.
 **Tuning.** Every setting lives in [`config/robot.env`](config/robot.env), each documented (default + what
 it does) in [`config/README.md`](config/README.md). After the one-time downloads, disable Wi-Fi — it all
 runs on-device.
+
+---
+
+## 📚 Documentation
+
+Everything in this repo, with a one-line "what's this for" — so nothing's a dead end.
+
+**Build & wire**
+- [docs/assembly.md](docs/assembly.md) — the full phased build: flash → brain → power → PCA9685 → sensors → camera → face → calibration.
+- [docs/wiring/pwm-esc-servo-wiring.md](docs/wiring/pwm-esc-servo-wiring.md) — pin-by-pin drive + steering wiring (PCA9685 → ESC/servo).
+- [docs/wiring/ultrasonic-sensors-wiring.md](docs/wiring/ultrasonic-sensors-wiring.md) — pin-by-pin wiring for the 3× HC-SR04P sensors.
+
+**Set up & run**
+- [scripts/patches/README.md](scripts/patches/README.md) — one-command hardware patches (ESC / sensors / camera / IMU / encoder), sorted into `common/` + your board's folder.
+- [docs/diagnostics.md](docs/diagnostics.md) — the `run_diagnostics.sh` live self-test (green/red per peripheral + the pin map) explained.
+- [docs/gemini-setup.md](docs/gemini-setup.md) — optional: run the brain on remote Google Gemini instead of local Ollama.
+- [docs/http_setup.md](docs/http_setup.md) — command the robot from your phone over Wi-Fi (the token-secured HTTP endpoint).
+- [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — move the robot onto a new Wi-Fi / recover SSH with just your phone.
+
+**Configure & customise**
+- [config/README.md](config/README.md) — every `config/robot.env` key: default + what it does (incl. the Pi-5 vs Jetson board keys).
+- [docs/opnewakeword/openwake-word.md](docs/opnewakeword/openwake-word.md) — how the "hey jarvis" wake word works + tuning it.
+- [tools/wakeword-training/README.md](tools/wakeword-training/README.md) — train your own wake word (e.g. "hey richard").
+- [brain/faces/README.md](brain/faces/README.md) — design the robot's face (procedural or your own PNG animations).
+- [sounds/README.md](sounds/README.md) — the spoken earcons (ack / greeting / thinking / error cues).
+- [models/README.md](models/README.md) — the committed wake-word models.
 
 ---
 

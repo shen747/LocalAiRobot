@@ -39,15 +39,22 @@ with `ROBOT_DIAG_TIMEOUT=<seconds>`), so a check never blocks — an unanswered 
 | `--no-motors` | Skip the motor/servo spin tests entirely; run everything else. |
 
 ## What it checks
+Before the sensor checks it prints a **board- and sensor-type-aware pin map** — the exact TRIG/ECHO pins (or,
+for `ROBOT_SENSOR_TYPE=vl53l1x`, the XSHUT pins + assigned I²C addresses) the robot will actually use, in
+**your board's numbering** (Pi = BCM, Jetson = BOARD). So you can confirm the wiring matches before anything
+is driven.
+
 **Automated:** ESC/PWM board (PCA9685 @ I²C `0x40`) · 3× ultrasonic (front/left/right — any valid reading
 passes; only a no-echo sensor fails) · camera still + a 3 s clip. **Needs you:** speaker (Piper greeting, or
 a guaranteed fallback test tone if Piper is missing) · microphone level (+ a wake-word score if the model
-loads) · face panel (USB-C `turing` or DSI/HDMI `framebuffer`) · **motor forward/reverse** and **servo
-right/left/center** (last, behind the wheels-off gate). Artifacts (`diag_picture.jpg`, `diag_video.h264`,
-`diag_mic.wav`, `diag_speaker.wav`) are saved to `~/.localairobot/diagnostics/`.
+loads) · face panel (USB-C `turing` or DSI/HDMI `framebuffer`) · **enclosure fan** (only if
+`ROBOT_FAN_ENABLE=1`: pulses the fan pin ~2 s so you can confirm airflow, and prints the SoC temperature) ·
+**motor forward/reverse** and **servo right/left/center** (last, behind the wheels-off gate). Artifacts
+(`diag_picture.jpg`, `diag_video.h264`, `diag_mic.wav`, `diag_speaker.wav`) are saved to
+`~/.localairobot/diagnostics/`.
 
 Subsystems disabled in `config/robot.env` (`ROBOT_CAMERA_ENABLE=0`, `ROBOT_FACE_ENABLE=0`,
-`ROBOT_SOUNDS_ENABLE=0`, `ROBOT_WAKEWORD_ENABLE=0`) show `[-]` (skipped), not a failure.
+`ROBOT_SOUNDS_ENABLE=0`, `ROBOT_WAKEWORD_ENABLE=0`, `ROBOT_FAN_ENABLE=0`) show `[-]` (skipped), not a failure.
 
 ## Sample output
 ```
@@ -55,6 +62,11 @@ LocalAiRobot hardware diagnostics  (live wiring self-test -- artifacts in ~/.loc
 
 -- Automated checks --
 [v] ESC / PWM board present (PCA9685 @ I2C 0x40)  found 0x40 on bus 1
+Pin map -- board: pi5 (BCM numbering)  ·  sensor type: hcsr04
+    HC-SR04P ultrasonic -- TRIG/ECHO (BCM pins):
+      front  TRIG=23   ECHO=24
+      left   TRIG=5    ECHO=6
+      right  TRIG=20   ECHO=21
 [v] Ultrasonic sensor FRONT (TRIG 23 / ECHO 24)  reading 47 cm
 [x] Ultrasonic sensor LEFT (TRIG 5 / ECHO 6)  NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring
 [v] Ultrasonic sensor RIGHT (TRIG 20 / ECHO 21)  reading ~400 cm (max range -- aimed at open space)
@@ -68,6 +80,9 @@ LocalAiRobot hardware diagnostics  (live wiring self-test -- artifacts in ~/.loc
 [v] Speaker output (TTS greeting)
 [v] Microphone input (say 'hey jarvis')  level peak 47% | wake 'hey jarvis' DETECTED (score 0.71)
 [v] Face panel / monitor  USB-C serial panel (turing, port AUTO)
+    pulsing the fan ON for 2s (pin 12, SoC temp 58.4C) -- listen/feel for airflow...
+    Did the fan spin / did you feel airflow? [y/N] (auto-skip in 12s) y
+[v] Enclosure exhaust fan (GPIO)
   SAFETY: the motor test SPINS THE WHEELS.
     Are the wheels OFF the ground (or the motor unplugged)? [y/N] y
 [v] Motor FORWARD spin
@@ -76,7 +91,7 @@ LocalAiRobot hardware diagnostics  (live wiring self-test -- artifacts in ~/.loc
 [v] Servo steer LEFT
 [v] Servo steer CENTER
 
-Summary: 13 passed  1 failed  1 skipped
+Summary: 14 passed  1 failed  1 skipped
 
 Fix these:
   x Ultrasonic sensor LEFT (TRIG 5 / ECHO 6): NO ECHO received -- sensor not responding: check ECHO/TRIG pins & 3.3V wiring
@@ -94,5 +109,6 @@ Fix these:
 | Camera picture / video | [assembly Phase 5](assembly.md); `rpicam-hello --list-cameras` (reseat the CSI ribbon / 22→15 cable) |
 | Microphone / wake | [assembly Phase 1](assembly.md) steps 7–8; [wake-word guide](opnewakeword/openwake-word.md) (mic gain / threshold) |
 | Face panel | [assembly Phase 6](assembly.md) (data USB-C cable, `dialout` re-login, `ROBOT_FACE_REVISION`) |
+| Enclosure fan | [assembly Phase 7](assembly.md) fan callout (MOSFET gate wiring + fan power); `ROBOT_FAN_*` in [config/README.md](../config/README.md#enclosure-cooling-fan--off-by-default) |
 
 Once everything is ✓, continue to live calibration ([assembly Phase 8](assembly.md)).
