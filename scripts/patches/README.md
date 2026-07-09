@@ -20,12 +20,13 @@ hardware options + per-key rationale: [`config/README.md`](../../config/README.m
 
 ## Camera
 ```bash
-./scripts/patches/camera_imx519.sh    # Arducam IMX519 16MP autofocus (the reference)
+./scripts/patches/camera_imx519.sh    # Arducam IMX519 16MP autofocus (the reference) -- ALSO installs the AF tuning
 ./scripts/patches/camera_ov5647.sh    # fixed-focus 5MP OV5647 (auto-detected)
 ./scripts/patches/camera_cm3.sh       # official Camera Module 3 / IMX708 (first-class autofocus)
 ```
 Camera patches set `ROBOT_CAMERA_AUTOFOCUS` and print the boot-overlay reinstall command (that step needs
-`sudo` + a reboot, so it isn't done automatically).
+`sudo` + a reboot, so it isn't done automatically). `camera_imx519.sh` additionally installs Arducam's
+autofocus tuning (their libcamera fork) — without it the IMX519 runs fixed-focus (`Could not set AF_MODE`).
 
 ## Optional add-on sensors (off by default)
 ```bash

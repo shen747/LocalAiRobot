@@ -17,7 +17,7 @@ Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
 2. **Install it** — `./scripts/install_stack_pi5.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(On a Jetson Orin Nano, run `./scripts/install_stack_jetson.sh` instead.)*
-3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults (pick the one for your ESC — see [scripts/patches/](scripts/patches/)).
+3. **Patch it** — `./scripts/patches/hb_qr_1060.sh` drops in your ESC's bench-tested defaults. Running any hardware other than the reference build (different camera, laser sensors, …)? there's a one-command patch for each — **full catalog:** [scripts/patches/README.md](scripts/patches/README.md).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
 
@@ -95,6 +95,11 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC (Electronic Speed Control
 
 > ⚠️ **Confirm with the chassis seller:** which of the two gearboxes you want (asked after you order),
 > and the **spur gear pitch** — it must match the pinion (SCX10 standard is **32P / Mod 0.8**).
+
+> 🔧 **Not the reference build?** Every hardware alternative has a **one-command patch** that writes the
+> right `config/robot.env` keys — a different **ESC**, **camera** (OV5647 / official Camera Module 3),
+> **obstacle sensors** (VL53L1X laser ToF), or an optional **IMU / wheel encoder**. Browse the full
+> catalog with the exact hardware each one targets: [**scripts/patches/README.md**](scripts/patches/README.md).
 
 ---
 

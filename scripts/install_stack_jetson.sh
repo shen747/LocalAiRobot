@@ -225,3 +225,18 @@ echo
 echo "${GRN}==============================================================${RST}"
 echo "${GRN}   ✓  LocalAiRobot Brain (Jetson) Installed !!!${RST}"
 echo "${GRN}==============================================================${RST}"
+
+# Offer to reboot now -- the new device-group membership and any jetson-io pin changes only take effect after
+# a reboot. Interactive only: skip cleanly when piped / non-interactive (curl | bash, CI) so it can't hang.
+echo
+if [ -t 0 ]; then
+  printf ">> A reboot is needed for your new device groups (and any jetson-io pin changes) to take effect.\n"
+  printf "   Reboot now? [y/N] "
+  read -r REBOOT_ANS || REBOOT_ANS=""
+  case "$REBOOT_ANS" in
+    [Yy]*) echo "   rebooting..."; sudo reboot ;;
+    *)     echo "   Skipped -- reboot later with:  sudo reboot" ;;
+  esac
+else
+  echo ">> Reboot required for device groups (and any jetson-io pin changes) to take effect:  sudo reboot"
+fi
