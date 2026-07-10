@@ -351,8 +351,10 @@ def _start_power_monitor():
     the mic/speaker/face panel vanish MID-RUN (aplay 'No such device' mid-word, /dev/ttyACM0 gone, the mic
     missing from arecord -l) with nothing in our log saying WHY. This thread is the why: it polls
     `vcgencmd get_throttled` every ROBOT_POWER_LOG_PERIOD_S and logs a WARNING the moment any new
-    undervoltage/throttle flag appears. Pi-only by nature: no vcgencmd (Jetson/laptop) -> silent no-op,
-    so board parity is preserved. ROBOT_POWER_MONITOR=0 disables."""
+    undervoltage/throttle flag appears. On a Pi 5 it ALSO reads the PMIC input voltage (`pmic_read_adc`
+    EXT5V_V) so the log shows HOW FAR the rail sagged and warns EARLY when it nears the ~4.8V undervoltage
+    floor -- before a deeper dip browns the Pi out. Pi-only by nature: no vcgencmd (Jetson/laptop) -> silent
+    no-op, so board parity is preserved. ROBOT_POWER_MONITOR=0 disables; ROBOT_POWER_MIN_V sets the floor."""
     if os.environ.get("ROBOT_POWER_MONITOR", "1") != "1":
         return
     import shutil
@@ -360,33 +362,67 @@ def _start_power_monitor():
         return   # not a Raspberry Pi -- nothing to poll
     period = max(2.0, float(_as_int(os.environ.get("ROBOT_POWER_LOG_PERIOD_S"), 10)))
 
-    def _read():
+    def _read_throttled():
         out = subprocess.run(["vcgencmd", "get_throttled"], timeout=5, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True).stdout
         return int(out.strip().split("=")[1], 16)   # "throttled=0x50005" -> 0x50005
 
+    def _input_voltage():
+        """Pi 5 PMIC: the ACTUAL 5V-input voltage (EXT5V_V), e.g. 4.72. get_throttled only says undervoltage
+        HAPPENED; this says HOW FAR the rail sagged -- the number a battery brownout otherwise hides (the Pi
+        wants ~5.1V and flags undervoltage below ~4.8V). None on boards with no PMIC ADC (Pi 4/older)."""
+        try:
+            out = subprocess.run(["vcgencmd", "pmic_read_adc"], timeout=5, stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, text=True).stdout
+        except Exception:
+            return None
+        m = re.search(r"EXT5V_V\s+volt\(\d+\)=([\d.]+)V", out)
+        return float(m.group(1)) if m else None
+
     def _flags(val):
         return ", ".join(name for bit, name in _POWER_BITS.items() if val & (1 << bit)) or "none"
 
+    def _vstr(v):
+        return f" input={v:.2f}V" if v is not None else ""
+
+    try:
+        min_v = float(os.environ.get("ROBOT_POWER_MIN_V", "4.90"))
+    except ValueError:
+        min_v = 4.90
+
     def _loop():
-        last = None
+        last, warned_low = None, False
         while True:
             try:
-                val = _read()
+                val = _read_throttled()
             except Exception:
                 time.sleep(period)
                 continue
+            v = _input_voltage()
             if last is None:
                 (log.warning if val else log.info)(
-                    "power: get_throttled=0x%x (%s)%s", val, _flags(val),
+                    "power: get_throttled=0x%x (%s)%s%s", val, _flags(val), _vstr(v),
                     " -- the 5V rail has ALREADY sagged this boot: expect USB devices (mic/speaker/face) "
                     "to drop off. Check the UBEC (5V jumper, ~5A rating, short thick leads) and that "
                     "usb_max_current_enable=1 is in the boot config." if val else "")
             elif val & ~last:
-                log.warning("power: NEW event, get_throttled=0x%x (+%s) -- the 5V rail sagged or the SoC "
+                log.warning("power: NEW event, get_throttled=0x%x (+%s)%s -- the 5V rail sagged or the SoC "
                             "throttled; USB devices (mic/speaker/face) may drop off the bus. On battery: "
                             "check the UBEC output under load + usb_max_current_enable=1.",
-                            val, _flags(val & ~last))
+                            val, _flags(val & ~last), _vstr(v))
+            # Early warning: the rail can sag toward the ~4.8V floor BEFORE a throttle flag trips -- that dip
+            # is the brownout that freezes SSH mid-word. Warn once per crossing below ROBOT_POWER_MIN_V (and
+            # note recovery), so the log shows the sag COMING instead of just going dark.
+            if v is not None:
+                if v < min_v and not warned_low:
+                    log.warning("power: input SAGGING to %.2fV (< %.2fV, nearing the ~4.8V undervoltage floor) "
+                                "-- the UBEC/wiring can't hold 5V under load; a deeper dip browns out the Pi "
+                                "(frozen SSH). Raise the UBEC toward 5.1-5.2V (<=5.25V on USB-C) with short "
+                                "thick leads, or feed via the UPS HAT on charged cells.", v, min_v)
+                    warned_low = True
+                elif v >= min_v + 0.05 and warned_low:
+                    log.info("power: input recovered to %.2fV.", v)
+                    warned_low = False
             last = val
             time.sleep(period)
 

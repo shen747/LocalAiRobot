@@ -240,6 +240,24 @@ and the **UBEC → UPS → Pi** branch:
   `cleanup_pi.sh --deep`). The UBEC must genuinely supply ~5 A with **short, thick leads**. Diagnose any time
   with `vcgencmd get_throttled` (`0x0` = healthy) — the brain now also logs a **`power:` WARNING** the moment
   undervoltage/throttling appears (`ROBOT_POWER_MONITOR`).
+- ⚡ **Still under-volts after `usb_max_current_enable=1`? The UBEC set-point is too low — not the clamp.**
+  The clamp fix only lets USB devices *draw* more current; it can't *create* voltage. If `get_throttled`
+  shows **undervoltage** (e.g. `0x50005` = "undervoltage now") — as opposed to just USB devices dropping —
+  the Pi's **input 5 V rail itself is sagging below ~4.8 V**, and a deep enough dip **browns the whole Pi
+  out** (a hard hang — SSH frozen, no Ctrl-C, speech cut mid-word at *"Systems…"*). A UBEC set to **exactly
+  5.0 V** leaves **zero headroom** for lead/connector drop; a Pi 5 wants **~5.1 V** and a "10 A" rating is a
+  *thermal ceiling*, not a promise it *regulates* 5.0 V under a 5 A transient. **Measure it on the Pi 5** —
+  the PMIC reports the real input voltage:
+  ```bash
+  vcgencmd pmic_read_adc | grep EXT5V_V                 # one reading (bench PSU ≈ 5.1 V, rock-steady)
+  watch -n0.5 'vcgencmd pmic_read_adc | grep EXT5V_V'   # watch it dip when audio + camera + inference spike
+  ```
+  If `EXT5V_V` sags toward/under **4.8 V**, the UBEC/wiring is the culprit — quantified, not guessed (the
+  brain's `power:` WARNING now prints this voltage too, and warns *early* as it nears the floor). **Fix, in
+  order:** (1) prefer the **UPS HAT path with *charged* 18650s** — the cells buffer the current spikes a bare
+  UBEC can't, and the HAT re-regulates its own 5 V to the Pi; (2) **nudge the UBEC up to ~5.1–5.2 V** if it
+  trims — but **never exceed 5.25 V** on the direct USB-C pigtail (that's the Pi 5's max; a 6 V jumper is for
+  a UPS input rated for it, *not* straight into the Pi); (3) **short, thick (≥18 AWG) leads** end-to-end.
 - 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach — your last-resort stop
   if the software dies (there's no hardware watchdog). See the safety note in the appendix.
 - ⚡ **BEC voltage = servo voltage.** The ESC's BEC feeds the V+ rail *and* the steering servo. This build's

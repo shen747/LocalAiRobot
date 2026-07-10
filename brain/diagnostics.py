@@ -17,7 +17,9 @@
 
 import argparse
 import os
+import re
 import select
+import shutil
 import subprocess
 import sys
 import time
@@ -120,6 +122,38 @@ class Diag:
         return False, "skipped (no answer -- pass --wheels-off to run the motor test unattended)"
 
     # ===================== checks (harmless; no driver) =====================
+    def check_power(self):
+        """Battery brownout guard (Pi only). A UBEC that can't hold 5V under load trips UNDERVOLTAGE -> USB
+        devices (mic/speaker/face) drop off mid-run and the Pi can brown out (frozen SSH). This reads
+        get_throttled AND (Pi 5) the PMIC input voltage (EXT5V_V) so a marginal rail is caught BEFORE the
+        first live run, not discovered by a mid-word cut-out. Bench PSU: 0x0 @ ~5.1V. See docs/assembly.md."""
+        label = "Power rail (5V input holds under load)"
+        if not shutil.which("vcgencmd"):
+            return self.skip(label, "no vcgencmd (not a Pi) -- power telemetry unavailable")
+        try:
+            t = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=10)
+            val = int(t.stdout.strip().split("=")[1], 16)
+        except Exception as e:
+            return self.skip(label, f"couldn't read get_throttled: {e}")
+        v = None   # PMIC input voltage (Pi 5 only; Pi 4/older has no ADC -> fall back to the throttle bits)
+        try:
+            a = subprocess.run(["vcgencmd", "pmic_read_adc"], capture_output=True, text=True, timeout=10)
+            m = re.search(r"EXT5V_V\s+volt\(\d+\)=([\d.]+)V", a.stdout)
+            v = float(m.group(1)) if m else None
+        except Exception:
+            v = None
+        vstr = f"{v:.2f}V input" if v is not None else "voltage n/a"
+        now_uv = bool(val & (0x1 | 0x4))        # undervoltage / throttled NOW
+        ever_uv = bool(val & (0x10000 | 0x40000))  # ... or at any point since boot
+        fix = ("the UBEC can't hold 5V under load: raise it toward 5.1-5.2V (<=5.25V on USB-C), use short "
+               "thick leads, or feed via a charged UPS HAT")
+        if now_uv or (v is not None and v < 4.80):
+            return self.bad(label, f"UNDERVOLTAGE/throttled NOW ({vstr}, get_throttled=0x{val:x}) -- {fix}", DOC_ASM)
+        if ever_uv or (v is not None and v < 4.90):
+            return self.bad(label, f"5V rail sagged this boot ({vstr}, get_throttled=0x{val:x}) -- marginal "
+                            f"under load, will drop USB devices mid-run: {fix}", DOC_ASM)
+        return self.ok(label, f"healthy ({vstr}, get_throttled=0x{val:x})")
+
     def check_pca9685(self):
         label = "ESC / PWM board present (PCA9685 @ I2C 0x40)"
         try:
@@ -592,6 +626,7 @@ class Diag:
                       " Ctrl-C to abort.\n"))
         # --- automated: measured, no user input (and NO driver yet -> the ESC stays unarmed) ---
         print(bold("-- Automated checks --"))
+        self.check_power()      # power underlies everything else -- a sagging rail fakes ALL the failures below
         self.check_pca9685()
         self.check_sensors()
         self.check_camera()
