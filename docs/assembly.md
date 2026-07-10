@@ -231,6 +231,15 @@ and the **UBEC → UPS → Pi** branch:
 - ⚡ **UBEC → Pi.** A ZTW UBEC steps the 3S LiPo down to 5–6 V (jumper) to feed the Pi's **UPS input** — set
   the jumper to the UPS's rated input (usually 5 V) and size the UBEC for the Pi 5 (~5 A). Tap it off the
   LiPo **after** the kill switch, so the switch still cuts drive (the UPS keeps the Pi up for a clean stop).
+- ⚡ **Battery power ≠ bench power: the USB 600 mA clamp.** The 27 W bench PSU **negotiates 5 V/5 A over
+  USB-PD**; a UBEC (bare 5 V into the UPS or a red/black USB-C pigtail) **cannot negotiate**, so the Pi 5
+  assumes a weak supply and **clamps all USB ports to 600 mA total**. The robot's USB load (speaker + mic +
+  face panel) exceeds that → devices **brown out and drop off the bus mid-run** (speech cut mid-word, `aplay
+  ... No such device`, `/dev/ttyACM0` vanishing, the mic missing from `arecord -l`). `install_stack_pi5.sh`
+  now sets **`usb_max_current_enable=1`** in the boot config to lift the clamp (needs one reboot; remove with
+  `cleanup_pi.sh --deep`). The UBEC must genuinely supply ~5 A with **short, thick leads**. Diagnose any time
+  with `vcgencmd get_throttled` (`0x0` = healthy) — the brain now also logs a **`power:` WARNING** the moment
+  undervoltage/throttling appears (`ROBOT_POWER_MONITOR`).
 - 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach — your last-resort stop
   if the software dies (there's no hardware watchdog). See the safety note in the appendix.
 - ⚡ **BEC voltage = servo voltage.** The ESC's BEC feeds the V+ rail *and* the steering servo. This build's

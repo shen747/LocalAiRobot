@@ -111,6 +111,23 @@ esac
 # THIRD-PARTY system change that can conflict with later apt libcamera updates -- so it stays an explicit,
 # discoverable per-camera step (no flag to remember). Camera Module 3 (IMX708) has first-class AF with no fork.
 
+# USB power headroom on BATTERY. The robot runs off a UBEC (LiPo -> 5V) into the UPS HAT / USB-C, and a bare
+# 5V feed CANNOT do USB-PD negotiation -- so the Pi 5 firmware assumes a weak supply and CLAMPS all USB ports
+# to 600mA total. The robot's USB load (speaker + mic + face panel) blows past that, and devices BROWN OUT and
+# drop off the bus mid-run (aplay 'No such device' mid-word, /dev/ttyACM0 vanishing, the mic disappearing from
+# arecord -l). usb_max_current_enable=1 lifts the clamp to the full 1.6A -- the UBEC must actually supply ~5A
+# (it does; that's why it was sized for the Pi 5). Harmless on the bench PSU (PD already negotiates 5A).
+# Idempotent + tagged; cleanup_pi.sh --deep removes it. Set ROBOT_USB_FULL_CURRENT=0 to skip.
+if [ "${ROBOT_USB_FULL_CURRENT:-1}" != 0 ] && [ -f "$CAMCFG" ]; then
+  if grep -qE '^[[:space:]]*usb_max_current_enable=' "$CAMCFG"; then
+    sudo sed -i -E 's|^[[:space:]]*usb_max_current_enable=.*|usb_max_current_enable=1   # [LocalAiRobot power]|' "$CAMCFG"
+  else
+    echo 'usb_max_current_enable=1   # [LocalAiRobot power]' | sudo tee -a "$CAMCFG" >/dev/null
+  fi
+  echo "   USB full current enabled (usb_max_current_enable=1): battery/UBEC power can't PD-negotiate, so"
+  echo "   without this the Pi clamps USB to 600mA and the speaker/mic/face brown out. Live after the reboot."
+fi
+
 echo ">> [3/8] enable I2C + hardware group access (PCA9685 I2C, 3x HC-SR04 GPIO, USB-C panel, framebuffer)"
 sudo raspi-config nonint do_i2c 0 || echo "   (raspi-config not found -- enable I2C manually: dtparam=i2c_arm=on)"
 # i2c/gpio = motion + sensors;  dialout = USB-C face panel (/dev/ttyACM0);  audio = mic/speaker;  video = /dev/fb0 fallback

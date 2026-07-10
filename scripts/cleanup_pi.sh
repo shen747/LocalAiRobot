@@ -111,6 +111,11 @@ if [ "$DEEP" = 1 ]; then
       CAM_OFF=1; CAMCFG="$f"; PLAN+=("reset    remove the IMX519 camera overlay from $f (restore camera_auto_detect=1)"); break
     fi
   done
+  for f in /boot/firmware/config.txt /boot/config.txt; do
+    if [ -f "$f" ] && grep -q '# \[LocalAiRobot power\]' "$f"; then
+      PWR_OFF=1; PWRCFG="$f"; PLAN+=("reset    remove usb_max_current_enable from $f (restore the 600mA USB default)"); break
+    fi
+  done
 fi
 
 [ "$REPO_RM" = 1 ] && PLAN+=("delete   $REPO   (this clone, incl. this script -- runs LAST)")
@@ -186,6 +191,11 @@ if [ "$CAM_OFF" = 1 ] && [ -n "${CAMCFG:-}" ]; then
   sudo sed -i -E '/^[[:space:]]*dtoverlay=imx519.*# \[LocalAiRobot camera\]/d' "$CAMCFG" || true
   sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=0[[:space:]]*# \[LocalAiRobot camera\].*|camera_auto_detect=1|' "$CAMCFG" || true
   sudo rm -f "$CAMCFG.localairobot.bak"
+fi
+
+if [ "${PWR_OFF:-0}" = 1 ] && [ -n "${PWRCFG:-}" ]; then
+  echo ">> remove usb_max_current_enable from $PWRCFG (restore the 600mA USB default)"
+  sudo sed -i -E '/^[[:space:]]*usb_max_current_enable=.*# \[LocalAiRobot power\]/d' "$PWRCFG" || true
 fi
 
 if [ "$BASHRC_LINE" = 1 ]; then

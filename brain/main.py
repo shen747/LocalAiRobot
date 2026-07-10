@@ -337,6 +337,62 @@ def _persist_env(key, value):
         log.warning("could not persist %s to config/robot.env: %s", key, e)
 
 
+# vcgencmd get_throttled bit meanings (Pi firmware). Low bits = happening NOW; bit+16 = since boot.
+_POWER_BITS = {
+    0: "UNDERVOLTAGE NOW", 1: "arm freq capped NOW", 2: "throttled NOW", 3: "soft temp limit NOW",
+    16: "undervoltage since boot", 17: "freq-cap since boot", 18: "throttled since boot",
+    19: "soft temp limit since boot",
+}
+
+
+def _start_power_monitor():
+    """Log Pi POWER trouble (undervoltage/throttling) so battery brownouts are visible in the run log.
+    On battery (LiPo -> UBEC -> UPS/USB-C, no USB-PD negotiation) a sagging 5V rail sheds USB devices --
+    the mic/speaker/face panel vanish MID-RUN (aplay 'No such device' mid-word, /dev/ttyACM0 gone, the mic
+    missing from arecord -l) with nothing in our log saying WHY. This thread is the why: it polls
+    `vcgencmd get_throttled` every ROBOT_POWER_LOG_PERIOD_S and logs a WARNING the moment any new
+    undervoltage/throttle flag appears. Pi-only by nature: no vcgencmd (Jetson/laptop) -> silent no-op,
+    so board parity is preserved. ROBOT_POWER_MONITOR=0 disables."""
+    if os.environ.get("ROBOT_POWER_MONITOR", "1") != "1":
+        return
+    import shutil
+    if not shutil.which("vcgencmd"):
+        return   # not a Raspberry Pi -- nothing to poll
+    period = max(2.0, float(_as_int(os.environ.get("ROBOT_POWER_LOG_PERIOD_S"), 10)))
+
+    def _read():
+        out = subprocess.run(["vcgencmd", "get_throttled"], timeout=5, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True).stdout
+        return int(out.strip().split("=")[1], 16)   # "throttled=0x50005" -> 0x50005
+
+    def _flags(val):
+        return ", ".join(name for bit, name in _POWER_BITS.items() if val & (1 << bit)) or "none"
+
+    def _loop():
+        last = None
+        while True:
+            try:
+                val = _read()
+            except Exception:
+                time.sleep(period)
+                continue
+            if last is None:
+                (log.warning if val else log.info)(
+                    "power: get_throttled=0x%x (%s)%s", val, _flags(val),
+                    " -- the 5V rail has ALREADY sagged this boot: expect USB devices (mic/speaker/face) "
+                    "to drop off. Check the UBEC (5V jumper, ~5A rating, short thick leads) and that "
+                    "usb_max_current_enable=1 is in the boot config." if val else "")
+            elif val & ~last:
+                log.warning("power: NEW event, get_throttled=0x%x (+%s) -- the 5V rail sagged or the SoC "
+                            "throttled; USB devices (mic/speaker/face) may drop off the bus. On battery: "
+                            "check the UBEC output under load + usb_max_current_enable=1.",
+                            val, _flags(val & ~last))
+            last = val
+            time.sleep(period)
+
+    threading.Thread(target=_loop, daemon=True, name="power-monitor").start()
+
+
 def main():
     # Hardware actions (intended PWM/GPIO/I2C) are logged by driver.py on the "robot.hw"
     # logger -- configure logging FIRST so the startup banner + mapping show on the console.
@@ -797,6 +853,10 @@ def main():
     followup_silence_s = max(1, _as_int(os.environ.get("ROBOT_FOLLOWUP_SILENCE_S"), 12))
     log.info("conversation: follow-ups %s%s", "ON" if followup_enable else "OFF (wake word every turn)",
              f" (sleep after %ds of silence)" % followup_silence_s if followup_enable else "")
+
+    # Battery-power watchdog: surfaces undervoltage/throttling (the silent cause of USB devices vanishing
+    # mid-run on LiPo/UBEC power) as explicit log lines. No-op off-Pi / when ROBOT_POWER_MONITOR=0.
+    _start_power_monitor()
 
     waiting_face = "idle"   # face while waiting for the wake word; becomes "sleeping" once a chat has ended
     try:

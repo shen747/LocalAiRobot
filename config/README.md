@@ -183,6 +183,8 @@ mapped onto floor→ceil (not 0→cap), skipping the dead zone.
 | `ROBOT_SENSOR_VERBOSE` | `0` | `1` (or `run_me.sh --verbose`): stream a live `SENSORS front/left/right` read-out every `ROBOT_SENSOR_LOG_PERIOD_S` s and show **every** no-echo (not collapsed to one line). Adds a little load (reads all 3 beams) — a diagnosis switch, not for continuous running. Also disables idle-quiescing so you can watch the sensors. |
 | `ROBOT_SENSOR_LOG_PERIOD_S` | `2.0` | How often the `--verbose` `SENSORS` read-out prints (seconds). |
 | `ROBOT_LOG_LEVEL` | `INFO` | Log verbosity: `INFO` or `DEBUG`. `run_me.sh --verbose` sets `DEBUG` for that run. |
+| `ROBOT_POWER_MONITOR` | `1` | Log a **WARNING** the moment the Pi reports **undervoltage/throttling** (`vcgencmd get_throttled`) — the silent cause of USB devices (mic/speaker/face) vanishing mid-run on LiPo/UBEC power. Pi-only; silent no-op on Jetson/laptop. `0` = off. |
+| `ROBOT_POWER_LOG_PERIOD_S` | `10` | How often the power monitor polls `get_throttled` (seconds, min 2). |
 | `ROBOT_TRIG_PIN` | `23` | Front sensor **TRIG** (BCM GPIO number). |
 | `ROBOT_ECHO_PIN` | `24` | Front sensor **ECHO** (BCM; HC-SR04**P** ECHO is 3.3 V — a bare HC-SR04 needs a divider). |
 
