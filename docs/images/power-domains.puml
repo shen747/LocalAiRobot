@@ -1,12 +1,12 @@
 @startuml power-domains
-' LocalAiRobot — DETAILED power + signal wiring, TOP-TO-BOTTOM (one 3S LiPo -> ESC + UBEC/UPS to the Pi).
+' LocalAiRobot — DETAILED power + signal wiring, TOP-TO-BOTTOM (one 3S LiPo -> ESC + buck(7.4V)/UPS to the Pi).
 ' This source lives next to its render. Regenerate in place (writes power-domains.png here):
 '   plantuml -tpng docs/images/power-domains.puml
 ' No Graphviz needed: !pragma layout smetana. Vertical + larger fonts; Pi peripherals collapsed into one box.
 !pragma layout smetana
 top to bottom direction
 hide stereotype
-title LocalAiRobot — detailed power + signals (one 3S LiPo: ESC drive + UBEC -> UPS -> Pi; common ground)
+title LocalAiRobot — detailed power + signals (one 3S LiPo: ESC drive + buck 7.4V -> UPS -> Pi; common ground)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -35,20 +35,20 @@ skinparam rectangle {
 rectangle "3S 11.1V LiPo\n(single source)" as lipo <<motor>>
 rectangle "ESC\n(battery input + BEC for servo)" as esc <<motor>>
 rectangle "drive motor" as dmotor <<motor>>
-rectangle "ZTW UBEC step-down\n3S in -> 5-6V / 6A out (jumper-set)" as ubec <<motor>>
+rectangle "Adjustable buck (SZBK07 / XL4016)\n3S in -> 7.4V out, >=8A (set with a meter)" as ubec <<motor>>
 rectangle "UPS HAT\n2x 18650 = backup buffer" as ups <<io>>
 rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM bridge, 0x40" as pca <<model>>
 rectangle "steering servo\nDS3225 HV (on the ESC BEC rail)" as servo <<motor>>
 rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: Arducam IMX519 (16MP autofocus, CSI 22->15)\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
-rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC <-> UBEC)" as gnd <<store>>
+rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC <-> buck)" as gnd <<store>>
 
 ' ---- power + signals, top -> bottom ----
 lipo --> esc  : 11.1V (high current)
 lipo --> ubec : 11.1V (tap)
 esc  --> dmotor : motor drive
-ubec --> ups  : 5-6V -> UPS input
-ups  --> pi   : 5V to Pi
+ubec --> ups  : 7.4V -> UPS input
+ups  --> pi   : clean 5.1V to Pi
 pi   --> pca  : 3.3V logic (VCC) + I2C SDA/SCL
 esc  --> pca  : ch0 throttle PWM (signal)
 esc  --> pca  : BEC -> V+ rail (servo power)
@@ -62,10 +62,12 @@ ubec ..> gnd : GND
 
 note bottom of gnd
   **ONE 3S LiPo powers everything** via two branches: the **ESC** (drive motor + BEC for the servo/V+ rail)
-  and the **UBEC (5-6V) -> UPS input -> Pi**. The UPS 18650s stay as a **backup buffer** + clean shutdown.
-  All parts share a **common GND**. The **ESC BEC -> PCA9685 V+ rail** is the servo's power (NOT the Pi's).
-  **Servo: use an HV (7.4V) servo, or feed V+ from a separate 5-6V BEC** (a 6V-only servo can be damaged).
-  Set the UBEC jumper to the UPS's rated input (typically 5V). DS3225 stall ~2.5-3A — if the ESC BEC browns
-  out under hard steering, add a separate servo BEC on V+. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe).
+  and an **ADJUSTABLE buck @ 7.4V -> UPS input -> Pi**. The UPS 18650s buffer load spikes + clean shutdown,
+  and the UPS re-regulates a clean 5.1V to the Pi. All parts share a **common GND**.
+  **Use an adjustable switching buck set to 7.4V** (SZBK07 / XL4016, >=8A): a fixed 5-6V UBEC sags ~0.5V under
+  load (MORE than the Pi 5's ~0.35V window), so it browns the Pi out. Never feed the UPS above 8.4V.
+  The **ESC BEC -> PCA9685 V+ rail** is the servo's power (NOT the Pi's). **Servo: use an HV (7.4V) servo, or
+  feed V+ from a separate 5-6V BEC** (a 6V-only servo can be damaged). DS3225 stall ~2.5-3A -- if the ESC BEC
+  browns out under hard steering, add a separate servo BEC on V+. All 3 HC-SR04**P** are 3.3V (ECHO Pi-safe).
 end note
 @enduml

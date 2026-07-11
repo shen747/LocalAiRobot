@@ -1,12 +1,12 @@
 @startuml assembly
-' LocalAiRobot — high-level power, TOP-TO-BOTTOM (one 3S LiPo -> ESC drive + UBEC -> UPS -> Pi).
+' LocalAiRobot — high-level power, TOP-TO-BOTTOM (one 3S LiPo -> ESC drive + buck(7.4V) -> UPS -> Pi).
 ' This source lives next to its render. Regenerate in place (writes assembly.png here):
 '   plantuml -tpng docs/images/assembly.puml
 ' No Graphviz needed: !pragma layout smetana. Vertical + larger fonts; Pi peripherals collapsed into one box.
 !pragma layout smetana
 top to bottom direction
 hide stereotype
-title LocalAiRobot — one 3S LiPo powers all (ESC -> drive + UBEC -> UPS -> Pi); bench-test on the 27W PSU first
+title LocalAiRobot — one 3S LiPo powers all (ESC -> drive + buck 7.4V -> UPS -> Pi); bench-test on the 27W PSU first
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -35,7 +35,7 @@ skinparam rectangle {
 rectangle "3S 11.1V LiPo\n(single source)" as lipo <<motor>>
 rectangle "ESC\n(battery input + BEC for servo)" as esc <<motor>>
 rectangle "drive motor" as motor <<motor>>
-rectangle "ZTW UBEC\n3S -> 5-6V / 6A step-down" as ubec <<motor>>
+rectangle "Adjustable buck\n(SZBK07 / XL4016)\n3S -> 7.4V, >=8A" as ubec <<motor>>
 rectangle "UPS HAT\n2x 18650 backup (or 27W PSU bench)" as ups <<io>>
 rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC BEC" as pca <<model>>
@@ -45,8 +45,8 @@ rectangle "common GND bus" as gnd <<store>>
 lipo --> esc  : 11.1V (high current)
 lipo --> ubec : 11.1V (tap)
 esc  --> motor : motor drive
-ubec --> ups  : 5-6V -> UPS input
-ups  --> pi   : 5V
+ubec --> ups  : 7.4V -> UPS input
+ups  --> pi   : clean 5.1V
 pi   --> pca  : 3.3V logic + I2C
 pi   --> periph : CSI · USB-C · 3.3V+GPIO
 
@@ -56,9 +56,10 @@ pca  ..> gnd : GND
 ubec ..> gnd : GND
 
 note bottom of gnd
-  **One 3S LiPo powers everything:** ESC branch (drive + servo BEC) + **UBEC (5-6V) -> UPS -> Pi**.
-  The UPS 18650s stay as a **backup buffer**. Tie **ALL grounds** together: Pi <-> PCA9685 <-> ESC <-> UBEC,
-  or the PWM won't register. Bench-test on the **27W PSU first** (UBEC/UPS later). **Active Cooler is mandatory.**
-  Camera (CSI), face panel (USB-C) and the 3 HC-SR04P are all Pi-side.
+  **One 3S LiPo powers everything:** ESC branch (drive + servo BEC) + **buck @ 7.4V -> UPS -> Pi**.
+  The UPS 18650s buffer load spikes; the UPS re-regulates a clean 5.1V. Tie **ALL grounds** together:
+  Pi <-> PCA9685 <-> ESC <-> buck, or the PWM won't register. **Use an ADJUSTABLE buck set to 7.4V** (a fixed
+  5-6V UBEC sags ~0.5V under load -> browns the Pi 5 out). Bench-test on the **27W PSU first** (buck/UPS later).
+  **Active Cooler is mandatory.** Camera (CSI), face panel (USB-C) and the 3 HC-SR04P are all Pi-side.
 end note
 @enduml

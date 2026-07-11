@@ -1,5 +1,5 @@
 @startuml wiring
-' LocalAiRobot — "Wiring at a glance" connection map, TOP-TO-BOTTOM power flow (1 LiPo -> ESC + UBEC/UPS).
+' LocalAiRobot — "Wiring at a glance" connection map, TOP-TO-BOTTOM power flow (1 LiPo -> ESC + buck/UPS).
 ' This source lives next to its render. Regenerate in place (writes wiring.png here):
 '   plantuml -tpng docs/images/wiring.puml
 ' No Graphviz needed: !pragma layout smetana uses PlantUML's pure-Java layout engine.
@@ -7,7 +7,7 @@
 !pragma layout smetana
 top to bottom direction
 hide stereotype
-title LocalAiRobot — wiring at a glance (one 3S LiPo: ESC drive + UBEC/UPS to the Pi; common ground)
+title LocalAiRobot — wiring at a glance (one 3S LiPo: ESC drive + buck(7.4V)/UPS to the Pi; common ground)
 
 skinparam backgroundColor white
 skinparam shadowing false
@@ -36,7 +36,7 @@ skinparam rectangle {
 rectangle "3S 11.1V LiPo\n(single source)" as lipo <<motor>>
 rectangle "ESC\n(+ BEC for servo)" as esc <<motor>>
 rectangle "drive motor" as motor <<motor>>
-rectangle "ZTW UBEC\n3S -> 5-6V / 6A" as ubec <<motor>>
+rectangle "Adjustable buck\n(SZBK07 / XL4016)\n3S -> 7.4V, >=8A" as ubec <<motor>>
 rectangle "UPS HAT\n2x 18650 (backup)" as ups <<io>>
 rectangle "Raspberry Pi 5\n(+ Active Cooler)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM @ 0x40" as pca <<model>>
@@ -47,16 +47,17 @@ rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3
 lipo --> esc  : 11.1V (high current)
 lipo --> ubec : 11.1V (tap)
 esc  --> motor : motor drive
-ubec --> ups  : 5-6V -> UPS input
-ups  --> pi   : 5V (18650 backup)
+ubec --> ups  : 7.4V -> UPS input
+ups  --> pi   : clean 5.1V (18650 backup)
 esc  --> pca  : ch0: signal + V+ (ESC BEC) + GND
 pi   --> pca  : 3.3V VCC + SDA/SCL (I2C)
 pca  --> servo : ch1: signal / V+ / GND
 pi   --> periph : 3.3V + TRIG/ECHO · CSI · USB-C
 
 note bottom of periph
-  **One 3S LiPo, two branches:** ESC (drive + servo BEC) and **UBEC (5-6V) -> UPS -> Pi** (18650s = backup).
-  Tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC <-> UBEC) or the PWM won't register.
+  **One 3S LiPo, two branches:** ESC (drive + servo BEC) and **buck @ 7.4V -> UPS -> Pi** (18650s buffer spikes).
+  Tie **ALL grounds** together (Pi <-> PCA9685 <-> ESC <-> buck) or the PWM won't register.
+  **Use an ADJUSTABLE buck set to 7.4V** (a fixed 5-6V UBEC sags ~0.5V under load -> browns the Pi 5 out).
   **PCA9685 V+ rail = the ESC BEC** (servo power), not the Pi (use an HV servo, or a separate 5-6V BEC).
   All 3 HC-SR04**P** run at 3.3V, so every ECHO is Pi-safe (no divider).
   **Jetson Orin Nano** also runs this (board HAL): same PCA9685 / servo / sensor wiring, but **physical BOARD**

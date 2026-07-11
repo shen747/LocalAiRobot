@@ -213,51 +213,54 @@ disconnected. **First read Phase 2** so you don't bridge the power domains.
 
 ## Phase 2 — Power: one 3S LiPo, two rails (read before you wire)
 
-**One 3S LiPo feeds everything** through two branches: the **ESC** (drive motor + a BEC for the servo) and a
-**ZTW UBEC step-down (5–6 V) → the Pi's UPS input** (the UPS 18650s stay as a backup buffer). The LiPo reaches
-the Pi **only through the UBEC — never wire the LiPo straight to the Pi.** **Do** tie all the *grounds*
-together, or the Pi's PWM signals won't register at the ESC/servo.
+**One 3S LiPo feeds everything** through two branches: the **ESC** (drive motor + a BEC for the servo) and an
+**adjustable buck converter set to 7.4 V → the Pi's UPS HAT input** (the UPS re-regulates a clean ~5.1 V to the
+Pi and its 18650s buffer the current spikes). The LiPo reaches the Pi **only through the buck + UPS — never
+wire the LiPo straight to the Pi.** **Do** tie all the *grounds* together, or the Pi's PWM signals won't
+register at the ESC/servo.
 
-![One 3S 11.1V LiPo powers everything: an ESC branch (drive motor + a BEC for the servo) and a ZTW UBEC step-down (5-6V) feeding the Raspberry Pi 5's UPS HAT input (2x 18650 backup) + Active Cooler; the Pi drives the Arducam IMX519 autofocus camera over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors. The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC BEC. All grounds are common across Pi, PCA9685, ESC and UBEC.](images/assembly.png)
+![One 3S 11.1V LiPo powers everything: an ESC branch (drive motor + a BEC for the servo) and an adjustable buck converter (set to 7.4V) feeding the Raspberry Pi 5's UPS HAT input (2x 18650 backup) + Active Cooler; the Pi drives the Arducam IMX519 autofocus camera over CSI, the USB-C face screen, and three 3.3V HC-SR04P sensors. The PCA9685 takes 3.3V logic from the Pi and its V+ rail from the ESC BEC. All grounds are common across Pi, PCA9685, ESC and the buck converter.](images/assembly.png)
 
 For the full picture — the shared ground, the ESC **BEC** feeding the PCA9685 V+ rail and the steering servo,
-and the **UBEC → UPS → Pi** branch:
+and the **buck (7.4 V) → UPS → Pi** branch:
 
-![Detailed power: one 3S 11.1V LiPo -> ESC -> drive motor, with the ESC BEC feeding the PCA9685 V+ rail + DS3225 steering servo; a second branch taps the LiPo to a ZTW UBEC step-down (5-6V) that feeds the Pi's UPS HAT input (2x 18650 backup), which powers the Raspberry Pi 5 + Active Cooler; the Pi provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Arducam IMX519 autofocus camera (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground.](images/power-domains.png)
+![Detailed power: one 3S 11.1V LiPo -> ESC -> drive motor, with the ESC BEC feeding the PCA9685 V+ rail + DS3225 steering servo; a second branch taps the LiPo to an adjustable buck converter (set to 7.4V) that feeds the Pi's UPS HAT input (2x 18650 backup), which re-regulates a clean 5.1V to the Raspberry Pi 5 + Active Cooler; the Pi provides 3.3V logic + I2C to the PCA9685, 3.3V + TRIG/ECHO to three HC-SR04P (front 23/24, left 5/6, right 20/21), a CSI ribbon to the Arducam IMX519 autofocus camera (via the Pi-5 22-to-15 adapter), and USB-C to the face screen; every device shares a common ground.](images/power-domains.png)
 
 - ✅ Match the LiPo plug (XT60 / T-plug / Deans) to the ESC — pick the right one rather than solder.
 - ✅ The Pi 5 **Active Cooler is mandatory** — sustained inference thermal-throttles without it.
 - ✅ A **LiPo balance charger** is required for the 3S pack; never charge LiPo on a dumb charger.
-- ⚡ **UBEC → Pi.** A ZTW UBEC steps the 3S LiPo down to 5–6 V (jumper) to feed the Pi's **UPS input** — set
-  the jumper to the UPS's rated input (usually 5 V) and size the UBEC for the Pi 5 (~5 A). Tap it off the
-  LiPo **after** the kill switch, so the switch still cuts drive (the UPS keeps the Pi up for a clean stop).
+- ⚡ **Buck → UPS → Pi.** An **adjustable buck converter** (set to **7.4 V**) steps the 3S LiPo down to feed
+  the **UPS HAT input**; the UPS re-regulates a clean ~5.1 V to the Pi and its 18650s buffer the load spikes.
+  Tap the buck off the LiPo **after** the kill switch, so the switch still cuts drive (the UPS keeps the Pi up
+  for a clean stop). **A fixed 5–6 V "UBEC" does NOT work here** — see the measured reason below.
 - ⚡ **Battery power ≠ bench power: the USB 600 mA clamp.** The 27 W bench PSU **negotiates 5 V/5 A over
-  USB-PD**; a UBEC (bare 5 V into the UPS or a red/black USB-C pigtail) **cannot negotiate**, so the Pi 5
-  assumes a weak supply and **clamps all USB ports to 600 mA total**. The robot's USB load (speaker + mic +
-  face panel) exceeds that → devices **brown out and drop off the bus mid-run** (speech cut mid-word, `aplay
-  ... No such device`, `/dev/ttyACM0` vanishing, the mic missing from `arecord -l`). `install_stack_pi5.sh`
-  now sets **`usb_max_current_enable=1`** in the boot config to lift the clamp (needs one reboot; remove with
-  `cleanup_pi.sh --deep`). The UBEC must genuinely supply ~5 A with **short, thick leads**. Diagnose any time
-  with `vcgencmd get_throttled` (`0x0` = healthy) — the brain now also logs a **`power:` WARNING** the moment
-  undervoltage/throttling appears (`ROBOT_POWER_MONITOR`).
-- ⚡ **Still under-volts after `usb_max_current_enable=1`? The UBEC set-point is too low — not the clamp.**
-  The clamp fix only lets USB devices *draw* more current; it can't *create* voltage. If `get_throttled`
-  shows **undervoltage** (e.g. `0x50005` = "undervoltage now") — as opposed to just USB devices dropping —
-  the Pi's **input 5 V rail itself is sagging below ~4.8 V**, and a deep enough dip **browns the whole Pi
-  out** (a hard hang — SSH frozen, no Ctrl-C, speech cut mid-word at *"Systems…"*). A UBEC set to **exactly
-  5.0 V** leaves **zero headroom** for lead/connector drop; a Pi 5 wants **~5.1 V** and a "10 A" rating is a
-  *thermal ceiling*, not a promise it *regulates* 5.0 V under a 5 A transient. **Measure it on the Pi 5** —
-  the PMIC reports the real input voltage:
+  USB-PD**; a battery/buck feed **cannot negotiate**, so the Pi 5 assumes a weak supply and **clamps all USB
+  ports to 600 mA total**. The robot's USB load (speaker + mic + face panel) exceeds that → devices **brown
+  out and drop off the bus mid-run** (speech cut mid-word, `aplay ... No such device`, `/dev/ttyACM0`
+  vanishing, the mic missing from `arecord -l`). `install_stack_pi5.sh` sets **`usb_max_current_enable=1`** in
+  the boot config to lift the clamp (needs one reboot; remove with `cleanup_pi.sh --deep`). **Necessary but
+  not sufficient** — it lets devices *draw* more, it can't *create* voltage (next bullet).
+- ⚡ **Why a fixed 5–6 V UBEC can't power a Pi 5 — the measured reason (this bit the reference build).**
+  The Pi 5's usable input window is only **~4.9–5.25 V (≈ 0.35 V wide)**, and a cheap UBEC **sags ~0.5 V under
+  load** — *more than the whole window*. So no jumper setting survives a load spike: **5.0 V → the Pi sees
+  ~4.50 V and browns out** (a hard hang — SSH frozen, no Ctrl-C, speech cut mid-word at *"Systems…"*); **5.5 V
+  → ~4.90 V, right on the cliff** (USB audio drops out); **6.0 V straight to the Pi → won't boot** (over the
+  5.25 V max). Measured on the Pi 5's own PMIC (`get_throttled` also read `0x50005` = *undervoltage NOW*):
   ```bash
-  vcgencmd pmic_read_adc | grep EXT5V_V                 # one reading (bench PSU ≈ 5.1 V, rock-steady)
+  vcgencmd pmic_read_adc | grep EXT5V_V                 # real input V (bench PSU ≈ 5.16 V, rock-steady)
   watch -n0.5 'vcgencmd pmic_read_adc | grep EXT5V_V'   # watch it dip when audio + camera + inference spike
   ```
-  If `EXT5V_V` sags toward/under **4.8 V**, the UBEC/wiring is the culprit — quantified, not guessed (the
-  brain's `power:` WARNING now prints this voltage too, and warns *early* as it nears the floor). **Fix, in
-  order:** (1) prefer the **UPS HAT path with *charged* 18650s** — the cells buffer the current spikes a bare
-  UBEC can't, and the HAT re-regulates its own 5 V to the Pi; (2) **nudge the UBEC up to ~5.1–5.2 V** if it
-  trims — but **never exceed 5.25 V** on the direct USB-C pigtail (that's the Pi 5's max; a 6 V jumper is for
-  a UPS input rated for it, *not* straight into the Pi); (3) **short, thick (≥18 AWG) leads** end-to-end.
+  **The fix is a stiffer supply into the UPS, not a different jumper:** replace the UBEC with an **adjustable
+  switching buck** (e.g. **SZBK07 / 1PZ ABC-H10**, or an **XL4016 9A**) — **not** a linear/LM2596 (they sag),
+  rated **≥ 8 A**, with a heatsink + voltage display — and **set it to 7.4 V** feeding the UPS. At 7.4 V in,
+  even a 0.5 V sag lands at ~6.9 V, still well above the UPS's cutoff, so the UPS holds a clean 5.1 V to the
+  Pi through the peak. **Set 7.4 V with a multimeter before connecting** (never > **8.4 V** = the UPS's max
+  input), confirm it **holds 7.4 V under the TTS peak**, and use **short, thick (≥18 AWG) leads**. The brain's
+  `power:` WARNING prints `EXT5V_V` and warns *early* as it nears the floor, so you can see it work.
+  - *Squeeze the current hardware while the buck ships:* lower the peak that trips it (Piper TTS on all 4 cores
+    + the speaker, on top of the camera) with `echo powersave | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor`
+    and `ROBOT_CAMERA_ENABLE=0` / `ROBOT_CAMERA_AUTOFOCUS=0`. A software "load-shed" can't help — by the time a
+    poll sees the sag, the brownout has already happened; only reducing the peak *ahead of time* does.
 - 🔴 Put a **physical kill switch / unplug loop** on the LiPo→ESC line within reach — your last-resort stop
   if the software dies (there's no hardware watchdog). See the safety note in the appendix.
 - ⚡ **BEC voltage = servo voltage.** The ESC's BEC feeds the V+ rail *and* the steering servo. This build's
@@ -409,12 +412,12 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
    you've found the servo's center in calibration, then attach it pointing straight.
 3. Build the brain stack: Pi 5 + Active Cooler (+ UPS HAT later — Phase 9) on a 3D-printed/cut deck on the
    frame rails. Keep fan airflow clear.
-4. Mount the **ESC**, **PCA9685**, **UBEC**, and **LiPo**; route wiring clear of the driveshafts + steering
-   links. Keep the mic away from the cooler fan. **Now make the power connections deferred in Phase 3** —
-   ESC → motor, ESC 3-wire → PCA9685 **ch0**, **steering servo → ch1**, **LiPo → ESC through your kill
-   switch**, and the **LiPo → UBEC → the Pi's UPS input** (tap after the kill switch) — pin-by-pin in the
-   **[wiring guide](wiring/pwm-esc-servo-wiring.md)**. Keep all grounds common; feed the Pi **only via the
-   UBEC**, never the LiPo direct (Phase 2).
+4. Mount the **ESC**, **PCA9685**, the **buck converter**, and the **LiPo**; route wiring clear of the
+   driveshafts + steering links. Keep the mic away from the cooler fan. **Now make the power connections
+   deferred in Phase 3** — ESC → motor, ESC 3-wire → PCA9685 **ch0**, **steering servo → ch1**, **LiPo → ESC
+   through your kill switch**, and the **LiPo → buck (set to 7.4 V) → the UPS HAT input → Pi** (tap after the
+   kill switch) — pin-by-pin in the **[wiring guide](wiring/pwm-esc-servo-wiring.md)**. Keep all grounds
+   common; feed the Pi **only via the buck + UPS**, never the LiPo direct (Phase 2).
 5. Mount the **3-sensor plate** across the front (forward + ~45–60° left/right), clear of the wheels and
    roughly level. Mount the **camera** forward-facing near the sensors, and the **face panel** where you
    want the robot to "look at" you. Route the ribbons + USB cables away from the driveshafts.
@@ -424,7 +427,7 @@ This is where the **ESC, motor, and LiPo finally get connected** — until now n
 > outward** (with a low intake vent on the opposite side) so it pulls the cooler's hot air through and out.
 > A 3.3 V GPIO can't power a fan, so drive it through a **logic-level N-MOSFET**:
 > - **GPIO pin → MOSFET gate** (add a ~10 kΩ gate-to-ground pulldown so the fan stays off during boot).
-> - **Fan +** → the **+5 V rail** (the Pi's 5 V header pin for a small fan, or the UBEC 5 V rail for a bigger one).
+> - **Fan +** → the **+5 V rail** (the Pi's 5 V header pin for a small fan; for a bigger one, add a small dedicated 5 V buck off the LiPo).
 > - **Fan −** → **MOSFET drain**; **MOSFET source → common ground** (shared with the Pi). A flyback diode
 >   across the fan is good practice for a brushed/DC fan.
 >

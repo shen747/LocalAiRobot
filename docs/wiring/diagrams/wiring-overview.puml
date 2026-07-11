@@ -1,6 +1,6 @@
 @startuml wiring-overview
 top to bottom direction
-title LocalAiRobot — Power & Signal Wiring (one 3S LiPo: ESC drive + UBEC/UPS to the Pi)
+title LocalAiRobot — Power & Signal Wiring (one 3S LiPo: ESC drive + buck 7.4V/UPS to the Pi)
 
 skinparam shadowing false
 skinparam defaultFontName Helvetica
@@ -17,11 +17,11 @@ package "POWER  (single 3S LiPo)" #ffe6e6 {
   rectangle "Kill switch\n(inline loop)" as KILL
   rectangle "ESC\n(brushed crawler)" as ESC
   rectangle "540 35T\nbrushed motor" as MOTOR
-  rectangle "ZTW UBEC\n3S -> 5-6V/6A" as UBEC
+  rectangle "Adjustable buck\n(SZBK07 / XL4016)\n3S -> 7.4V, >=8A" as UBEC
 }
 
-package "BRAIN RAIL  (5V / 3.3V, via UBEC -> UPS)" #e6f0ff {
-  rectangle "Raspberry Pi 5\n(UBEC->UPS HAT / 27W PSU bench)" as PI
+package "BRAIN RAIL  (5V / 3.3V, via buck -> UPS)" #e6f0ff {
+  rectangle "Raspberry Pi 5\n(buck 7.4V -> UPS HAT / 27W PSU bench)" as PI
   rectangle "PCA9685\nPWM @ 0x40" as PCA
   rectangle "Steering servo\n(FRONT only, ch1)" as SERVO
 }
@@ -29,16 +29,17 @@ package "BRAIN RAIL  (5V / 3.3V, via UBEC -> UPS)" #e6f0ff {
 LIPO  --> KILL  : red (+) / black (-)
 KILL  --> ESC   : battery in
 KILL  --> UBEC  : 11.1V tap
-UBEC  --> PI    : 5-6V -> UPS input
+UBEC  --> PI    : 7.4V -> UPS input (UPS -> clean 5.1V)
 ESC   --> MOTOR : blue + yellow\n(2-wire brushed)
 ESC   --> PCA   : 3-wire lead\nsignal -> ch0 PWM\nred -> V+ rail (ESC BEC)\nblack -> ch0 GND
 PCA   --> SERVO : ch1\nPWM / V+ / GND
 PI    --> PCA   : 3.3V VCC\nSDA=GPIO2 / SCL=GPIO3\nGND  (I2C)
 
 note bottom
-  ONE 3S LiPo feeds both the ESC (drive + servo BEC) AND a UBEC (5-6V) -> the Pi's UPS input (18650 backup).
-  COMMON GROUND BUS:  Pi GND  <->  PCA9685 GND  <->  ESC GND  <->  UBEC GND.
+  ONE 3S LiPo feeds both the ESC (drive + servo BEC) AND an adjustable buck @ 7.4V -> the Pi's UPS input (18650 backup).
+  COMMON GROUND BUS:  Pi GND  <->  PCA9685 GND  <->  ESC GND  <->  buck GND.
   The ESC BEC (on ch0 V+) powers the whole V+ rail -> the ch1 servo (use an HV servo).
-  Set the UBEC jumper to the UPS's rated input (typically 5V); the kill switch cuts drive but the UPS keeps the Pi up.
+  Use an ADJUSTABLE switching buck (SZBK07 / XL4016, >=8A) set to 7.4V; a fixed 5-6V UBEC sags ~0.5V under load and
+  browns the Pi 5 out. The UPS re-regulates a clean 5.1V; the kill switch cuts drive but the UPS keeps the Pi up. Never feed the UPS above 8.4V.
 end note
 @enduml
