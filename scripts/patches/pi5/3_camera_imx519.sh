@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# scripts/patches/pi5/3_camera_imx519.sh -- select the reference Arducam IMX519 16MP camera AND install its
-# autofocus tuning so ROBOT_CAMERA_AUTOFOCUS actually works. No flags to remember: this ONE patch does the
-# whole job for the IMX519 on a Pi 5. Re-runnable. Switch cameras with 3_camera_ov5647.sh / 3_camera_cm3.sh.
-# (PI-ONLY: it edits the Pi boot config + installs the Pi libcamera fork. On a Jetson use the jetson/ camera
-# patches instead.)
+# =============================================================================
+#   PATCH:   Arducam IMX519 16MP autofocus camera on the Pi 5  (the REFERENCE)
+#   RUN IF:  your Pi camera is the Arducam IMX519 (CSI) -- this build's camera
+#   BOARD:   Raspberry Pi 5 only
+#   DOES:    sets ROBOT_CAMERA_AUTOFOCUS=1 AND installs Arducam's AF tuning (libcamera fork)
+# =============================================================================
+# One patch does the whole IMX519 job -- no flags. Re-runnable. Switch cameras with 3_camera_ov5647.sh /
+# 3_camera_cm3.sh / 3_camera_usb_webcam.sh. (It edits the Pi boot config + installs the Pi libcamera fork;
+# on a Jetson use the jetson/ camera patches instead.)
 #
 # Why the AF install: the Pi's STOCK Bookworm libcamera tuning ships with NO autofocus algorithm, so the
 # IMX519 runs fixed-focus and ROBOT_CAMERA_AUTOFOCUS is a no-op (log: "Could not set AF_MODE"). Arducam's

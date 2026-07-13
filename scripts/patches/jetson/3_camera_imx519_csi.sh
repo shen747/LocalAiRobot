@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# scripts/patches/jetson/3_camera_imx519_csi.sh -- use an Arducam IMX519 (CSI ribbon) on the Jetson via
-# GStreamer/Argus. Sets ROBOT_CAMERA_BACKEND=gstreamer and CLEARS ROBOT_CAMERA_SOURCE (gstreamer reads a
-# non-empty SOURCE as a full pipeline string, so a leftover '0' from the USB path would silently kill the
-# camera). Re-runnable. (JETSON-ONLY.)
+# =============================================================================
+#   PATCH:   Arducam IMX519 CSI-ribbon camera on the Jetson (GStreamer/Argus)
+#   RUN IF:  Jetson build using the IMX519 CSI camera (not a USB webcam)
+#   BOARD:   Jetson only
+#   DOES:    sets ROBOT_CAMERA_BACKEND=gstreamer and CLEARS ROBOT_CAMERA_SOURCE
+# =============================================================================
+# (gstreamer reads a non-empty SOURCE as a full pipeline string, so a leftover '0' from the USB path would
+# silently kill the camera.) Re-runnable. On the Pi 5 use pi5/3_camera_imx519.sh.
 #
 # IMPORTANT: the CSI driver itself is a SEPARATE, JetPack-version-specific Arducam install that this patch
 # does NOT run for you (installing the wrong one for your L4T kernel breaks the camera). The command is
-# printed below -- match it to YOUR exact JetPack, run it, then reboot. On the Pi 5 use pi5/3_camera_imx519.sh.
+# printed below -- match it to YOUR exact JetPack, run it, then reboot.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Jetson." >&2; exit 1; }

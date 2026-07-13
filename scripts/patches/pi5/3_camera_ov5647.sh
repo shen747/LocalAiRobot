@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# scripts/patches/pi5/3_camera_ov5647.sh -- switch to a fixed-focus 5MP OV5647 (or any auto-detected Pi camera).
-# Sets ROBOT_CAMERA_AUTOFOCUS=0 (OV5647 has no autofocus) in config/robot.env. The BOOT OVERLAY change
-# (drop dtoverlay=imx519, restore camera_auto_detect=1) needs sudo + a reboot, so it prints that command
-# rather than doing it here. PI-ONLY. Revert to the reference IMX519 with scripts/patches/pi5/3_camera_imx519.sh.
+# =============================================================================
+#   PATCH:   fixed-focus 5MP OV5647 (or any auto-detected Pi camera) on the Pi 5
+#   RUN IF:  your Pi camera is an OV5647 / other official auto-detected CSI sensor
+#   BOARD:   Raspberry Pi 5 only
+#   DOES:    sets ROBOT_CAMERA_AUTOFOCUS=0 (OV5647 has no autofocus)
+# =============================================================================
+# The BOOT OVERLAY change (drop dtoverlay=imx519, restore camera_auto_detect=1) needs sudo + a reboot, so it
+# prints that command rather than doing it here. Revert to the reference IMX519 with
+# scripts/patches/pi5/3_camera_imx519.sh.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }

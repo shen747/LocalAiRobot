@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# scripts/patches/common/1_esc_hb_qr_1060.sh -- apply the bench-tested config for a HobbyWing QuicRun WP-1060
-# brushed ESC in F/R ("crawler") mode (Mode jumper cap OFF entirely; LIPO cap ON). Rewrites the ESC keys in
-# config/robot.env in place (incl. ROBOT_ESC_CHANNEL=14 for this build). Board-neutral (Pi 5 or Jetson).
-# Re-runnable (idempotent).
+# =============================================================================
+#   PATCH:   HobbyWing QuicRun WP-1060 brushed ESC (F/R "crawler" mode)
+#   RUN IF:  your drive ESC is a QuicRun WP-1060 (this build's ESC)
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    writes the bench-tested ESC throttle map + ROBOT_ESC_CHANNEL=14
+# =============================================================================
+# HARDWARE: Mode jumper cap OFF entirely (= F/R direct reverse); LIPO cap ON.  Re-runnable (idempotent).
 #
 # WHY these values (all bench-tested -- see docs/wiring/pwm-esc-servo-wiring.md):
 #   ROBOT_ESC_NEUTRAL=0.35   this ESC's neutral is OFFSET (~1675us, not 1500us). Holding it arms + stops

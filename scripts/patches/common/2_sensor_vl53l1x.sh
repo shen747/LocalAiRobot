@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# scripts/patches/common/2_sensor_vl53l1x.sh -- switch the obstacle sensors to 3x VL53L1X laser ToF (I2C).
-# Sets ROBOT_SENSOR_TYPE=vl53l1x in config/robot.env (the six HC-SR04 TRIG/ECHO pins are then unused).
-# Set the ROBOT_TOF_XSHUT_* pins to YOUR wiring first (or accept the shipped example pins). Board-neutral
-# (Pi 5 or Jetson). Re-runnable. Revert to ultrasonic with:  ./scripts/patches/common/2_sensor_hcsr04.sh
+# =============================================================================
+#   PATCH:   3x VL53L1X laser Time-of-Flight obstacle sensors (I2C)
+#   RUN IF:  your obstacle sensors are VL53L1X ToF (not HC-SR04P ultrasonic)
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    sets ROBOT_SENSOR_TYPE=vl53l1x (the 6 HC-SR04 TRIG/ECHO pins go unused)
+# =============================================================================
+# Set the ROBOT_TOF_XSHUT_* pins to YOUR wiring first (or accept the shipped example pins). Re-runnable.
+# Revert to ultrasonic with:  ./scripts/patches/common/2_sensor_hcsr04.sh
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"

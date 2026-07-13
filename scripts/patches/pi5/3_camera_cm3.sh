@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# scripts/patches/pi5/3_camera_cm3.sh -- switch to the official Raspberry Pi Camera Module 3 (IMX708).
-# CM3 auto-detects AND has first-class autofocus (no third-party fork needed), so this sets
-# ROBOT_CAMERA_AUTOFOCUS=1 in config/robot.env. The BOOT OVERLAY change (drop dtoverlay=imx519, restore
-# camera_auto_detect=1) needs sudo + a reboot, so it prints that command. PI-ONLY. Revert with
-# scripts/patches/pi5/3_camera_imx519.sh.
+# =============================================================================
+#   PATCH:   official Raspberry Pi Camera Module 3 (IMX708) on the Pi 5
+#   RUN IF:  your Pi camera is a Camera Module 3 / IMX708 (CSI)
+#   BOARD:   Raspberry Pi 5 only
+#   DOES:    sets ROBOT_CAMERA_AUTOFOCUS=1 (CM3 auto-detects + has first-class AF, no fork)
+# =============================================================================
+# The BOOT OVERLAY change (drop dtoverlay=imx519, restore camera_auto_detect=1) needs sudo + a reboot, so it
+# prints that command rather than doing it here. Revert with scripts/patches/pi5/3_camera_imx519.sh.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }

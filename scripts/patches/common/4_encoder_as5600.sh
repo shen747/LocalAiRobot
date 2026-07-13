@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# scripts/patches/common/4_encoder_as5600.sh -- enable the OPTIONAL AS5600 12-bit magnetic rotary encoder.
-# Opt-in. Sets ROBOT_ENCODER_TYPE=as5600 in config/robot.env and installs its pip lib into the brain venv.
+# =============================================================================
+#   PATCH:   AS5600 12-bit magnetic rotary encoder  --  OPTIONAL add-on
+#   RUN IF:  you fitted an AS5600 encoder  (off by default -- skip if you have none)
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    sets ROBOT_ENCODER_TYPE=as5600 and pip-installs its lib into the brain venv
+# =============================================================================
 # Lands only the reader (brain/encoder.py) + config -- steering-feedback / odometry are future work.
-# Board-neutral. Disable by clearing ROBOT_ENCODER_TYPE.
+# Disable by clearing ROBOT_ENCODER_TYPE.
 # NB: the AS5600 default address 0x36 CLASHES with the UPS-HAT fuel gauge on the Pi build -- if you fit both,
 # put the encoder on a separate I2C bus (the AS5600 address is not runtime-remappable).
 set -euo pipefail

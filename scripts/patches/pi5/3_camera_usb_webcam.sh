@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# scripts/patches/pi5/3_camera_usb_webcam.sh -- use a USB webcam instead of the CSI ribbon camera on the Pi 5.
-# Sets ROBOT_CAMERA_BACKEND=v4l2 + ROBOT_CAMERA_SOURCE=<index> in config/robot.env and installs OpenCV into the
-# brain venv (the v4l2 path uses cv2; the CSI/picamera2 default does NOT, so cv2 is not in requirements.txt).
-# A UVC webcam needs no boot overlay, no autofocus fork and no 22->15 ribbon. PI-ONLY. Re-runnable.
-# Revert to the reference CSI camera with scripts/patches/pi5/3_camera_imx519.sh (which reinstalls its overlay).
-#   Usage:  ./scripts/patches/pi5/3_camera_usb_webcam.sh [index]   (index defaults to 0; or pass a /dev/videoN path)
+# =============================================================================
+#   PATCH:   USB webcam instead of the CSI ribbon camera on the Pi 5
+#   RUN IF:  your Pi camera is a USB webcam (not the CSI ribbon camera)
+#   BOARD:   Raspberry Pi 5 only
+#   DOES:    sets ROBOT_CAMERA_BACKEND=v4l2 + ROBOT_CAMERA_SOURCE=<index>, installs OpenCV
+# =============================================================================
+# A UVC webcam needs no boot overlay, no autofocus fork and no 22->15 ribbon (cv2 is not in requirements.txt,
+# so this installs it). Re-runnable. Revert to the CSI camera with scripts/patches/pi5/3_camera_imx519.sh.
+#   Usage:  ./scripts/patches/pi5/3_camera_usb_webcam.sh [index]   (index defaults to 0; or a /dev/videoN path)
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Pi." >&2; exit 1; }

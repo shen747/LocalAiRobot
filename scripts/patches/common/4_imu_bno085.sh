@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# scripts/patches/common/4_imu_bno085.sh -- enable the OPTIONAL BNO085/BNO08x 9-DOF IMU (heading + yaw). Opt-in.
-# Sets ROBOT_IMU_TYPE=bno085 in config/robot.env and installs its pip lib into the brain venv. This lands
-# only the reader (brain/imu.py) + config -- closed-loop turns / heading-hold are future work. Board-neutral.
+# =============================================================================
+#   PATCH:   BNO085 / BNO08x 9-DOF IMU (heading + yaw)  --  OPTIONAL add-on
+#   RUN IF:  you fitted a BNO085 IMU  (off by default -- skip if you have none)
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    sets ROBOT_IMU_TYPE=bno085 and pip-installs its lib into the brain venv
+# =============================================================================
+# Lands only the reader (brain/imu.py) + config -- closed-loop turns / heading-hold are future work.
 # Disable by clearing ROBOT_IMU_TYPE (sed -i 's|^ROBOT_IMU_TYPE=.*|ROBOT_IMU_TYPE=|' config/robot.env).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# scripts/patches/common/1_esc_hb_qr_1080_g2.sh -- apply config for a HobbyWing QuicRun WP-1080-G2 brushed ESC
-# in F/R ("crawler") mode. Same QuicRun family as the WP-1060 (common/1_esc_hb_qr_1060.sh), so it starts from
-# the same tested F/R throttle map. It deliberately does NOT touch ROBOT_ESC_CHANNEL: the 1060 patch hard-codes
-# ch14 for one specific build (that is INF-07, an unfixed quirk) -- a generic 1080-G2 build leaves the ESC on
-# the default ch0. If your ESC signal lead is elsewhere, set it yourself (printed below). Board-neutral.
-# Re-runnable.
+# =============================================================================
+#   PATCH:   HobbyWing QuicRun WP-1080-G2 brushed ESC (F/R "crawler" mode)
+#   RUN IF:  your drive ESC is a QuicRun WP-1080-G2
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    writes the QuicRun-family F/R throttle map (leaves ROBOT_ESC_CHANNEL at default ch0)
+# =============================================================================
+# HARDWARE: set the program card / jumper to F/R direct reverse.  Re-runnable (idempotent).
+# It deliberately does NOT set ROBOT_ESC_CHANNEL: the 1060 patch hard-codes ch14 for one build (INF-07) -- a
+# generic 1080-G2 leaves the ESC on default ch0; set it yourself (printed below) if your lead is elsewhere.
 #
 # BENCH-VERIFY these on YOUR ESC (wheels OFF): the neutral/floor/ceil are family defaults, not per-unit
 # calibrated. If arming stops or throttle maps wrong, re-sweep them (docs/wiring/pwm-esc-servo-wiring.md).

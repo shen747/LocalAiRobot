@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# scripts/patches/common/2_sensor_hcsr04.sh -- switch the obstacle sensors back to the 3x HC-SR04P ultrasonics
-# (the reference/default). Sets ROBOT_SENSOR_TYPE=hcsr04; the TRIG/ECHO pins in config/robot.env take over
-# again (the ROBOT_TOF_* keys are then ignored). Board-neutral. Re-runnable. Opposite of
-# common/2_sensor_vl53l1x.sh.
+# =============================================================================
+#   PATCH:   3x HC-SR04P ultrasonic obstacle sensors  (the reference / default)
+#   RUN IF:  your obstacle sensors are HC-SR04P ultrasonic (not VL53L1X ToF)
+#   BOARD:   common  (Pi 5 or Jetson)
+#   DOES:    sets ROBOT_SENSOR_TYPE=hcsr04 (the TRIG/ECHO pins take over; ROBOT_TOF_* ignored)
+# =============================================================================
+# Re-runnable (idempotent). Opposite of common/2_sensor_vl53l1x.sh.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"
