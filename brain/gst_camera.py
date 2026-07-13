@@ -1,15 +1,18 @@
-# brain/gst_camera.py -- Jetson camera backend (OpenCV, USB/V4L2 or CSI/GStreamer-Argus).
+# brain/gst_camera.py -- OpenCV camera backend (USB/V4L2 or CSI/GStreamer-Argus).
 #
-# Picamera2 is Raspberry-Pi-only, so on the Jetson the camera is captured through OpenCV:
-#   * v4l2      -- a USB webcam (cv2.VideoCapture(index)); the simplest first bring-up.
-#   * gstreamer -- a CSI camera through NVIDIA's Argus (nvarguscamerasrc) via cv2.CAP_GSTREAMER.
+# Two capture paths, both through OpenCV:
+#   * v4l2      -- a USB webcam (cv2.VideoCapture(index)); the simplest bring-up. Board-neutral, so BOTH the
+#                  Jetson AND the Raspberry Pi use this for a USB webcam (Pi: ROBOT_CAMERA_BACKEND=v4l2 --
+#                  the Pi's CSI default stays Picamera2, see brain/boards/pi5.py / picamera2_backend.py).
+#   * gstreamer -- a CSI camera through NVIDIA's Argus (nvarguscamerasrc) via cv2.CAP_GSTREAMER (Jetson-only).
 # Exposes the SAME .capture_jpeg()/.close()/.available surface as the Pi's Picamera2 backend, so the rest
 # of the vision pipeline is unchanged. Errors are caught internally -> available=False (vision degrades to
 # 'no frame'), mirroring picamera2_backend.py.
 #
-# cv2 is imported LAZILY (inside __init__) so this module imports fine off-Jetson; only the jetson board's
-# make_camera(), on an actual Jetson, ever constructs one. The venv must be --system-site-packages so it
-# sees JetPack's system OpenCV + GStreamer plugins.
+# cv2 is imported LAZILY (inside __init__) so this module imports fine when OpenCV is absent (e.g. a Pi CSI
+# build that never installs it); only make_camera() constructing a GstCamera pulls it in. On the Jetson the
+# venv must be --system-site-packages so it sees JetPack's system OpenCV + GStreamer plugins; on the Pi the
+# USB path needs `pip install opencv-python` (or apt python3-opencv).
 
 import logging
 import os

@@ -39,7 +39,7 @@ rectangle "Adjustable buck\n(SZBK07 / XL4016)\n3S -> 7.4V, >=8A" as ubec <<motor
 rectangle "UPS HAT\n2x 18650 backup (or 27W PSU bench)" as ups <<io>>
 rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM; 3.3V logic from Pi,\nV+ rail from the ESC BEC" as pca <<model>>
-rectangle "Pi-powered peripherals\nCamera: Arducam IMX519 (autofocus, CSI)\nFace screen (USB-C / ttyACM0)\nHC-SR04P x3 (3.3V; front/left/right)" as periph <<data>>
+rectangle "Pi-powered peripherals\nCamera: IMX519 (CSI) or a USB webcam\nFace screen (USB-C / ttyACM0)\nHC-SR04P x3 (3.3V; front/left/right)" as periph <<data>>
 rectangle "common GND bus" as gnd <<store>>
 
 lipo --> esc  : 11.1V (high current)

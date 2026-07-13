@@ -327,6 +327,14 @@ Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VI
 `gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var). It's on the **CSI ribbon**,
 not GPIO/I2C, so it doesn't conflict with anything.
 
+> 🔌 **Find the CSI ribbon fiddly? Use a USB webcam instead — supported, zero rebuild.** Any **UVC** webcam
+> works: set `ROBOT_CAMERA_BACKEND=v4l2` and `ROBOT_CAMERA_SOURCE=0` (the index from `v4l2-ctl --list-devices`),
+> plug it into a USB port, done. It needs **OpenCV** in the venv — `pip install opencv-python`, or just run
+> `ROBOT_CAMERA_BACKEND=v4l2 ./scripts/install_stack_pi5.sh` and the installer adds it. This path **skips the
+> 22→15 ribbon, the IMX519 boot overlay, and the autofocus patch entirely** (UVC cams auto-focus/expose
+> themselves). Same vision pipeline; the only trade-offs are a USB port + a little USB power. The rest of this
+> phase is for the **CSI** route.
+
 - **Any libcamera module works — zero code change.** The build uses an **Arducam IMX519 16MP autofocus**:
   it focuses on whatever you show it, so `remember`/`find` shots of a held-up object or a face come out
   **sharp**. **Fixed-focus** modules (Pi Camera v2 **IMX219**, or **OV5647** v1) also work but can't focus

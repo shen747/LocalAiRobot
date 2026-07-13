@@ -41,7 +41,7 @@ rectangle "UPS HAT\n2x 18650 (backup)" as ups <<io>>
 rectangle "Raspberry Pi 5\n(+ Active Cooler)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM @ 0x40" as pca <<model>>
 rectangle "steering servo\nDS3225 HV (ch1)" as servo <<motor>>
-rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: Arducam IMX519 AF  (CSI, 22->15 adapter)\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
+rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: IMX519 AF (CSI, 22->15) or a USB webcam\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
 
 ' ---- power flows top -> bottom ----
 lipo --> esc  : 11.1V (high current)

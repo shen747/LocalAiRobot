@@ -40,7 +40,7 @@ rectangle "UPS HAT\n2x 18650 = backup buffer" as ups <<io>>
 rectangle "Raspberry Pi 5\n+ Active Cooler (mandatory)" as pi <<io>>
 rectangle "PCA9685\nI2C PWM bridge, 0x40" as pca <<model>>
 rectangle "steering servo\nDS3225 HV (on the ESC BEC rail)" as servo <<motor>>
-rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: Arducam IMX519 (16MP autofocus, CSI 22->15)\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
+rectangle "Pi-powered peripherals\n(3.3V / CSI / USB-C from the Pi)\nHC-SR04P x3:  front 23/24 · left 5/6 · right 20/21\nCamera: IMX519 (CSI 22->15) or a USB webcam (v4l2)\nFace screen:  USB-C -> /dev/ttyACM0" as periph <<data>>
 rectangle "common GND bus\n(Pi <-> PCA9685 <-> ESC <-> buck)" as gnd <<store>>
 
 ' ---- power + signals, top -> bottom ----

@@ -58,6 +58,14 @@ class Pi5Board:
         return DigitalOutputDevice(int(pin))
 
     def make_camera(self, size):
+        # Default = the CSI camera via Picamera2 (the reference build). Set ROBOT_CAMERA_BACKEND=v4l2 to use a
+        # USB webcam instead -- GstCamera's v4l2 branch is plain OpenCV (cv2.VideoCapture), board-neutral, and
+        # reads the webcam index from ROBOT_CAMERA_SOURCE. Needs opencv (cv2) in the venv; it imports lazily
+        # and degrades to available=False if missing, so CSI builds are unaffected. Same surface either way.
+        backend = os.environ.get("ROBOT_CAMERA_BACKEND", "").strip().lower()
+        if backend == "v4l2":
+            from gst_camera import GstCamera
+            return GstCamera(size, "v4l2")
         from picamera2_backend import PiCamera2Camera
         return PiCamera2Camera(size)
 
