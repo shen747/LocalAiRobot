@@ -328,12 +328,14 @@ Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VI
 not GPIO/I2C, so it doesn't conflict with anything.
 
 > 🔌 **Find the CSI ribbon fiddly? Use a USB webcam instead — supported, zero rebuild.** Any **UVC** webcam
-> works: set `ROBOT_CAMERA_BACKEND=v4l2` and `ROBOT_CAMERA_SOURCE=0` (the index from `v4l2-ctl --list-devices`),
-> plug it into a USB port, done. It needs **OpenCV** in the venv — `pip install opencv-python`, or just run
-> `ROBOT_CAMERA_BACKEND=v4l2 ./scripts/install_stack_pi5.sh` and the installer adds it. This path **skips the
-> 22→15 ribbon, the IMX519 boot overlay, and the autofocus patch entirely** (UVC cams auto-focus/expose
-> themselves). Same vision pipeline; the only trade-offs are a USB port + a little USB power. The rest of this
-> phase is for the **CSI** route.
+> works, and one patch does the whole switch — it sets the keys **and** installs OpenCV (the v4l2 path needs
+> `cv2`; the CSI default doesn't): **`./scripts/patches/pi5/3_camera_usb_webcam.sh`** (pass an index if it
+> isn't `0`). That sets `ROBOT_CAMERA_BACKEND=v4l2` + `ROBOT_CAMERA_SOURCE=0`; find the index with
+> `v4l2-ctl --list-devices`. This path **skips the 22→15 ribbon, the IMX519 overlay, and the autofocus fork
+> entirely** (UVC cams auto-focus/expose themselves). If you're switching **from** the reference IMX519 build,
+> also free `/dev/video0` from the CSI driver so the webcam stays index `0`:
+> `ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot`. Same vision pipeline; trade-offs
+> are a USB port + a little USB power. The rest of this phase is for the **CSI** route.
 
 - **Any libcamera module works — zero code change.** The build uses an **Arducam IMX519 16MP autofocus**:
   it focuses on whatever you show it, so `remember`/`find` shots of a held-up object or a face come out

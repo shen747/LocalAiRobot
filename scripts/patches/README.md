@@ -20,7 +20,7 @@ type, one camera). Run them **after** `install_stack_pi5.sh` / `install_stack_je
 ```
 scripts/patches/
   common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600
-  pi5/      3_camera_imx519 / _ov5647 / _cm3
+  pi5/      3_camera_imx519 / _ov5647 / _cm3 / _usb_webcam
   jetson/   3_camera_usb_webcam (default) / 3_camera_imx519_csi
 ```
 
@@ -42,14 +42,18 @@ scripts/patches/
 ./scripts/patches/pi5/3_camera_imx519.sh       # Arducam IMX519 16MP autofocus (the reference) -- ALSO installs the AF tuning
 ./scripts/patches/pi5/3_camera_ov5647.sh       # fixed-focus 5MP OV5647 (auto-detected)
 ./scripts/patches/pi5/3_camera_cm3.sh          # official Camera Module 3 / IMX708 (first-class autofocus)
+./scripts/patches/pi5/3_camera_usb_webcam.sh   # USB webcam (v4l2) instead of the CSI cam -- installs OpenCV; no ribbon/overlay/AF fork
 
 # Jetson (jetson/):
 ./scripts/patches/jetson/3_camera_usb_webcam.sh   # USB webcam (v4l2) -- the Jetson DEFAULT / easiest path
 ./scripts/patches/jetson/3_camera_imx519_csi.sh   # Arducam IMX519 (CSI/gstreamer) -- prints the separate Arducam Jetson driver step
 ```
-The Pi camera patches set `ROBOT_CAMERA_AUTOFOCUS` and print the boot-overlay reinstall command (that step
-needs `sudo` + a reboot). `pi5/3_camera_imx519.sh` additionally installs Arducam's autofocus tuning (their
-libcamera fork) — without it the IMX519 runs fixed-focus (`Could not set AF_MODE`). The Jetson camera is
+The Pi's three CSI patches set `ROBOT_CAMERA_AUTOFOCUS` and print the boot-overlay reinstall command (that
+step needs `sudo` + a reboot). `pi5/3_camera_imx519.sh` additionally installs Arducam's autofocus tuning
+(their libcamera fork) — without it the IMX519 runs fixed-focus (`Could not set AF_MODE`).
+`pi5/3_camera_usb_webcam.sh` is the exception: it leaves the CSI/picamera2 world entirely, sets
+`ROBOT_CAMERA_BACKEND=v4l2` and installs OpenCV (`cv2`, which the CSI path doesn't need) — no overlay, no AF
+fork; it just prints how to free `/dev/video0` if you're coming from a CSI build. The Jetson camera is
 **not** a boot overlay — a USB webcam just works (`v4l2`), and the IMX519 CSI needs Arducam's separate,
 JetPack-version-specific driver (the `jetson/3_camera_imx519_csi.sh` patch prints it).
 

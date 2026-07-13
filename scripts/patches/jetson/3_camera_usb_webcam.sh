@@ -2,8 +2,9 @@
 # scripts/patches/jetson/3_camera_usb_webcam.sh -- use a USB webcam on the Jetson (the DEFAULT / easiest
 # camera path). Sets ROBOT_CAMERA_BACKEND=v4l2 + ROBOT_CAMERA_SOURCE=0 in config/robot.env. install_stack_jetson.sh
 # auto-applies this when it spots a webcam at install time; run this patch by hand if you plugged the camera
-# in later, or it landed on a different index. Re-runnable. (JETSON-ONLY: the Pi 5 always uses picamera2 and
-# ignores ROBOT_CAMERA_BACKEND -- on a Pi use the pi5/ camera patches.)
+# in later, or it landed on a different index. Re-runnable. (This is the JETSON copy; on a Pi 5 the CSI
+# picamera2 backend is the default and a USB webcam is opt-in -- use scripts/patches/pi5/3_camera_usb_webcam.sh,
+# which also installs OpenCV for the v4l2 path.)
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the Jetson." >&2; exit 1; }

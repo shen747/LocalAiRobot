@@ -171,15 +171,8 @@ if [ ! -d .venv ] || ! ./.venv/bin/python -c "import picamera2" >/dev/null 2>&1;
 fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements.txt
-
-# OpenCV for the USB-webcam path (opt-in). The CSI camera uses picamera2 (from apt) and needs no cv2, so it
-# is NOT in requirements.txt. Only install it when the config selects a USB webcam (ROBOT_CAMERA_BACKEND=v4l2),
-# so a normal CSI build stays lean. GstCamera imports cv2 lazily, so a CSI build without it is unaffected.
-if [ "${ROBOT_CAMERA_BACKEND:-}" = "v4l2" ]; then
-  echo "   installing OpenCV for the USB webcam (ROBOT_CAMERA_BACKEND=v4l2)..."
-  ./.venv/bin/pip install opencv-python || \
-    echo "   (opencv-python pip build failed -- try 'sudo apt install -y python3-opencv' instead; it is visible via --system-site-packages)"
-fi
+# USB webcam instead of the CSI camera? that path needs OpenCV (the CSI/picamera2 default does not), so it is
+# NOT in requirements.txt -- run scripts/patches/pi5/3_camera_usb_webcam.sh, which sets the keys + installs cv2.
 
 # openWakeWord wake-word models. Behaviour differs by version: 0.5+ DOWNLOAD the feature models via
 # utils.download_models(); 0.4.x (what installs on Python 3.13 / aarch64) BUNDLES them in the wheel.
