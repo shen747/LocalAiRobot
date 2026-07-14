@@ -730,7 +730,9 @@ def main():
                 jpeg = cam.capture_jpeg()
                 fc.set_expression("thinking")
                 _start_thinking()
-                desc = vision.describe(cfg, jpeg)
+                # Pass the operator's actual words so the VLM focuses on what they asked (e.g. the CONTENT of
+                # a photo they're holding up) instead of a generic one-sentence scene summary.
+                desc = vision.describe(cfg, jpeg, query=text)
                 snd.stop_thinking()
                 mem.record_scene(desc.get("description", ""), desc.get("objects", []), driver.distances())
                 reply = desc.get("description") or "I'm not sure what I'm looking at."

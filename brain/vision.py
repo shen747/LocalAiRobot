@@ -153,18 +153,31 @@ def look(cfg, target, jpeg_bytes):
                                 "notes": f"vision error: {e}"}, target)
 
 
-def describe(cfg, jpeg_bytes):
-    """Describe the scene -> {description, objects:[...]}. Never raises."""
+def describe(cfg, jpeg_bytes, query=None):
+    """Describe the scene -> {description, objects:[...]}. Never raises. If `query` is given (the operator's
+    actual question, e.g. 'what's in the framed photo?'), the prompt FOCUSES the answer on what they asked --
+    including the CONTENT of a specific thing (a photo/screen/page/label), not just that it exists -- instead
+    of the generic one-sentence scene summary. No query -> the old scene summary (REMEMBER / scene logging)."""
     if not jpeg_bytes:
         fake = _parse_fake()
         if fake:
             return {"description": f"(dry-run) I can see a {fake['object']}.",
                     "objects": [fake["object"]]}
         return {"description": "(dry-run) no camera frame.", "objects": []}
-    prompt = (
-        "You are the eyes of a small RC car. Briefly describe the scene in one sentence and list "
-        "the notable objects / furniture you can see (e.g. sofa, table, doorway, wall). JSON only."
-    )
+    q = (query or "").strip()
+    if q:
+        prompt = (
+            "You are the eyes of a small RC car. The operator asked: \"" + q + "\". Answer by describing "
+            "what you ACTUALLY SEE in the image, focused on what they asked. If they ask about a specific "
+            "thing -- a photo, a screen, a page, a label, a sign -- describe the CONTENT of that thing (what "
+            "is depicted or written on it), not merely that it is present. Use 1-3 sentences, then list the "
+            "notable objects you can see. JSON only. If you truly cannot make out the detail, say so briefly."
+        )
+    else:
+        prompt = (
+            "You are the eyes of a small RC car. Briefly describe the scene in one sentence and list "
+            "the notable objects / furniture you can see (e.g. sofa, table, doorway, wall). JSON only."
+        )
     try:
         obj = _ollama_image(cfg, prompt, jpeg_bytes, DESCRIBE_SCHEMA)
         desc = str(obj.get("description") or "")
