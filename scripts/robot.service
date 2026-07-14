@@ -16,6 +16,12 @@ Wants=network-online.target ollama.service
 Type=simple
 User=YOUR_USER
 WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
+# Re-apply the USB-speaker ALSA default (~/.asoundrc) + volume BEFORE the brain starts. USB-audio volume
+# resets to 0 across every reboot, and this service has no login session that would have set ~/.asoundrc --
+# so without this the startup "systems online" greeting (and all earcons) are silent under systemd. This is
+# the same setup_audio.sh --audio-only that run_me.sh runs on every foreground launch. Best-effort: the
+# trailing `|| true` keeps a missing/unready speaker from blocking the brain from starting.
+ExecStartPre=/bin/bash -c '/home/YOUR_USER/LocalAiRobot/scripts/setup_audio.sh --audio-only || true'
 # Load config/robot.env through bash, exactly like run_me.sh / a manual shell run. Do NOT switch
 # this to systemd's EnvironmentFile= -- that parser keeps trailing "# comments" as part of each
 # value, silently corrupting most settings in robot.env (numbers fall back to code defaults).
