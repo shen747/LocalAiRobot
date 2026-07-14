@@ -234,8 +234,9 @@ def explore_step(cfg, jpeg_bytes, goal="", memory_summary="", distances=None):
         "to hold position) and steer (LEFT/CENTER/RIGHT) toward something interesting or an OPEN path -- do "
         "not steer into a close obstacle. Put your navigation reasoning in reason (NOT spoken). In speak, put "
         "a VERY short remark (a few words) ONLY about something newly notable -- leave speak EMPTY if the view "
-        "is the same as before. Set done=true once you have seen the space, the view keeps repeating, or there "
-        "is nowhere useful to go."
+        "is the same as before. Keep exploring: strongly PREFER to keep MOVING toward open space you have not "
+        "visited yet. Set done=true ONLY when you are genuinely boxed in (no open path in any direction) or the "
+        "SAME view has repeated for several steps in a row -- NOT merely because you have glanced around once."
     )
     try:
         step = _normalize_step(_ollama_image(cfg, prompt, jpeg_bytes, EXPLORE_STEP_SCHEMA))

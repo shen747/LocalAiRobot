@@ -10,9 +10,10 @@
 # WHY these values (all bench-tested -- see docs/wiring/pwm-esc-servo-wiring.md):
 #   ROBOT_ESC_NEUTRAL=0.35   this ESC's neutral is OFFSET (~1675us, not 1500us). Holding it arms + stops
 #                            (cell tones + a long "ready" beep). It DRIFTS -- re-sweep if arming stops.
-#   ROBOT_ESC_FWD_FLOOR=0.45 forward crawls at 0.45 (1725us), just above neutral; speed maps 0.45..1.00.
+#   ROBOT_ESC_FWD_FLOOR=0.60 forward has a LARGE dead-band -- it doesn't pull until ~1800us (0.60); below
+#                            that it won't move at all. speed 1..100 maps 0.60..1.00. Tune up if speed 1 stalls.
 #   ROBOT_ESC_REV_FLOOR=0.20 reverse is a throttle just BELOW neutral (0.20=1600us crawl), NOT a negative;
-#   ROBOT_ESC_REV_CEIL=0.10  it gets faster the LOWER you go, so ceil (fast) is below floor (crawl).
+#   ROBOT_ESC_REV_CEIL=-0.20 it gets faster the LOWER you go (deeper below neutral); -0.20=1400us.
 #   ROBOT_ESC_REVERSE_DOUBLETAP=0   F/R jumper = direct reverse (no F/B/R "double-click").
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -33,10 +34,10 @@ set_kv() {   # set_kv KEY VALUE -> replace the whole line (adds a [hb_qr_1060] p
 
 echo ">> Patching config/robot.env for a HobbyWing QuicRun WP-1060 (F/R direct reverse):"
 set_kv ROBOT_ESC_NEUTRAL           0.35
-set_kv ROBOT_ESC_FWD_FLOOR         0.45
+set_kv ROBOT_ESC_FWD_FLOOR         0.60
 set_kv ROBOT_ESC_FWD_CEIL          1.00
 set_kv ROBOT_ESC_REV_FLOOR         0.20
-set_kv ROBOT_ESC_REV_CEIL          0.10
+set_kv ROBOT_ESC_REV_CEIL          -0.20
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0
 set_kv ROBOT_ESC_CHANNEL           14

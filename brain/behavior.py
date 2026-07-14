@@ -141,7 +141,7 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         face.set_expression("capturing")
         frame = cam.capture_jpeg()
         snd.start_thinking(lead_ms=think_lead, repeat_s=think_repeat)
-        step = vision.explore_step(cfg, frame, goal="look around and learn what is in this space",
+        step = vision.explore_step(cfg, frame, goal="roam and cover as much of the room as you can -- keep moving toward open, unexplored areas, don't stop after one look",
                                    memory_summary=memory.context_string(), distances=driver.distances())
         snd.stop_thinking()
         face.set_expression("exploring")
