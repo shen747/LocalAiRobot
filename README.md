@@ -186,7 +186,7 @@ The LLM returns one JSON object; the Pi validates and clamps it before acting:
 | `note` | relationship / description for `REMEMBER` (e.g. `"my wife"`) | optional |
 | `drive` | `FORWARD` / `REVERSE` / `STOP` | used by `DRIVE`; unknown → `STOP` (fail-safe) |
 | `steer` | `LEFT` / `CENTER` / `RIGHT` | unknown → `CENTER`; to turn, the car must be moving |
-| `speed` | `0`–`100` | mapped into the ESC's usable range (`ROBOT_ESC_FWD_FLOOR/CEIL`; reverse `ROBOT_ESC_REV_FLOOR/CEIL`) |
+| `speed` | `0`–`100` | mapped into the ESC's usable range (`ROBOT_MIN_FORWARD_SPEED`/`ROBOT_MAX_FORWARD_SPEED`; reverse `ROBOT_MIN_REVERSE_SPEED`/`ROBOT_MAX_REVERSE_SPEED`) |
 | `duration_ms` | `300`–`5000` | run time before the failsafe neutralizes the move |
 | `reply` | short text | spoken via Piper (stdin, no shell → no injection) |
 

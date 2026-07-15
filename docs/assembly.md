@@ -482,9 +482,10 @@ device failed and runs degraded** (motors off) instead of crashing — read that
 3. **Steering:** say *"center" / "left" / "right"*; tune `ROBOT_STEER_CENTER/LEFT/RIGHT` so the wheels
    center true and turn fully without the servo buzzing (binding = back the angle off).
 4. **Throttle:** say *"go forward"* slowly, then *"go back"*. Forward maps onto the ESC's usable range via
-   `ROBOT_ESC_FWD_FLOOR/CEIL`; reverse is direct (`ROBOT_ESC_REVERSE_DOUBLETAP=0`) and bounded by
-   `ROBOT_ESC_REV_FLOOR/CEIL`. Wheels spin **backward** on "go forward"? Swap the two motor wires (or set
-   `ROBOT_THROTTLE_INVERT=1`).
+   `ROBOT_MIN_FORWARD_SPEED`/`ROBOT_MAX_FORWARD_SPEED`; reverse is direct (`ROBOT_ESC_REVERSE_DOUBLETAP=0`)
+   and bounded by `ROBOT_MIN_REVERSE_SPEED`/`ROBOT_MAX_REVERSE_SPEED` (both set by your ESC patch, not by
+   hand — see [BENCH_SCRIPTS.md](../BENCH_SCRIPTS.md)). Wheels spin **backward** on "go forward"? Swap the two
+   motor wires (or set `ROBOT_THROTTLE_INVERT=1`).
 5. **Obstacle gate:** *"go forward"* + a hand ~20 cm ahead of the forward sensor → motor cuts, robot says
    *"Obstacle ahead. Stopping."*
 6. **Camera/explore (optional):** `rpicam-hello` ok, then *"look around"* — it should describe what it

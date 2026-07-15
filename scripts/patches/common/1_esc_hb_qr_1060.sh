@@ -7,12 +7,16 @@
 # =============================================================================
 # HARDWARE: Mode jumper cap OFF entirely (= F/R direct reverse); LIPO cap ON.  Re-runnable (idempotent).
 #
-# WHY these values (all bench-tested -- see docs/wiring/pwm-esc-servo-wiring.md):
-#   ROBOT_ESC_NEUTRAL=0.35   this ESC's neutral is OFFSET (~1675us, not 1500us). Holding it arms + stops
-#                            (cell tones + a long "ready" beep). It DRIFTS -- re-sweep if arming stops.
-#   ROBOT_ESC_FWD_FLOOR=0.45 forward crawls at 0.45 (1725us), just above neutral; speed maps 0.45..1.00.
-#   ROBOT_ESC_REV_FLOOR=0.20 reverse is a throttle just BELOW neutral (0.20=1600us crawl), NOT a negative;
-#   ROBOT_ESC_REV_CEIL=0.10  it gets faster the LOWER you go, so ceil (fast) is below floor (crawl).
+# WHY these values (all bench-tested -- see BENCH_SCRIPTS.md / docs/wiring/pwm-esc-servo-wiring.md):
+#   ROBOT_ESC_NEUTRAL=0.25       this ESC's neutral is OFFSET (~1625us, not 1500us). Holding it arms + STOPS
+#                                (cell tones + a long "ready" beep). It DRIFTS -- re-sweep if arming stops.
+#   ROBOT_MIN_FORWARD_SPEED=0.55 forward has a dead-band -- it won't PULL until ~1775us (0.55); below that =
+#                                nothing (bench: 0.55 crawls, 0.45 does nothing). speed 1..100 maps 0.55..0.95.
+#   ROBOT_MAX_FORWARD_SPEED=0.95 capped top speed (~1975us), indoor-friendly.
+#   ROBOT_MIN_REVERSE_SPEED=0.00 slowest reverse. Reverse is a throttle BELOW the 0.25 neutral: 0.00 (1500us)
+#                                just crawls back. A value AT/above neutral does NOT reverse. This is what a
+#                                crawl "go back" writes -- raise toward neutral for slower, but too close = dead-band.
+#   ROBOT_MAX_REVERSE_SPEED=-0.20 fastest reverse (deeper below neutral = faster); -0.20 = 1400us. Bench-sweep to taste.
 #   ROBOT_ESC_REVERSE_DOUBLETAP=0   F/R jumper = direct reverse (no F/B/R "double-click").
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -32,11 +36,11 @@ set_kv() {   # set_kv KEY VALUE -> replace the whole line (adds a [hb_qr_1060] p
 }
 
 echo ">> Patching config/robot.env for a HobbyWing QuicRun WP-1060 (F/R direct reverse):"
-set_kv ROBOT_ESC_NEUTRAL           0.35
-set_kv ROBOT_ESC_FWD_FLOOR         0.45
-set_kv ROBOT_ESC_FWD_CEIL          1.00
-set_kv ROBOT_ESC_REV_FLOOR         0.20
-set_kv ROBOT_ESC_REV_CEIL          0.10
+set_kv ROBOT_ESC_NEUTRAL           0.25
+set_kv ROBOT_MIN_FORWARD_SPEED     0.55
+set_kv ROBOT_MAX_FORWARD_SPEED     0.95
+set_kv ROBOT_MIN_REVERSE_SPEED     0.00
+set_kv ROBOT_MAX_REVERSE_SPEED     -0.20
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0
 set_kv ROBOT_ESC_CHANNEL           14

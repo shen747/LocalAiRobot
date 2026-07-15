@@ -126,20 +126,23 @@ class RobotDriver:
         self.steer_left = _envf("ROBOT_STEER_LEFT", 55.0)
         self.steer_right = _envf("ROBOT_STEER_RIGHT", 125.0)
 
-        # --- Throttle map (deadband-compensated). This ESC (HobbyWing QuicRun WP-1060, F/R
-        #     "crawler" jumper) has a LARGE forward dead-band: it doesn't start pulling until
-        #     ~1800us. The old `max_throttle 0.35` capped output at 1675us -- INSIDE that dead
-        #     zone -- so the crawler never moved. We now map speed 1..100 onto the ESC's *usable*
-        #     band (skipping the dead zone), keeping 1500us = neutral so the safe-stop path is
-        #     unchanged. Floors/ceils are throttle fractions (0..1); 0.60 ~= 1800us, 1.00 = 2000us.
-        #     Tune ROBOT_ESC_FWD_FLOOR up until speed 1 *just* moves; lower the CEIL to cap top speed.
-        self.fwd_floor = _envf("ROBOT_ESC_FWD_FLOOR", 0.60)   # FORWARD just engages (~1800us)
-        self.fwd_ceil = _envf("ROBOT_ESC_FWD_CEIL", 1.00)     # FORWARD full speed (lower = slower)
-        # REVERSE is a SIGNED absolute throttle BELOW neutral (like forward is above it), NOT a magnitude:
-        # rev_floor = the slowest reverse (just below neutral, e.g. 0.20/1600us when neutral is 0.35),
-        # rev_ceil = fastest reverse (deeper below neutral -- LOWER than floor, e.g. 0.10 or negative).
-        self.rev_floor = _envf("ROBOT_ESC_REV_FLOOR", 0.0)    # REVERSE crawl -- just below neutral
-        self.rev_ceil = _envf("ROBOT_ESC_REV_CEIL", -0.60)    # REVERSE full -- deeper below neutral
+        # --- Throttle map (dead-band-compensated). A crawler ESC has a LARGE forward dead-band -- it doesn't
+        #     start pulling until well above 1500us -- so we map speed 1..100 onto the ESC's *usable* band
+        #     (skipping the dead zone), keeping the safe-stop path unchanged. These four are ABSOLUTE SIGNED
+        #     throttles (1500us=0.0, 2000us=+1.0, 1000us=-1.0), NOT magnitudes: FORWARD sits ABOVE neutral,
+        #     REVERSE BELOW it. MIN_*_SPEED = the slowest end (just crawls), MAX_*_SPEED = the fastest.
+        #     Calibrate per ESC on the bench -> the ESC patch (scripts/patches/common/1_esc_*.sh) writes them.
+        self.fwd_floor = _envf("ROBOT_MIN_FORWARD_SPEED", 0.60)   # FORWARD slowest crawl (just engages)
+        self.fwd_ceil = _envf("ROBOT_MAX_FORWARD_SPEED", 1.00)    # FORWARD fastest (lower = slower top speed)
+        # REVERSE is a SIGNED absolute throttle BELOW neutral (like forward is above it), NOT a magnitude.
+        # MIN_REVERSE_SPEED = slowest reverse (just below neutral); MAX_REVERSE_SPEED = fastest (deeper below,
+        # so numerically LOWER / more-negative than the min). E.g. neutral 0.25: min 0.00 (1500us crawl),
+        # max -0.20 (1400us, faster). speed 1..100 maps min..max.
+        self.rev_floor = _envf("ROBOT_MIN_REVERSE_SPEED", 0.0)    # REVERSE slowest crawl (just below neutral)
+        self.rev_ceil = _envf("ROBOT_MAX_REVERSE_SPEED", -0.60)   # REVERSE fastest (deeper below neutral)
+        # Optional throttle QUANTIZATION: round the mapped throttle to multiples of this step (measured from
+        # the floor) so speed changes in clean increments instead of continuously. 0 / empty = OFF (smooth).
+        self.speed_step = _envf("ROBOT_SPEED_INCREMENT_STEP", 0.0)
         # Legacy single cap: if ROBOT_MAX_THROTTLE is still set < a floor it would re-create the
         # "never moves" bug, so it's NO LONGER applied to the map (kept readable for old configs).
         self._legacy_max = _envf("ROBOT_MAX_THROTTLE", 0.0)
@@ -568,9 +571,9 @@ class RobotDriver:
     def _speed_to_throttle(self, drive, speed):
         """Map a 0..100 speed onto the ESC's usable band for `drive`, returning the ACTUAL SIGNED throttle
         to write (NOT a magnitude): FORWARD sits ABOVE the (possibly offset) neutral, REVERSE BELOW it.
-        FLOOR = the slowest end (just engages), CEIL = fastest. On an offset-neutral ESC the reverse
-        floor/ceil are the throttles just-below-neutral (slow) down to deep reverse (fast) -- e.g. neutral
-        0.35, rev floor 0.20 (1600us crawl), rev ceil 0.10 (faster). speed 0 -> neutral (no motion)."""
+        MIN_*_SPEED (floor) = the slowest end (just engages), MAX_*_SPEED (ceil) = fastest. Reverse's max is
+        deeper below neutral than its min -- e.g. neutral 0.25, MIN_REVERSE 0.00 (1500us crawl), MAX_REVERSE
+        -0.20 (1400us, faster). speed 0 -> neutral (no motion). ROBOT_SPEED_INCREMENT_STEP quantizes it."""
         if speed <= 0:
             return self.neutral
         s = max(0.0, min(1.0, speed / 100.0))
@@ -578,7 +581,13 @@ class RobotDriver:
                        else (self.fwd_floor, self.fwd_ceil))
         floor = max(-1.0, min(1.0, floor))
         ceil = max(-1.0, min(1.0, ceil))
-        return floor + s * (ceil - floor)
+        raw = floor + s * (ceil - floor)
+        step = self.speed_step
+        if step and step > 0:
+            raw = floor + round((raw - floor) / step) * step   # quantize to ROBOT_SPEED_INCREMENT_STEP from floor
+            lo, hi = (floor, ceil) if floor <= ceil else (ceil, floor)
+            raw = max(lo, min(hi, raw))                         # keep it inside the band after rounding
+        return raw
 
     def _esc_pulse_us(self, value):
         lo, hi = self._esc_pulse

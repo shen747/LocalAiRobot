@@ -27,7 +27,6 @@ scripts/patches/
 ## 1 — ESC (drive) · `common/`
 ```bash
 ./scripts/patches/common/1_esc_hb_qr_1060.sh       # HobbyWing QuicRun WP-1060  (F/R: Mode cap OFF)  [sets ROBOT_ESC_CHANNEL=14 for one build]
-./scripts/patches/common/1_esc_hb_qr_1080_g2.sh    # HobbyWing QuicRun WP-1080-G2 (F/R; leaves ROBOT_ESC_CHANNEL at default ch0)
 ./scripts/patches/common/1_esc_uliik_60a.sh        # ULIIK 60A crawler ESC (F/R) -- SAFE STARTERS ONLY; bench-calibrate before trusting
 ```
 
@@ -70,7 +69,7 @@ These land the reader + config only (see `brain/imu.py` / `brain/encoder.py`); d
 
 **Idempotent:** each key is rewritten in place (ESC patches add a `# [<esc>]` provenance tag). **Steering
 servo + drive motor** have no patch — they are continuous bench tuning, not a discrete config: set
-`ROBOT_STEER_CENTER/LEFT/RIGHT` (servo) and `ROBOT_DRIVE_CRAWL_SPEED` / `ROBOT_ESC_FWD_FLOOR` (motor) by hand
+`ROBOT_STEER_CENTER/LEFT/RIGHT` (servo) and `ROBOT_DRIVE_CRAWL_SPEED` / `ROBOT_MIN_FORWARD_SPEED` (motor) by hand
 (see [config/README.md](../../config/README.md)). **Adding a new board?** add a `scripts/patches/<board>/`
 folder and put its board-specific patches there (camera etc.); the `common/` ones apply unchanged. **Adding
 hardware?** copy the closest script, rename it (`<order>_<axis>_<model>.sh`), and change the `set_kv` values.

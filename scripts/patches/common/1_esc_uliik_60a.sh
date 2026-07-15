@@ -14,11 +14,11 @@
 #   ROBOT_ESC_NEUTRAL=0.40    OFFSET neutral (1700us): holding it arms + stops (cell tones -> a long "ready" beep).
 #                             (0.25/1625us is BELOW it -- the ESC won't arm or stop there; it armed when the
 #                             sweep climbed up to 0.40.)
-#   ROBOT_ESC_FWD_FLOOR=0.55  forward has a dead-band -- it won't pull until ~1775us (0.55); below that = nothing.
-#   ROBOT_ESC_FWD_CEIL=0.90   capped top speed (1950us), indoor-friendly. speed 1..100 maps 0.55..0.90.
-#   ROBOT_ESC_REV_FLOOR=0.20  reverse crawl floor (1600us). The bare creep (~0.35/1675us) is too close to
-#                             neutral to move under load. speed 1..100 maps 0.20..-0.20.
-#   ROBOT_ESC_REV_CEIL=-0.20  reverse top speed (1400us); deeper below neutral = faster.
+#   ROBOT_MIN_FORWARD_SPEED=0.55  forward dead-band -- it won't pull until ~1775us (0.55); below that = nothing.
+#   ROBOT_MAX_FORWARD_SPEED=0.90  capped top speed (1950us), indoor-friendly. speed 1..100 maps 0.55..0.90.
+#   ROBOT_MIN_REVERSE_SPEED=0.20  slowest reverse (1600us), just below the 0.40 neutral. The bare creep is too
+#                                 close to neutral to move under load. speed 1..100 maps 0.20..-0.20.
+#   ROBOT_MAX_REVERSE_SPEED=-0.20 fastest reverse (1400us); deeper below neutral = faster.
 #   NOTE (ground vs bench): the default ROBOT_DRIVE_CRAWL_SPEED=5 puts reverse just below neutral -- fine
 #         wheels-up, too gentle to push the LOADED car back. Raise ROBOT_DRIVE_CRAWL_SPEED to ~25.
 set -euo pipefail
@@ -39,10 +39,10 @@ set_kv() {   # replace the whole line (adds a [uliik_60a] provenance tag), or ap
 
 echo ">> Patching config/robot.env for a ULIIK 60A crawler ESC (F/R direct reverse):"
 set_kv ROBOT_ESC_NEUTRAL           0.40
-set_kv ROBOT_ESC_FWD_FLOOR         0.55
-set_kv ROBOT_ESC_FWD_CEIL          0.90
-set_kv ROBOT_ESC_REV_FLOOR         0.20
-set_kv ROBOT_ESC_REV_CEIL          -0.20
+set_kv ROBOT_MIN_FORWARD_SPEED     0.55
+set_kv ROBOT_MAX_FORWARD_SPEED     0.90
+set_kv ROBOT_MIN_REVERSE_SPEED     0.20
+set_kv ROBOT_MAX_REVERSE_SPEED     -0.20
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0
 

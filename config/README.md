@@ -156,16 +156,20 @@ wake word (drives/answers, **speaks the reply, returns it as JSON**). **On by de
 
 ## Throttle (ESC)
 
-Deadband-compensated map — values are throttle fractions of the 1000–2000 µs range (0.00 = 1500 µs neutral,
-0.60 ≈ 1800 µs, 1.00 = 2000 µs). Many brushed ESCs ignore small offsets from neutral, so `speed` 0–100 is
-mapped onto floor→ceil (not 0→cap), skipping the dead zone.
+Deadband-compensated map — values are SIGNED throttle fractions of the 1000–2000 µs range (0.00 = 1500 µs
+neutral, +0.60 ≈ 1800 µs, +1.00 = 2000 µs, −0.20 = 1400 µs). Many brushed ESCs ignore small offsets from
+neutral, so `speed` 0–100 is mapped onto MIN→MAX (not 0→cap), skipping the dead zone. **These four are
+per-ESC-model and live in your ESC patch** (`scripts/patches/common/1_esc_hb_qr_1060.sh` or
+`1_esc_uliik_60a.sh` — the only two supported ESCs); `config/robot.env` ships them **blank**. Bench-sweep
+with [`BENCH_SCRIPTS.md`](../BENCH_SCRIPTS.md), then set them in the patch.
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_ESC_FWD_FLOOR` | `0.60` | Throttle where FORWARD first engages (~1800 µs); raise until "speed 1" just creeps. |
-| `ROBOT_ESC_FWD_CEIL` | `1.00` | Max FORWARD throttle — lower = slower top speed. |
-| `ROBOT_ESC_REV_FLOOR` | `0.60` | Throttle where REVERSE first engages. |
-| `ROBOT_ESC_REV_CEIL` | `0.80` | Max REVERSE throttle — some ESCs only reverse in a band, so cap it here. |
+| `ROBOT_MIN_FORWARD_SPEED` | *(ESC patch)* | Slowest FORWARD crawl — throttle where it JUST engages (WP-1060 = 0.55, ~1775 µs). |
+| `ROBOT_MAX_FORWARD_SPEED` | *(ESC patch)* | Fastest FORWARD — lower = slower top speed (WP-1060 = 0.95). |
+| `ROBOT_MIN_REVERSE_SPEED` | *(ESC patch)* | Slowest REVERSE crawl — a SIGNED throttle just below neutral (WP-1060 = 0.00, 1500 µs). |
+| `ROBOT_MAX_REVERSE_SPEED` | *(ESC patch)* | Fastest REVERSE — deeper below neutral, more negative = faster (WP-1060 = −0.20, 1400 µs). |
+| `ROBOT_SPEED_INCREMENT_STEP` | `0.05` | Quantize the mapped throttle to steps of this size (measured from MIN) so speed changes in clean increments. `0`/empty = smooth/continuous. |
 | `ROBOT_ESC_REVERSE_DOUBLETAP` | `0` | `0` = direct reverse (crawler / F-R ESC). `1` = F/B/R "double-click" — the driver auto-taps reverse→neutral→reverse. |
 | `ROBOT_ESC_REV_BRAKE_MS` | `400` | (double-tap only) length of the first reverse tap the ESC reads as a brake. |
 | `ROBOT_ESC_REV_GAP_MS` | `300` | (double-tap only) neutral gap between the two taps. |
