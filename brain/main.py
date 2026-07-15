@@ -464,6 +464,31 @@ def _start_power_monitor():
     threading.Thread(target=_loop, daemon=True, name="power-monitor").start()
 
 
+def _reapply_audio():
+    """Re-apply the USB-speaker ALSA default + volume at brain startup, so audio works no matter HOW the brain
+    was launched. run_me.sh and the systemd unit's ExecStartPre already run scripts/setup_audio.sh
+    --audio-only on a NORMAL launch -- but a systemd auto-restart on a STALE unit (installed before that
+    ExecStartPre existed), or a reboot after a brownout, can bring the brain up WITHOUT it, and USB-speaker
+    volume resets to 0 across a reboot -> the 'systems online' greeting + every earcon are silent with
+    nothing saying why. Doing it here too (idempotent, best-effort) closes that gap from inside the brain, so
+    it can't depend on the launcher. Skipped as root (setup_audio writes ~/.asoundrc in the user's home) or
+    if the script is missing; ROBOT_AUDIO_SELFHEAL=0 disables it."""
+    if os.environ.get("ROBOT_AUDIO_SELFHEAL", "1") != "1":
+        return
+    if os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        return   # writes ~/.asoundrc in the invoking user's home -- refuse as root; no-op off-POSIX
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "scripts", "setup_audio.sh")
+    if not os.path.isfile(script):
+        return
+    try:
+        subprocess.run(["bash", script, "--audio-only"], timeout=30,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        log.info("audio: re-applied USB-speaker default + volume (setup_audio.sh --audio-only)")
+    except Exception as e:
+        log.debug("audio self-heal skipped: %s", e)
+
+
 def main():
     # Hardware actions (intended PWM/GPIO/I2C) are logged by driver.py on the "robot.hw"
     # logger -- configure logging FIRST so the startup banner + mapping show on the console.
@@ -487,6 +512,9 @@ def main():
         signal.signal(signal.SIGTERM, _sigterm)
     except (ValueError, OSError):
         pass
+    # Make the USB speaker work on EVERY launch path (foreground, --detach, systemd restart, reboot after a
+    # brownout) -- not just the ones that go through run_me.sh / ExecStartPre. Best-effort, before the greeting.
+    _reapply_audio()
     # Board HAL: resolve the target board and apply its metadata BEFORE any hardware is built.
     # hal.current() also applies the board's launch env (e.g. the Pi's GPIOZERO_PIN_FACTORY=lgpio) via
     # os.environ.setdefault; here we seed the board's default pin map the same way -- so config/robot.env

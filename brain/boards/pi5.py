@@ -43,6 +43,15 @@ class Pi5Board:
         return ServoKit(channels=channels)
 
     def make_distance_sensor(self, trigger, echo, max_distance):
+        # HC-SR04 timing backend. DEFAULT 'rawping' -> brain/hcsr04_pi5.py: a raw TRIG/ECHO ping (exactly
+        # what scripts/ultrasonic_sensor_probe.sh does) that reads reliably where gpiozero.DistanceSensor
+        # WEDGES under CPU load on the Pi 5 -- the front beam collapsing to a stuck 0 cm / no-echo, which
+        # fail-closes the forward gate. Set ROBOT_HCSR04_BACKEND=gpiozero to fall back to the old
+        # software-timed DistanceSensor.
+        backend = os.environ.get("ROBOT_HCSR04_BACKEND", "rawping").strip().lower() or "rawping"
+        if backend != "gpiozero":
+            from hcsr04_pi5 import Pi5DistanceSensor
+            return Pi5DistanceSensor(trigger=trigger, echo=echo, max_distance=max_distance)
         from gpiozero import DistanceSensor
         # partial=True is CRITICAL: without it gpiozero's .distance/.value BLOCKS until the sample queue
         # fills, and a dead/unwired sensor (no echo) never fills it -- which would HANG the 20 Hz safety
