@@ -16,9 +16,11 @@
 #                             sweep climbed up to 0.40.)
 #   ROBOT_ESC_FWD_FLOOR=0.55  forward has a dead-band -- it won't pull until ~1775us (0.55); below that = nothing.
 #   ROBOT_ESC_FWD_CEIL=0.90   capped top speed (1950us), indoor-friendly. speed 1..100 maps 0.55..0.90.
-#   ROBOT_ESC_REV_FLOOR=0.25  reverse crawl floor (1625us). The bare creep (~0.35/1675us) is too close to
-#                             neutral to move under load, so the floor sits a bit deeper. speed 1..100 maps 0.25..0.00.
-#   ROBOT_ESC_REV_CEIL=0.00   reverse top speed (1500us); deeper below neutral = faster (go negative for more).
+#   ROBOT_ESC_REV_FLOOR=0.20  reverse crawl floor (1600us). The bare creep (~0.35/1675us) is too close to
+#                             neutral to move under load. speed 1..100 maps 0.20..-0.20.
+#   ROBOT_ESC_REV_CEIL=-0.20  reverse top speed (1400us); deeper below neutral = faster.
+#   NOTE (ground vs bench): the default ROBOT_DRIVE_CRAWL_SPEED=5 puts reverse just below neutral -- fine
+#         wheels-up, too gentle to push the LOADED car back. Raise ROBOT_DRIVE_CRAWL_SPEED to ~25.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV="$REPO/config/robot.env"
@@ -39,8 +41,8 @@ echo ">> Patching config/robot.env for a ULIIK 60A crawler ESC (F/R direct rever
 set_kv ROBOT_ESC_NEUTRAL           0.40
 set_kv ROBOT_ESC_FWD_FLOOR         0.55
 set_kv ROBOT_ESC_FWD_CEIL          0.90
-set_kv ROBOT_ESC_REV_FLOOR         0.25
-set_kv ROBOT_ESC_REV_CEIL          0.00
+set_kv ROBOT_ESC_REV_FLOOR         0.20
+set_kv ROBOT_ESC_REV_CEIL          -0.20
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0
 
