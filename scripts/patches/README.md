@@ -28,6 +28,7 @@ scripts/patches/
 ```bash
 ./scripts/patches/common/1_esc_hb_qr_1060.sh       # HobbyWing QuicRun WP-1060  (F/R: Mode cap OFF)  [sets ROBOT_ESC_CHANNEL=14 for one build]
 ./scripts/patches/common/1_esc_hb_qr_1080_g2.sh    # HobbyWing QuicRun WP-1080-G2 (F/R; leaves ROBOT_ESC_CHANNEL at default ch0)
+./scripts/patches/common/1_esc_uliik_60a.sh        # ULIIK 60A crawler ESC (F/R) -- SAFE STARTERS ONLY; bench-calibrate before trusting
 ```
 
 ## 2 — Obstacle sensors · `common/`
