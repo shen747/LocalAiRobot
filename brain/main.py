@@ -354,36 +354,55 @@ def _start_power_monitor():
     undervoltage/throttle flag appears. On a Pi 5 it ALSO reads the PMIC input voltage (`pmic_read_adc`
     EXT5V_V) so the log shows HOW FAR the rail sagged and warns EARLY when it nears the ~4.8V undervoltage
     floor -- before a deeper dip browns the Pi out. Pi-only by nature: no vcgencmd (Jetson/laptop) -> silent
-    no-op, so board parity is preserved. ROBOT_POWER_MONITOR=0 disables; ROBOT_POWER_MIN_V sets the floor."""
+    no-op, so board parity is preserved. ROBOT_POWER_MONITOR=0 disables; ROBOT_POWER_MIN_V sets the floor.
+    Every poll it also logs a CONCISE draw line -- input volts + estimated 5V-input amps + total watts
+    (summed from the PMIC's per-rail V*A) -- so the load is visible in normal runs; under --verbose it polls
+    at 1 Hz (like `watch -n1 vcgencmd pmic_read_adc`) and adds a per-rail breakdown at DEBUG."""
     if os.environ.get("ROBOT_POWER_MONITOR", "1") != "1":
         return
     import shutil
     if not shutil.which("vcgencmd"):
         return   # not a Raspberry Pi -- nothing to poll
-    period = max(2.0, float(_as_int(os.environ.get("ROBOT_POWER_LOG_PERIOD_S"), 10)))
+    verbose = log.isEnabledFor(logging.DEBUG)   # run_me.sh --verbose -> DEBUG: poll fast + per-rail detail
+    period = 1.0 if verbose else max(2.0, float(_as_int(os.environ.get("ROBOT_POWER_LOG_PERIOD_S"), 10)))
 
     def _read_throttled():
         out = subprocess.run(["vcgencmd", "get_throttled"], timeout=5, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True).stdout
         return int(out.strip().split("=")[1], 16)   # "throttled=0x50005" -> 0x50005
 
-    def _input_voltage():
-        """Pi 5 PMIC: the ACTUAL 5V-input voltage (EXT5V_V), e.g. 4.72. get_throttled only says undervoltage
-        HAPPENED; this says HOW FAR the rail sagged -- the number a battery brownout otherwise hides (the Pi
-        wants ~5.1V and flags undervoltage below ~4.8V). None on boards with no PMIC ADC (Pi 4/older)."""
+    def _pmic():
+        """Pi 5 PMIC full ADC dump -> (input_v, total_w, rails).  Each INTERNAL rail reports BOTH a current
+        (`<rail>_A`) and a voltage (`<rail>_V`); pairing them gives per-rail watts, and their SUM is the
+        board's total draw. input_v is the 5V input (EXT5V_V) -- HOW FAR the rail has sagged (the Pi wants
+        ~5.1V and flags undervoltage below ~4.8V), the number a battery brownout otherwise hides. This is
+        all `vcgencmd pmic_read_adc` exposes; every value is None/empty on boards with no PMIC ADC (Pi
+        4/older). rails = {name: (V, A, W)}."""
         try:
             out = subprocess.run(["vcgencmd", "pmic_read_adc"], timeout=5, stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, text=True).stdout
         except Exception:
-            return None
-        m = re.search(r"EXT5V_V\s+volt\(\d+\)=([\d.]+)V", out)
-        return float(m.group(1)) if m else None
+            return None, None, {}
+        volts, amps = {}, {}
+        for name, kind, val in re.findall(r"(\w+?)_([VA])\s+(?:volt|current)\(\d+\)=([\d.]+)[VA]", out):
+            (volts if kind == "V" else amps)[name] = float(val)
+        rails = {n: (volts[n], amps[n], volts[n] * amps[n]) for n in volts if n in amps}
+        total_w = sum(t[2] for t in rails.values()) if rails else None
+        return volts.get("EXT5V"), total_w, rails
 
     def _flags(val):
         return ", ".join(name for bit, name in _POWER_BITS.items() if val & (1 << bit)) or "none"
 
-    def _vstr(v):
-        return f" input={v:.2f}V" if v is not None else ""
+    def _draw(input_v, total_w, amps):
+        """Concise 'V / ~A / W' draw string (skips fields the PMIC didn't provide)."""
+        parts = []
+        if input_v is not None:
+            parts.append(f"{input_v:.2f}V")
+        if amps is not None:
+            parts.append(f"~{amps:.2f}A")
+        if total_w is not None:
+            parts.append(f"{total_w:.1f}W")
+        return " ".join(parts) if parts else "n/a"
 
     try:
         min_v = float(os.environ.get("ROBOT_POWER_MIN_V", "4.90"))
@@ -398,30 +417,46 @@ def _start_power_monitor():
             except Exception:
                 time.sleep(period)
                 continue
-            v = _input_voltage()
-            if last is None:
-                (log.warning if val else log.info)(
-                    "power: get_throttled=0x%x (%s)%s%s", val, _flags(val), _vstr(v),
-                    " -- the 5V rail has ALREADY sagged this boot: expect USB devices (mic/speaker/face) "
-                    "to drop off. Check the UBEC (5V jumper, ~5A rating, short thick leads) and that "
-                    "usb_max_current_enable=1 is in the boot config." if val else "")
-            elif val & ~last:
-                log.warning("power: NEW event, get_throttled=0x%x (+%s)%s -- the 5V rail sagged or the SoC "
-                            "throttled; USB devices (mic/speaker/face) may drop off the bus. On battery: "
-                            "check the UBEC output under load + usb_max_current_enable=1.",
-                            val, _flags(val & ~last), _vstr(v))
+            input_v, total_w, rails = _pmic()
+            amps = (total_w / input_v) if (total_w and input_v) else None   # est. draw at the 5V input
+            draw = _draw(input_v, total_w, amps)
+
+            if last is None and val:
+                log.warning("power: get_throttled=0x%x (%s) [%s] -- the 5V rail has ALREADY sagged this "
+                            "boot: expect USB devices (mic/speaker/face) to drop off. Check the UBEC (5V "
+                            "jumper, ~5A rating, short thick leads) and usb_max_current_enable=1 in the "
+                            "boot config.", val, _flags(val), draw)
+            elif last is not None and (val & ~last):
+                log.warning("power: NEW event, get_throttled=0x%x (+%s) [%s] -- the 5V rail sagged or the "
+                            "SoC throttled; USB devices (mic/speaker/face) may drop off the bus. On "
+                            "battery: check the UBEC output under load + usb_max_current_enable=1.",
+                            val, _flags(val & ~last), draw)
+            else:
+                # routine draw line: concise volts / est. amps / watts, every poll (also the startup line)
+                log.info("power: %s | throttled=0x%x (%s)", draw, val, _flags(val))
+
+            # VERBOSE (run_me.sh --verbose -> DEBUG): per-rail V*A=W breakdown, biggest consumers first, so
+            # you can see WHICH rail spikes (VDD_CORE on an LLM burst, the 5V/USB rail on motor inrush).
+            if rails and verbose:
+                detail = "  ".join(f"{n} {v:.2f}V*{a:.2f}A={w:.2f}W"
+                                   for n, (v, a, w) in sorted(rails.items(),
+                                                              key=lambda kv: kv[1][2], reverse=True)
+                                   if w >= 0.01)
+                log.debug("power rails: %s", detail or "(all rails <0.01W)")
+
             # Early warning: the rail can sag toward the ~4.8V floor BEFORE a throttle flag trips -- that dip
             # is the brownout that freezes SSH mid-word. Warn once per crossing below ROBOT_POWER_MIN_V (and
             # note recovery), so the log shows the sag COMING instead of just going dark.
-            if v is not None:
-                if v < min_v and not warned_low:
-                    log.warning("power: input SAGGING to %.2fV (< %.2fV, nearing the ~4.8V undervoltage floor) "
-                                "-- the UBEC/wiring can't hold 5V under load; a deeper dip browns out the Pi "
-                                "(frozen SSH). Raise the UBEC toward 5.1-5.2V (<=5.25V on USB-C) with short "
-                                "thick leads, or feed via the UPS HAT on charged cells.", v, min_v)
+            if input_v is not None:
+                if input_v < min_v and not warned_low:
+                    log.warning("power: input SAGGING to %.2fV (< %.2fV, nearing the ~4.8V undervoltage "
+                                "floor) -- the UBEC/wiring can't hold 5V under load; a deeper dip browns "
+                                "out the Pi (frozen SSH). Raise the UBEC toward 5.1-5.2V (<=5.25V on USB-C) "
+                                "with short thick leads, or feed via the UPS HAT on charged cells.",
+                                input_v, min_v)
                     warned_low = True
-                elif v >= min_v + 0.05 and warned_low:
-                    log.info("power: input recovered to %.2fV.", v)
+                elif input_v >= min_v + 0.05 and warned_low:
+                    log.info("power: input recovered to %.2fV.", input_v)
                     warned_low = False
             last = val
             time.sleep(period)
