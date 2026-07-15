@@ -5,6 +5,10 @@
 > It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
 > toward things you name**, shows an **expressive face**, and talks back.
 
+![Concept render of the assembled LocalAiRobot on a workbench: a four-wheel 1/10 all-metal crawler chassis carrying a hexagonal front "sensor" module — three HC-SR04P ultrasonic sensors on its angled facets (front, left, right) plus a speaker behind a clear lid — and a rectangular rear module housing the Raspberry Pi 5 and electronics with a small face/status display mounted on top. Callouts note the ~350 mm base depth, 200 mm base width and ~180 mm total height.](docs/images/approximate_generation.png)
+
+*Concept render — how the finished robot looks once the electronics are housed in the two enclosures (hexagonal front sensor module + rectangular rear electronics box). Full breakdown in [Enclosures](#enclosures--the-two-box-layout) below.*
+
 > **Boards.** The reference build is a **Raspberry Pi 5**; the same brain also runs on an **NVIDIA Jetson
 > Orin Nano** via a board HAL ([`brain/hal.py`](brain/hal.py)) that swaps only the GPIO/PWM/camera backends.
 > Jetson setup uses [`scripts/install_stack_jetson.sh`](scripts/install_stack_jetson.sh) + the
@@ -101,6 +105,32 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC (Electronic Speed Control
 > right `config/robot.env` keys — a different **ESC**, **camera** (OV5647 / official Camera Module 3),
 > **obstacle sensors** (VL53L1X laser ToF), or an optional **IMU / wheel encoder**. Browse the full
 > catalog with the exact hardware each one targets: [**scripts/patches/README.md**](scripts/patches/README.md).
+
+---
+
+## Enclosures — the two-box layout
+
+The electronics ride in **two enclosures** (concept renders below). The split is deliberate:
+
+- **Front — hexagonal sensor module.** The angled **half-hexagon** face is the whole point: it gives three
+  flat facets to bolt the **HC-SR04P ultrasonic sensors** onto — one **dead ahead**, one **~45–60° left**,
+  one **~45–60° right** — forming the semi-hex obstacle array, with the speaker/mic behind the clear lid.
+- **Rear — rectangular module** (AT‑1520‑class, ~150 × 200 × 100 mm). Houses the Raspberry Pi 5, PCA9685,
+  buck + UPS and wiring, with the **face/status screen** mounted on top.
+
+Both are grey‑ABS boxes with a clear, gasketed lid on stainless screw bosses — pop the lid to work inside
+without unmounting anything.
+
+> 📦 **Printable models (body + lid).** The enclosure is provided as 3MF in
+> [`docs/enclosure_models/`](docs/enclosure_models/): [`junction_box_body.3mf`](docs/enclosure_models/junction_box_body.3mf)
+> and [`junction_box_lid.3mf`](docs/enclosure_models/junction_box_lid.3mf). Upload the two files straight to a
+> print service such as [**JLC3DP**](https://jlc3dp.com/) (or slice and print them at home).
+
+![3D render of the hexagonal front sensor enclosure: a grey ABS body with a clear gasketed lid held on by six stainless socket-head screws, 150 mm wide × 135 mm deep with a 15 mm-tall lid.](docs/images/robot-enclosure-front_render.png)
+
+![Cutaway of the hexagonal front enclosure showing its half-hexagon convergence profile with an internal PCB: 200 mm base, 60 mm vertical sides rising to a 150 mm total height, 150 mm depth — the angled upper facets are where the front/left/right ultrasonic sensors mount.](docs/images/robot-enclosure-front.png)
+
+![Cutaway of the rectangular rear enclosure (model AT-1520, 150 × 200 × 100 mm) with an internal PCB, a clear gasketed lid and stainless screw bosses — the electronics box for the Raspberry Pi 5 and power, with the face screen mounted on top.](docs/images/robot-enclosure-back.png)
 
 ---
 
