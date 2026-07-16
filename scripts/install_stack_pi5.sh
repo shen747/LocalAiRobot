@@ -194,6 +194,13 @@ else:
     assert n_onnx or n_tfl, f"no bundled models found under {res}"
 PY
 
+# Concierge Mode (opt-in; ROBOT_CONCIERGE_MODE) face recognition: download the LOCAL ArcFace model + any
+# missing deps (cv2/onnxruntime) so the mode works out of the box. Best-effort -- a failure NEVER fails the
+# install (crawler mode doesn't need it; concierge degrades to a silent smile). Idempotent (skips if present).
+echo ">> Concierge face-recognition model + deps (for ROBOT_CONCIERGE_MODE; best-effort)"
+bash "${REPO}/scripts/provision_face_id.sh" \
+  || echo "   (face-id provisioning skipped/failed -- re-run ./scripts/provision_face_id.sh later; crawler mode is unaffected)"
+
 # Earcon folders for the spoken ack/greeting/thinking/error cues. The WAVs are generated on your PC with
 # Piper and committed (see sounds/README.md), so a fresh clone already has them; this makes sure the folders
 # exist AND -- since Piper is installed above -- synthesizes any MISSING cues as a safety net (it never

@@ -19,7 +19,7 @@ type, one camera). Run them **after** `install_stack_pi5.sh` / `install_stack_je
 
 ```
 scripts/patches/
-  common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600
+  common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600   5_face_id_insightface
   pi5/      3_camera_imx519 / _ov5647 / _cm3 / _usb_webcam
   jetson/   3_camera_usb_webcam (default) / 3_camera_imx519_csi
 ```
@@ -64,6 +64,14 @@ JetPack-version-specific driver (the `jetson/3_camera_imx519_csi.sh` patch print
 ```
 These land the reader + config only (see `brain/imu.py` / `brain/encoder.py`); disable by clearing
 `ROBOT_IMU_TYPE` / `ROBOT_ENCODER_TYPE`.
+
+## 5 — Concierge Mode face recognition (off by default) · `common/`
+```bash
+./scripts/patches/common/5_face_id_insightface.sh   # local ArcFace ONNX face-ID for ROBOT_CONCIERGE_MODE=1
+```
+Checks deps (reuses onnxruntime; face detection needs `cv2` from the USB-webcam patch) and installs the
+recognition model. Then enrol people with `./scripts/enroll_face.sh "Name"` and set `ROBOT_CONCIERGE_MODE=1`.
+Full flow: [docs/concierge.md](../../docs/concierge.md).
 
 ---
 

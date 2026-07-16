@@ -124,6 +124,13 @@ else:
     assert n_onnx or n_tfl, f"no bundled models found under {res}"
 PY
 
+# Concierge Mode (opt-in; ROBOT_CONCIERGE_MODE) face recognition: download the LOCAL ArcFace model. cv2 is
+# already the system OpenCV (apt, above) and onnxruntime comes with the venv, so this is usually just the
+# model. Best-effort -- a failure NEVER fails the install (crawler mode doesn't need it). Idempotent.
+echo ">> Concierge face-recognition model + deps (for ROBOT_CONCIERGE_MODE; best-effort)"
+bash "${REPO}/scripts/provision_face_id.sh" \
+  || echo "   (face-id provisioning skipped/failed -- re-run ./scripts/provision_face_id.sh later; crawler mode is unaffected)"
+
 # Earcons + face templates (synthesized/rendered with the venv, same as the Pi installer; committed WAVs kept).
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/wake_word_ack" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/thinking_still_sounds" \

@@ -27,14 +27,17 @@ import threading
 import time
 
 import behavior
+import concierge
 import inference
 import remote
 import vision
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
 from face import Face
+from face_id import FaceID
 from fan import make_fan
 from memory import Memory
+from pir import MotionWake
 from sounds import Sounds
 from wakeword import WakeWord
 
@@ -192,13 +195,18 @@ def listen_and_transcribe(cfg):
     return text
 
 
-def wait_for_trigger(cfg, wake):
-    """Block until the operator starts a turn. Returns 'WAKE' | 'TALK' | 'QUIT'.
+def wait_for_trigger(cfg, wake, motion_event=None):
+    """Block until the operator starts a turn. Returns 'WAKE' | 'MOTION' | 'QUIT' | 'FAILED' | ...
 
-    LIVE triggers ONLY on the wake word (+ 'q' to quit over SSH; headless needs no stdin). In --dry,
-    ENTER starts a turn and 'r' simulates a wake, for bench testing with no mic. The trigger ONLY
-    starts capture -- the EXPLORE/FIND autonomy gate is separate."""
-    return wake.wait(audio_lock)
+    LIVE triggers on the wake word (+ 'q' to quit over SSH; headless needs no stdin). In Concierge Mode a PIR
+    motion sensor is an ADDITIONAL trigger: its callback sets motion_event and cancels the in-progress listen,
+    so a 'CANCELLED' return WITH motion_event set is reported as 'MOTION'. In --dry, ENTER starts a turn and
+    'r' simulates a wake. The trigger ONLY starts capture -- the EXPLORE/FIND autonomy gate is separate."""
+    result = wake.wait(audio_lock)
+    if result == "CANCELLED" and motion_event is not None and motion_event.is_set():
+        motion_event.clear()
+        return "MOTION"
+    return result
 
 
 SYSTEM_PROMPT = (
@@ -531,13 +539,25 @@ def main():
     snd = Sounds(audio_lock, cfg)
     wake = WakeWord(cfg)
     fan = make_fan()   # optional enclosure exhaust fan (ROBOT_FAN_ENABLE=1 + ROBOT_FAN_PIN); None when disabled
+    # Concierge Mode extras (no effect unless ROBOT_CONCIERGE_MODE=1): a LOCAL face recogniser + a PIR motion
+    # sensor that wakes the robot like the wake word. On motion the callback sets motion_event + cancels the
+    # in-progress listen so wait_for_trigger() returns 'MOTION'. Both degrade to no-ops if unconfigured.
+    face_identifier = FaceID(mem)
+    motion_event = threading.Event()
+    motion_wake = MotionWake(
+        os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None,
+        lambda: (motion_event.set(), wake.cancel_listen()))
 
     # Robot identity: persist who it is (name + what it can do) as top-priority RAG memory, and detect a
     # first run / rename so it introduces itself below. Name comes from ROBOT_NAME (default Jarvis).
     robot_name = cfg.get("robot_name") or "Jarvis"
-    robot_caps = (f"I am {robot_name}, a friendly voice-controlled RC crawler robot car. I can drive around "
-                  "(forward, reverse, and turn), explore a room on my own, find and go to objects, look at "
-                  "and describe what my camera sees, remember people and places you show me, and chat.")
+    if concierge.enabled():
+        # Concierge Mode: a STATIONARY desk persona -- it introduces itself as the Concierge and never drives.
+        robot_caps = concierge.PERSONA_CAPS.format(name=robot_name)
+    else:
+        robot_caps = (f"I am {robot_name}, a friendly voice-controlled RC crawler robot car. I can drive around "
+                      "(forward, reverse, and turn), explore a room on my own, find and go to objects, look at "
+                      "and describe what my camera sees, remember people and places you show me, and chat.")
     identity_status = mem.ensure_identity(robot_name, robot_caps)
 
     def say(text):
@@ -729,6 +749,14 @@ def main():
             action = str(resp.get("action", "DRIVE")).upper()
             target = resp.get("target")
             reply = resp.get("reply", "")
+
+            # --- Concierge Mode: STATIONARY persona -- refuse EVERY movement intent (drive/explore/find)
+            #     with a random in-character line, before any driving dispatch can run. ---
+            if concierge.enabled() and action in concierge.MOVEMENT_ACTIONS:
+                reply = concierge.refusal()
+                print(f"concierge: refusing {action} (stationary) -> SAY")
+                say(reply)
+                return "SAY", reply
 
             # --- Trigger gate: autonomy must be asked for, on the RAW transcript. ---
             if action in ("EXPLORE", "FIND") and not is_explore_command(text):
@@ -966,7 +994,7 @@ def main():
             # IDLE: quiesce the ultrasonics so their software-timed threads don't starve the wake-word mic
             # while we wait (the "runs forever" fix). A wake / drive / HTTP command below resumes them.
             driver.pause_sensing()
-            trigger = wait_for_trigger(cfg, wake)
+            trigger = wait_for_trigger(cfg, wake, motion_event)
             if trigger == "QUIT":
                 driver.stop()
                 print("Bye.")
@@ -981,6 +1009,27 @@ def main():
                 sys.exit(1)
             if trigger in ("CANCELLED", "RETRY"):
                 continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
+            if trigger == "MOTION":
+                # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. A detected face IS the
+                # "person present" signal (no cloud VLM); match it against the enrolled faces (face_id.py).
+                fc.set_expression("happy")     # friendly face the instant motion is seen
+                jpeg = None
+                try:
+                    if getattr(cam, "available", False):
+                        jpeg = cam.capture_jpeg()
+                except Exception as e:
+                    log.debug("concierge capture failed: %s", e)
+                name = face_identifier.identify(jpeg)[0] if jpeg else None
+                if not name:
+                    # no person / not a KNOWN face -> do nothing, keep smiling, drop back to sleep
+                    log.info("concierge: motion but no known face -> smiling silently")
+                    fc.set_expression("happy")
+                    waiting_face = "sleeping"
+                    continue
+                # recognised: greet by name, then FALL THROUGH into the conversation loop (remote handoff)
+                log.info("concierge: recognised %r -> greeting", name)
+                snd.play("wake_ack")
+                say(concierge.greeting(name))
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record
@@ -1060,8 +1109,8 @@ def main():
                 remote_srv.stop()
             except Exception:
                 pass
-        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close) \
-                + ((fan.close,) if fan else ()):
+        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close,
+                       motion_wake.close) + ((fan.close,) if fan else ()):
             try:
                 closer()
             except Exception:

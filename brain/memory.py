@@ -63,6 +63,13 @@ class Memory:
         # itself, and the marker used to detect a first run (introduce itself) or a name change.
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT, ts REAL)")
+        # Enrolled faces for Concierge Mode (brain/face_id.py): a name + an L2-normalised ArcFace embedding
+        # stored as raw float32 bytes. Written by ./scripts/enroll_face.sh; matched on each motion wake. Empty
+        # unless you enrol someone -- the rest of the robot ignores this table.
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS faces (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   ts REAL, name TEXT, embedding BLOB)""")
         self._db.commit()
         n = self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
         log.info("memory: %s (%d observations)", self.path, n)
@@ -142,6 +149,39 @@ class Memory:
         except Exception as e:
             log.warning("memory: photo save failed (%s)", e)
             return None
+
+    # ---------- enrolled faces (Concierge Mode; brain/face_id.py) ----------
+    def add_face(self, name, embedding_bytes):
+        """Store a face embedding (raw float32 bytes) under `name`. Multiple rows per person are fine --
+        each is compared independently, so enrolling several angles improves matching."""
+        try:
+            with self._lock:
+                self._db.execute("INSERT INTO faces (ts, name, embedding) VALUES (?,?,?)",
+                                 (time.time(), (name or "").strip(), sqlite3.Binary(embedding_bytes)))
+                self._db.commit()
+        except Exception as e:
+            log.warning("memory: add_face failed (%s) -- continuing", e)
+
+    def all_faces(self):
+        """[(name, embedding_bytes), ...] for every enrolled face. Empty if nobody is enrolled."""
+        try:
+            with self._lock:
+                return [(r[0], r[1]) for r in
+                        self._db.execute("SELECT name, embedding FROM faces").fetchall()]
+        except Exception as e:
+            log.warning("memory: all_faces failed (%s)", e)
+            return []
+
+    def forget_face(self, name):
+        """Delete all enrolled embeddings for `name`. Returns the row count removed."""
+        try:
+            with self._lock:
+                cur = self._db.execute("DELETE FROM faces WHERE name=?", ((name or "").strip(),))
+                self._db.commit()
+                return cur.rowcount
+        except Exception as e:
+            log.warning("memory: forget_face failed (%s)", e)
+            return 0
 
     # ---------- the robot's own identity (top-priority memory) ----------
     def get_meta(self, key):

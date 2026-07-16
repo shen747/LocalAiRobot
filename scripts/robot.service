@@ -26,6 +26,9 @@ WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
 # the same setup_audio.sh --audio-only that run_me.sh runs on every foreground launch. Best-effort: the
 # trailing `|| true` keeps a missing/unready speaker from blocking the brain from starting.
 ExecStartPre=/bin/bash -c '/home/YOUR_USER/LocalAiRobot/scripts/setup_audio.sh --audio-only || true'
+# NB: the Concierge face-recognition model is NOT provisioned here on purpose -- a slow first-boot download
+# could exceed systemd's start timeout. It's installed by scripts/install_stack_pi5.sh / _jetson.sh (with the
+# other models), so by the time this service boots the model is already present.
 # Load config/robot.env through bash, exactly like run_me.sh / a manual shell run. Do NOT switch
 # this to systemd's EnvironmentFile= -- that parser keeps trailing "# comments" as part of each
 # value, silently corrupting most settings in robot.env (numbers fall back to code defaults).
