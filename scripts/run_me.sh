@@ -52,6 +52,7 @@ install_boot() {
   sudo systemctl daemon-reload
   sudo systemctl enable robot.service
   echo "   enabled -- starts on the NEXT boot (or now: sudo systemctl start robot.service)."
+  echo "   Survives power off/on: auto-starts every boot + auto-restarts after a crash/brown-out (Restart=always)."
   echo "   watch:  journalctl -u robot.service -f       remove:  ./scripts/run_me.sh --disable-boot"
 }
 disable_boot() {

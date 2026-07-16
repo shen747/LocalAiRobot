@@ -26,6 +26,10 @@ __pycache__/
 # Local env override (config/robot.env IS committed as a template)
 .env
 
+# Personal secrets scratch (API keys etc.) -- NEVER commit. NB: config/robot.env is a COMMITTED template,
+# so keep real keys out of it too -- set ROBOT_GEMINI_API_KEY on the robot only and don't `git add` that line.
+*.secrets
+
 # Editor/IDE
 # .idea/
 # .vscode/

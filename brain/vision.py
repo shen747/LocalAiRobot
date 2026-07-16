@@ -63,11 +63,21 @@ EXPLORE_STEP_SCHEMA = {
 }
 
 
-def _vision_timeout():
+def _vision_timeout(cfg=None):
+    """Total budget for a VISION model call, backend-aware. LOCAL Ollama on the Pi 5 CPU is genuinely slow
+    (tens of seconds to minutes) -> long default. REMOTE (Gemini) vision normally returns in a few seconds,
+    so it gets a MUCH shorter cap: a HUNG remote call would otherwise freeze LOOK/explore for the whole 600s
+    (a stalled gemini-robotics-er request once blocked an explore mid-step -- and the wake-word STOP can't
+    interrupt an in-flight network read). ROBOT_VISION_TIMEOUT_S = local; ROBOT_VISION_TIMEOUT_REMOTE_S =
+    remote. (Both are split across ROBOT_LLM_RETRIES attempts by the inference gateway.)"""
+    if cfg is not None and cfg.get("ai_backend") == "gemini":
+        key, default = "ROBOT_VISION_TIMEOUT_REMOTE_S", "45"
+    else:
+        key, default = "ROBOT_VISION_TIMEOUT_S", "600"
     try:
-        return float(os.environ.get("ROBOT_VISION_TIMEOUT_S", "600") or 600)
+        return float(os.environ.get(key, default) or default)
     except ValueError:
-        return 600.0
+        return float(default)
 
 
 def _ollama_image(cfg, prompt, jpeg_bytes, schema):
@@ -81,7 +91,7 @@ def _ollama_image(cfg, prompt, jpeg_bytes, schema):
         "images": [base64.b64encode(jpeg_bytes).decode("ascii")],
         "format": schema,
         "options": {"temperature": 0, "num_predict": 220},
-    }, _vision_timeout())
+    }, _vision_timeout(cfg))
 
 
 def _parse_fake():

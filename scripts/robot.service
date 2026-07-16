@@ -11,6 +11,10 @@ Description=Local AI Robot Brain (RC crawler)
 # ollama.service: the local LLM the brain talks to.
 After=network-online.target ollama.service
 Wants=network-online.target ollama.service
+# SURVIVE random switch-off/on + repeated brownouts: never let systemd's start-rate limiter permanently give
+# up. By default >5 restarts within 10s (a brown-out crash loop) latches the unit 'failed' and it stays dead
+# until a manual restart -- exactly when an unattended robot must self-recover. 0 = no limit, always retry.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -33,7 +37,10 @@ ExecStart=/bin/bash -c 'if [ -f /home/YOUR_USER/LocalAiRobot/config/robot.env ];
 # already has the boot service (or edit the installed unit + `sudo systemctl daemon-reload`).
 KillSignal=SIGINT
 TimeoutStopSec=15
-Restart=on-failure
+# Restart=always (not on-failure): bring the brain back after ANY exit -- a crash, a brown-out reboot, or an
+# unexpected CLEAN exit -- so flicking the power off and on always recovers to a running robot. A commanded
+# `systemctl stop` / `--disable-boot` still stops it (systemd never restarts a unit it deliberately stopped).
+Restart=always
 RestartSec=3
 
 [Install]
