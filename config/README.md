@@ -22,6 +22,21 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 | `ROBOT_MOTORS_OFF` | `0` | `1` = **stationary / tabletop** mode: runs **fully live** (wake word, voice, camera, sensors, RAG, face) but the **ESC + steering get no PWM** — the console still logs the throttle/steer commands (like dry-run) yet the **wheels never move**. For talking to the assembled car on a desk without it driving off. Needs `ROBOT_DRY_RUN=0` (dry-run already fakes everything). |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
+## Concierge Mode (stationary greeter — PIR + local face recognition)
+
+A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary desk assistant that **never drives**, is woken by a **PIR motion sensor** as well as the wake word, and greets people it recognises **by name** via a **strictly-local** pipeline (OpenCV detect → ArcFace ONNX embed → match against the RAG db) — or smiles silently at strangers. Set it back to `0` for the normal crawler car. Full flow + wiring: [docs/concierge.md](../docs/concierge.md).
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable Concierge Mode (stationary greeter; every drive/explore/find is refused with a random in-character line). `0` = normal crawler car. Sits at the **top** of `robot.env` in the RUN MODE block. |
+| `ROBOT_PIR_PIN` | *(empty)* | PIR motion-sensor OUT pin (Pi **BCM** / Jetson **BOARD** header). Wakes the robot like the wake word. Empty = motion wake off (wake-word-only concierge). Adafruit PIR = 3.3 V digital out (Pi-safe); power it from 5 V. |
+| `ROBOT_FACE_ID_MODEL` | `~/.localairobot/models/arcface.onnx` | ArcFace recognition ONNX (112×112 → 512-d), auto-downloaded by `install_stack_pi5.sh` / `_jetson.sh`. Missing → face match off (smiles at everyone, greets no one). |
+| `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine-similarity match threshold. **Higher = stricter** (fewer false greetings, more misses); lower = looser. |
+| `ROBOT_FACE_ID_INPUT` | `112` | Face-model input size (px square). |
+| `ROBOT_FACE_ID_DETECTOR` | *(bundled)* | Optional Haar cascade XML for detection; empty = OpenCV's default frontal-face cascade. |
+
+Enrol people to greet: `./scripts/enroll_face.sh "Ramesh"` (stores a face **embedding** in the RAG db, not an image).
+
 ## Robot identity
 
 | Key | Default | What it does |

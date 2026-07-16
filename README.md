@@ -219,6 +219,16 @@ runs on-device.
 
 ---
 
+## Concierge Mode (optional) — a stationary greeter
+
+Flip `ROBOT_CONCIERGE_MODE=1` and Jarvis becomes a **stationary desk concierge** instead of a crawler: it
+**never drives** (every move request gets a polite in-character refusal), introduces itself as *"Jarvis the
+Concierge"*, and — on top of the wake word — wakes on a **PIR motion sensor**. When someone walks up it shows
+a friendly face and runs a **strictly-local** pipeline (OpenCV face-detect → ArcFace ONNX embed → match
+against the RAG database) to **greet people it knows by name**, or smile silently at strangers; then it hands
+off to a normal chat. Set it back to `0` for the crawler car — nothing else changes. Enrol faces with
+`./scripts/enroll_face.sh "Name"`. Full setup, wiring + the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
+
 ## 📚 Documentation
 
 Everything in this repo, with a one-line "what's this for" — so nothing's a dead end.
@@ -232,6 +242,7 @@ Everything in this repo, with a one-line "what's this for" — so nothing's a de
 - [scripts/patches/README.md](scripts/patches/README.md) — one-command hardware patches (ESC / sensors / camera / IMU / encoder), sorted into `common/` + your board's folder.
 - [docs/diagnostics.md](docs/diagnostics.md) — the `run_diagnostics.sh` live self-test (green/red per peripheral + the pin map) explained.
 - [docs/gemini-setup.md](docs/gemini-setup.md) — optional: run the brain on remote Google Gemini instead of local Ollama.
+- [docs/concierge.md](docs/concierge.md) — optional **Concierge Mode**: a stationary greeter with PIR motion wake + strictly-local face recognition (`ROBOT_CONCIERGE_MODE`).
 - [docs/http_setup.md](docs/http_setup.md) — command the robot from your phone over Wi-Fi (the token-secured HTTP endpoint).
 - [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — move the robot onto a new Wi-Fi / recover SSH with just your phone.
 
