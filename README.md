@@ -245,7 +245,7 @@ Everything in this repo, with a one-line "what's this for" — so nothing's a de
 - [docs/gemini-setup.md](docs/gemini-setup.md) — optional: run the brain on remote Google Gemini instead of local Ollama.
 - [docs/concierge.md](docs/concierge.md) — optional **Concierge Mode**: a stationary greeter with PIR motion wake + strictly-local face recognition (`ROBOT_CONCIERGE_MODE`).
 - [docs/http_setup.md](docs/http_setup.md) — command the robot from your phone over Wi-Fi (the token-secured HTTP endpoint).
-- [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — move the robot onto a new Wi-Fi / recover SSH with just your phone.
+- [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — **field networking & recovery**: phone-hotspot backup, Comitup portal, persistent boot logs, and connecting from your phone with **ConnectBot** (+ Ed25519 SSH keys).
 
 **Configure & customise**
 - [config/README.md](config/README.md) — every `config/robot.env` key: default + what it does (incl. the Pi-5 vs Jetson board keys).

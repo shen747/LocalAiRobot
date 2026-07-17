@@ -200,6 +200,40 @@ fi
 echo ">> audio: pointing ALSA's default output at your USB speaker + writing the device names into config/robot.env"
 bash "${REPO}/scripts/setup_audio.sh" || true
 
+# Field-recovery + logging (secret-free -- NO passwords are ever stored/committed):
+#   * PERSISTENT JOURNAL (default ON): if the systemd journal is kept in RAM, `journalctl -u robot.service`
+#     is WIPED on every reboot -- you can't read what the boot service did before the last power cycle.
+#     Creating /var/log/journal makes it persist to disk (journald auto-caps + rotates). Idempotent (a no-op
+#     if it's already persistent). Skip with ROBOT_PERSIST_JOURNAL=0.
+#   * COMITUP captive portal (OPT-IN): the password-free Wi-Fi backdoor -- when no known network is around,
+#     the board hosts its own AP + web page to pick a Wi-Fi (docs/change-pi-wifi.md, Tier 2). It stores NO
+#     password; the portal collects the target Wi-Fi's password at runtime. Enable with ROBOT_INSTALL_COMITUP=1.
+#     (The Tier-1 phone-hotspot fallback needs a password, so it stays a manual one-liner -- never committed.)
+if [ "${ROBOT_PERSIST_JOURNAL:-1}" != 0 ] && command -v journalctl >/dev/null 2>&1; then
+  if [ -d /var/log/journal ]; then
+    echo ">> journal: already persistent (/var/log/journal) -- past boots survive reboots."
+  elif sudo mkdir -p /var/log/journal; then
+    echo ">> journal: made the systemd journal PERSISTENT across reboots (/var/log/journal)."
+    sudo systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    sudo systemctl restart systemd-journald >/dev/null 2>&1 || true
+    echo "   read a PREVIOUS boot's brain log with:  journalctl -u robot.service -b -1"
+  else
+    echo ">> journal: could not create /var/log/journal -- skipping (journal stays in RAM)."
+  fi
+fi
+if [ "${ROBOT_INSTALL_COMITUP:-0}" = 1 ]; then
+  echo ">> Comitup captive-portal fallback (ROBOT_INSTALL_COMITUP=1; password-free Wi-Fi onboarding)..."
+  if sudo apt install -y comitup; then
+    # enable (NOT --now): activating it mid-install could reshuffle the network and drop your SSH -- let it
+    # come up on the reboot at the end of install instead.
+    sudo systemctl enable comitup >/dev/null 2>&1 || true
+    echo "   installed + enabled for next boot. Stranded -> it broadcasts 'comitup-<id>'; join it from your"
+    echo "   phone and pick a Wi-Fi in the portal. Details/restyle: docs/change-pi-wifi.md (Tier 2)."
+  else
+    echo "   (comitup not installed -- not in the apt repo? see docs/change-pi-wifi.md for the manual steps.)"
+  fi
+fi
+
 if [ "$BOOTSTRAP" = 1 ]; then
   echo
   echo ">> [bootstrap] enabling boot autostart (systemd) so the brain launches on every boot..."

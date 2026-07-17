@@ -21,13 +21,32 @@ Two tiers, each set up once:
 
 > 🛟 Set this up **before** touching any network service, so you always have a way back in.
 
-1. Turn on your phone's Wi-Fi hotspot.
-2. SSH in (or use the monitor one last time) and save it — NetworkManager stores the profile permanently:
-   ```bash
-   sudo nmcli device wifi connect "YourHotspotName" password "YourHotspotPassword"
-   ```
+The install scripts already did the **secret-free** groundwork for you — mDNS (`avahi`, so
+`<hostname>.local` resolves), a **persistent journal**, and (if you passed `ROBOT_INSTALL_COMITUP=1`) the
+Comitup portal. The one thing they **can't** do is store your hotspot's **password** — so you save the
+hotspot by hand, **once**:
 
-Now, **anywhere**: flip on your phone hotspot → the Pi auto-joins → SSH straight in.
+1. Turn on your phone's Wi-Fi hotspot.
+2. SSH in and **save** it as a low-priority fallback. Use `connection add` — it only *stores* the profile, it
+   does **not** switch the radio, so it can't cut the SSH session you're on:
+   ```bash
+   sudo nmcli connection add type wifi con-name "phone-hotspot" ssid "YourHotspotName" \
+        wifi-sec.key-mgmt wpa-psk wifi-sec.psk "YourHotspotPassword" \
+        connection.autoconnect yes connection.autoconnect-priority -10
+   ```
+   The password is typed at the terminal, **never** written to a repo file. The negative priority keeps your
+   normal Wi-Fi preferred when both are in range.
+
+> ⚠️ **Do NOT use `nmcli device wifi connect` from an SSH session on your *current* Wi-Fi** — it switches the
+> radio **immediately** and freezes the very session you're on (the classic lockout). `connection add` above
+> is the safe way; it never switches.
+
+Now, **anywhere**: flip on your phone hotspot → the Pi auto-joins → SSH straight in
+(`ssh <user>@<hostname>.local`, or the phone's connected-devices list for the IP).
+
+> ⚠️ **Hotspot client isolation.** Many phone hotspots block device-to-device traffic — if yours does you
+> **can't** SSH to the Pi over it, no matter what. iPhone Personal Hotspot generally doesn't isolate; some
+> Androids do and won't let you disable it. Check before relying on it.
 
 ---
 
@@ -70,6 +89,10 @@ Comitup hooks into NetworkManager. When it finds **no known network** (neither y
 saved hotspot), it spins up its **own** access point with a web portal where you pick the new network. It
 stays out of the way otherwise — the AP only appears when you're stranded.
 
+> 🤖 **Automated:** `ROBOT_INSTALL_COMITUP=1 ./scripts/install_stack_pi5.sh` (or `_jetson.sh`) installs
+> Comitup and enables it for the next boot for you — no passwords involved (the portal collects the target
+> Wi-Fi's password at runtime, nothing is stored). Or do it by hand:
+
 1. Update, then install Comitup + Avahi (mDNS, so you can reach the Pi by **name** instead of hunting an IP):
    ```bash
    sudo apt update && sudo apt upgrade -y
@@ -97,6 +120,33 @@ stays out of the way otherwise — the AP only appears when you're stranded.
 
 > 🔧 Already have a shell (via the hotspot or SSH)? You don't need the portal at all — use the
 > **`nmcli`/`nmtui` cheat-sheet above** to list and switch networks directly.
+
+---
+
+## Connecting from your phone with ConnectBot (Android)
+
+[ConnectBot](https://connectbot.org/) is a free, open-source SSH client — ideal for reaching the robot in the
+field with no laptop. (On iPhone, **Termius** or **Blink** work the same way.)
+
+1. **Install** ConnectBot (Play Store or F-Droid).
+2. **Get on the same network as the Pi** — your home Wi-Fi, or your **phone hotspot** with the Pi joined to
+   it (Tier 1 above).
+3. **Add the robot as a host.** In ConnectBot's address box type `<user>@<hostname>.local`, e.g.
+   `ramesh@LocalAiRobot-Jarvis.local`; leave protocol **ssh** / port **22**, then tap to connect.
+   ```
+   ramesh@LocalAiRobot-Jarvis.local
+   ```
+   > On a **phone hotspot**, `.local` (mDNS) sometimes doesn't resolve from Android — then use the Pi's **IP**
+   > from the phone's connected-devices list instead: `ramesh@192.168.x.y`.
+4. **First connect:** accept the host fingerprint, enter your Pi password → you're in. `cd ~/LocalAiRobot`
+   and work as usual (new shells auto-load `config/robot.env`).
+5. **Living in ConnectBot:** the on-screen key row gives you **Tab / Ctrl / Esc / arrows**; volume-down acts
+   as **Ctrl** (volume-down then `c` = Ctrl-C). **Long-press the host → Edit** to add a nickname, a
+   **post-login command** (e.g. `cd ~/LocalAiRobot`), or keep-alive so the session doesn't drop.
+
+> 🔑 **Skip the password (recommended for the field).** Typing a password on a phone keyboard gets old fast —
+> set up an Ed25519 key **once** (next section) and ConnectBot logs in instantly, over home Wi-Fi *or* the
+> hotspot.
 
 ---
 
@@ -140,3 +190,8 @@ terminal app drops you **straight to a shell — no password**.
 > `./scripts/install_stack_pi5.sh --bootstrap` (or `./scripts/run_me.sh --install-boot`). It's ordered
 > **after the network is up**, so Wi-Fi/SSH and this portal are ready before the brain launches. Full
 > details in the [assembly guide](assembly.md).
+
+> 📜 **Reading the boot service's logs.** The install scripts make the systemd journal **persistent**
+> (`/var/log/journal`), so it survives reboots. Live: `journalctl -u robot.service -f`. This boot:
+> `journalctl -u robot.service -b`. The run **before** the last reboot (e.g. to see why it crashed):
+> `journalctl -u robot.service -b -1`. (Set `ROBOT_PERSIST_JOURNAL=0` before installing to opt out.)
