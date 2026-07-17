@@ -42,8 +42,8 @@ Edit [`config/robot.env`](../config/robot.env) and set:
 ROBOT_AI_BACKEND=gemini
 ROBOT_GEMINI_API_KEY=AIza...your-key-here...
 # optional overrides (sensible defaults already set):
-# ROBOT_GEMINI_MODEL=gemini-2.5-flash
-# ROBOT_GEMINI_VISION_MODEL=          # empty -> reuse ROBOT_GEMINI_MODEL (Gemini is multimodal)
+# ROBOT_GEMINI_MODEL=gemini-3.5-flash
+# ROBOT_GEMINI_VISION_MODEL=gemini-robotics-er-1.6-preview   # ships set to Robotics-ER; leave empty to reuse ROBOT_GEMINI_MODEL
 ```
 
 Then reload the config (the brain reads the **shell**, not the file):
@@ -97,7 +97,7 @@ curl -s -H "x-goog-api-key: $ROBOT_GEMINI_API_KEY" -H 'Content-Type: application
   -d '{"contents":[{"parts":[{"text":"reply with one word: ready"}]}]}'
 ```
 
-**Run the brain** — the startup banner now reads `AI brain: REMOTE Gemini (gemini-2.5-flash) …`:
+**Run the brain** — the startup banner now reads `AI brain: REMOTE Gemini (gemini-3.5-flash) …`:
 
 ```bash
 ./scripts/run_me.sh --live        # (or --dry to bench it)

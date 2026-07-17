@@ -19,6 +19,14 @@ N="${2:-5}"
 if [ -z "$NAME" ]; then echo "usage: $(basename "$0") \"Name\" [num_shots]" >&2; exit 2; fi
 [ -x "$PY" ] || { echo "brain venv not found ($PY) -- run scripts/install_stack_pi5.sh first." >&2; exit 1; }
 
+# Step 25: the running brain holds the camera for its whole lifetime, so a second open here fails and shows a
+# misleading "no face detected". Refuse if the brain is up (patterns lifted from scripts/shutdown.sh).
+if pgrep -f 'python.*brain/main\.py' >/dev/null 2>&1 || { command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet robot.service 2>/dev/null; }; then
+  echo "The robot brain is RUNNING and holds the camera -- stop it first: ./scripts/shutdown.sh" >&2
+  echo "(restart afterwards with ./scripts/run_me.sh or: sudo systemctl start robot.service)" >&2
+  exit 1
+fi
+
 cd "$REPO/brain"
 exec "$PY" - "$NAME" "$N" <<'PYEOF'
 import sys, time
@@ -32,7 +40,7 @@ fid = FaceID(mem)
 if not getattr(cam, "available", False):
     print("camera not available -- set ROBOT_CAMERA_BACKEND=v4l2 + ROBOT_CAMERA_SOURCE for the USB webcam.",
           file=sys.stderr); sys.exit(1)
-if not fid.available:
+if not fid.ensure_loaded():   # P2-8: .available no longer loads; ensure_loaded() performs the model load
     print("face model not ready -- run ./scripts/patches/common/5_face_id_insightface.sh first.",
           file=sys.stderr); sys.exit(1)
 

@@ -58,11 +58,18 @@ class Pi5DistanceSensor:
         return self._distance                # METRES
 
     def _measure(self):
-        """One ping, under the shared lock. Returns metres, or None on no-echo/timeout. Busy-waits ONLY
-        within the echo window (bounded by `timeout`), so a dead beam can't hang the thread -- it returns
-        None each period. The lock makes the three beams fire one-at-a-time (no cross-talk)."""
-        # round-trip time to max range + margin bounds every wait (a no-echo ping returns after this)
+        """One ping, under the shared lock. Returns metres, or None on no-echo/timeout. The rising-edge
+        wait tight-spins only the first ~2 ms (catches sub-ms near-obstacle pulses), then sleep-polls the
+        long no-echo tail so the GIL is released (the wake-word 'went deaf' fix). The falling edge is a
+        tight loop for precise pulse timing, bounded at 2x the longest VALID pulse instead of the full
+        no-echo timeout. The lock makes the three beams fire one-at-a-time (no cross-talk)."""
+        # round-trip time to max range + margin bounds the rising-edge (no-echo) wait
         timeout = (2.0 * self.max_distance / _SPEED_OF_SOUND) + 0.02
+        # Longest VALID pulse is the round-trip at max range (e.g. ~5.8 ms at max_distance=1.0); bound the
+        # falling-edge tight-spin at 2x that (headroom for OS preemption) so a wedged-HIGH echo or a
+        # beyond-range object can't pin a core (and hold _PING_LOCK) for the whole no-echo timeout.
+        echo_max = 2.0 * self.max_distance / _SPEED_OF_SOUND
+        falling_bound = 2.0 * echo_max
         with _PING_LOCK:
             self._trig.off()
             self._trig.on()
@@ -70,13 +77,15 @@ class Pi5DistanceSensor:
             self._trig.off()
             t0 = time.perf_counter()
             while self._echo.value == 0:     # wait for the echo rising edge
-                if time.perf_counter() - t0 > timeout:
+                dt = time.perf_counter() - t0
+                if dt > timeout:
                     return None
-                time.sleep(_RISING_POLL_S)   # yield the GIL during the no-echo busy-wait
+                if dt > 0.002:               # near pulses caught by the tight spin; only the long
+                    time.sleep(_RISING_POLL_S)   # no-echo tail sleep-polls (yields the GIL)
             start = time.perf_counter()
             while self._echo.value == 1:     # ...then the falling edge (tight loop = precise pulse timing)
-                if time.perf_counter() - start > timeout:
-                    return None
+                if time.perf_counter() - start > falling_bound:
+                    return None              # wedged-HIGH / beyond-range -> no-echo (reads clear via _loop)
             elapsed = time.perf_counter() - start
         return min(self.max_distance, elapsed * _SPEED_OF_SOUND / 2.0)
 
@@ -84,10 +93,10 @@ class Pi5DistanceSensor:
         while not self._closed:
             try:
                 d = self._measure()
+                self._distance = d if d is not None else self.max_distance  # None = no-echo = legit clear
             except Exception:
-                d = None                     # a transient GPIO error reads as "clear", never crashes the loop
-            self._distance = d if d is not None else self.max_distance
-            time.sleep(self._period)
+                self._distance = -1.0        # HW/SW fault -> FAIL CLOSED (driver.distance_cm returns -1.0,
+            time.sleep(self._period)         # the forward gate blocks; matches vl53l1x_sensor.py)
 
     def close(self):
         self._closed = True

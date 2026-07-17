@@ -73,8 +73,10 @@ class Diag:
 
     # ---- prompts ----
     def confirm(self, question, timeout=None):
-        """Ask y/n. Returns True / False, or None if there's no answer within the timeout (so a check
-        NEVER blocks the run). Auto-True under --yes. timeout defaults to self.timeout."""
+        """Ask y/n. Returns True / False, or None if there's no answer within the timeout (so on a
+        select()-able stdin -- the normal tty/pipe case -- a check never blocks the run; if select() itself
+        fails the fallback is one blocking readline(), guarded by the surrounding try). Auto-True under
+        --yes. timeout defaults to self.timeout."""
         if self.args.yes:
             print(dim(f"    (--yes) {question} -> assumed yes"))
             return True
@@ -105,7 +107,8 @@ class Diag:
 
     def motors_allowed(self):
         """Decide whether the motor/servo spin may run. Never auto-spins under --yes, and the safety
-        prompt is TIMEOUT-BOUNDED so an unanswered run can never hang here (no answer -> skip, safe)."""
+        prompt is timeout-bounded (for a select()-able stdin) so an unanswered run does not hang here
+        (no answer -> skip, safe)."""
         if self.args.no_motors:
             return False, "skipped (--no-motors)"
         if self.args.wheels_off:
@@ -188,7 +191,7 @@ class Diag:
         plan = [("front", os.environ.get("ROBOT_TOF_XSHUT_FRONT", ""), _addr("ROBOT_TOF_ADDR_FRONT", 0x2A)),
                 ("left",  os.environ.get("ROBOT_TOF_XSHUT_LEFT", ""),  _addr("ROBOT_TOF_ADDR_LEFT", 0x2B)),
                 ("right", os.environ.get("ROBOT_TOF_XSHUT_RIGHT", ""), _addr("ROBOT_TOF_ADDR_RIGHT", 0x29))]
-        sensors, xshuts = {}, None
+        sensors, xshuts, i2c = {}, None, None
         try:
             i2c = tof.make_i2c()
             xshuts = tof.assign_addresses(i2c, [(int(p), a) for (_n, p, a) in plan],
@@ -223,6 +226,11 @@ class Diag:
                     x.close()
                 except Exception:
                     pass
+            if i2c is not None:                  # P2-5: release the bus LAST (after the reader threads join)
+                try:
+                    i2c.deinit()                 # busio.I2C / ExtendedI2C expose deinit(), not close()
+                except Exception:
+                    pass
 
     def _board_label(self):
         """(board name, pin scheme) for the pin map -- from the HAL, else a safe fallback."""
@@ -234,25 +242,11 @@ class Diag:
             return (os.environ.get("ROBOT_BOARD", "?") or "?"), "BCM"
 
     def _resolved_hcsr04_pins(self):
-        """The TRIG/ECHO pins the DRIVER will actually use: an env value wins, else the board's default_pins()
-        (so a Jetson gets its BOARD pins, not the Pi BCM defaults), else the Pi hard default. Mirrors driver.py
-        so diagnostics tests + prints the SAME pins the robot drives."""
-        try:
-            import hal
-            defaults = hal.current().default_pins()
-        except Exception:
-            defaults = {}
-        def _pin(key, hard):
-            v = os.environ.get(key, "").strip()
-            try:
-                return int(v) if v else int(defaults.get(key, hard))
-            except (TypeError, ValueError):
-                return hard
-        return {
-            "front": (_pin("ROBOT_TRIG_PIN", 23), _pin("ROBOT_ECHO_PIN", 24)),
-            "left":  (_pin("ROBOT_LEFT_TRIG_PIN", 5), _pin("ROBOT_LEFT_ECHO_PIN", 6)),
-            "right": (_pin("ROBOT_RIGHT_TRIG_PIN", 20), _pin("ROBOT_RIGHT_ECHO_PIN", 21)),
-        }
+        """The TRIG/ECHO pins the DRIVER will actually use (env > board default_pins() > Pi hard default).
+        P2-7: delegates to hal.resolve_hcsr04_pins() -- the SINGLE source of truth shared with driver.py, so
+        diagnostics tests + prints the exact pins the robot drives."""
+        import hal
+        return hal.resolve_hcsr04_pins()
 
     def _sensor_pinmap(self):
         """Print the pin/address map for the CONFIGURED sensor type + board, before the sensor checks run --
@@ -496,9 +490,8 @@ class Diag:
         try:
             import wave
             import numpy as np
-            wf = wave.open(wav, "rb")
-            raw = wf.readframes(wf.getnframes())
-            wf.close()
+            with wave.open(wav, "rb") as wf:     # P2-5: context manager -> handle released even if read raises
+                raw = wf.readframes(wf.getnframes())
             data = np.frombuffer(raw, dtype=np.int16)
             peak_pct = (100.0 * float(np.max(np.abs(data))) / 32767.0) if data.size else 0.0
         except Exception as e:
@@ -573,16 +566,19 @@ class Diag:
             return
         # Fully disable the forward obstacle gate for the spin test: a benchtop wall -- OR an UNPLUGGED
         # front sensor reading an error (-1) -- must not block the motor. -1000 => the gate never trips.
+        # P2-6: saved here and restored in the finally so the override can't leak past this test (the
+        # outer try/finally also covers the `import driver` early-return path).
+        prev_gate = os.environ.get("ROBOT_OBSTACLE_CM")
         os.environ["ROBOT_OBSTACLE_CM"] = "-1000"
-        try:
-            import driver
-        except Exception as e:
-            for la in labels:
-                self.bad(la, f"driver import failed: {e}", DOC_PWM)
-            return
-        print(dim("    Building the driver (the ESC should beep its arming tones)..."))
         d = None
         try:
+            try:
+                import driver
+            except Exception as e:
+                for la in labels:
+                    self.bad(la, f"driver import failed: {e}", DOC_PWM)
+                return
+            print(dim("    Building the driver (the ESC should beep its arming tones)..."))
             d = driver.RobotDriver()
             if isinstance(d.kit, driver.FakeServoKit):
                 for la in labels:
@@ -628,8 +624,11 @@ class Diag:
                                   f"no/!wrong steer -- check the servo on ch{steer_ch}, that the LiPo is ON "
                                   f"(its BEC powers the servo), and the ROBOT_STEER_* angles", DOC_PWM)
         except Exception as e:
+            # P2-1: only labels not ALREADY emitted get the blanket failure. self.failed holds
+            # (label, reason, doc) TUPLES, so unpack the label -- passed AND failed AND skipped.
+            emitted = set(self.passed) | set(self.skipped) | {la for (la, _r, _d) in self.failed}
             for la in labels:
-                if la not in self.passed:
+                if la not in emitted:
                     self.bad(la, f"{e}", DOC_PWM)
         finally:
             if d is not None:
@@ -637,6 +636,12 @@ class Diag:
                     d.close()    # neutral throttle + center steer on the way out
                 except Exception:
                     pass
+            # P2-6: undo the gate override (driver caches obstacle_cm at __init__, so timing vs d.close()
+            # is irrelevant; delete the key if it was unset before this test).
+            if prev_gate is None:
+                os.environ.pop("ROBOT_OBSTACLE_CM", None)
+            else:
+                os.environ["ROBOT_OBSTACLE_CM"] = prev_gate
 
     # ===================== orchestration =====================
     def check_fan(self):
@@ -721,6 +726,27 @@ def main():
     if os.environ.get("ROBOT_DRY_RUN") == "1" or os.environ.get("ROBOT_SIMULATE") == "1":
         print(red("ROBOT_DRY_RUN=1 fakes all hardware -- run via ./scripts/run_diagnostics.sh (forces live)."))
         return 2
+    # Step 19: refuse to race a LIVE brain: two writers on the ESC/PCA9685 plus GPIO/camera/mic contention
+    # give false FAILs. Best-effort (mirrors scripts/shutdown.sh); an error here must never block a
+    # legitimate run (via the wrapper the service/brain are already stopped, so this is a no-op).
+    try:
+        service_up = bool(shutil.which("systemctl")) and subprocess.run(
+            ["systemctl", "is-active", "--quiet", "robot.service"], timeout=5).returncode == 0
+    except Exception:
+        service_up = False
+    try:
+        # Same anchored pattern as scripts/shutdown.sh -- matches ONLY the brain's python process, never an
+        # editor/tail mentioning the path, and never this diagnostics process.
+        brain_up = subprocess.run(["pgrep", "-f", r"python.*brain/main\.py"], timeout=5,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    except Exception:
+        brain_up = False
+    if service_up or brain_up:
+        print(red("The robot brain is RUNNING -- a live run would put TWO writers on the ESC/GPIO and"))
+        print(red("give false results. Stop it first (./scripts/shutdown.sh, or"))
+        print(red("`sudo systemctl stop robot.service`), or launch via ./scripts/run_diagnostics.sh"))
+        print(red("which stops it for you."))
+        return 3
     try:
         return Diag(args).run()
     except KeyboardInterrupt:

@@ -37,6 +37,7 @@
 import logging
 import os
 import queue
+import select
 import sys
 import threading
 import time
@@ -215,8 +216,9 @@ class WakeWord:
         import sounddevice as sd
 
         self._model.reset()
-        self._cancel.clear()                    # fresh listen; cancel_listen() sets it to break us out
-        time.sleep(max(0.0, self.cooldown_s))   # don't re-wake on the tail of the last reply
+        self._cancel.clear()                                 # fresh listen; cancel_listen() sets it to break us out
+        if self._cancel.wait(max(0.0, self.cooldown_s)):     # cooldown, but honour cancel_listen()
+            return "CANCELLED"                               # behaviour ended mid-cooldown -> stop promptly
         watch_stdin = sys.stdin.isatty()         # headless (systemd) has no TTY -> wake-only
         hits = 0
         result = None
@@ -342,7 +344,6 @@ class WakeWord:
                             if self._yield.is_set():
                                 break   # drop audio_lock + the stream so the waiting turn can play
                             if watch_stdin:
-                                import select
                                 r, _, _ = select.select([sys.stdin], [], [], 0)
                                 if r:
                                     line = sys.stdin.readline()

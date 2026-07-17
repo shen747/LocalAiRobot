@@ -39,6 +39,9 @@ if curl -fsSLo "$AF_TMP/install_pivariety_pkgs.sh" "$AF_URL"; then
   chmod +x "$AF_TMP/install_pivariety_pkgs.sh"
   if ( cd "$AF_TMP" && ./install_pivariety_pkgs.sh -p libcamera_dev && ./install_pivariety_pkgs.sh -p libcamera_apps ); then
     echo "   AF tuning installed (after a reboot the 'Could not set AF_MODE' warning should be GONE)."
+    # Step 21: sentinel written ONLY on real success -- install_stack_pi5.sh skips its auto-AF re-run when
+    # this exists (a standalone run of this patch still force-reapplies). ${HOME} (no `H` var here).
+    mkdir -p "${HOME}/.localairobot" && touch "${HOME}/.localairobot/.imx519_af_installed" || true
   else
     echo "   !! Arducam AF install FAILED -- the camera still works fixed-focus. See https://docs.arducam.com/Raspberry-Pi-Camera/"
     echo "      or switch to the official Camera Module 3 (IMX708) for first-class AF: ./scripts/patches/pi5/3_camera_cm3.sh"

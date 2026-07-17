@@ -77,6 +77,9 @@ _DEFAULT_TIMING = (2.0, False)
 _PROC_ANIMATED = frozenset({"talking"})
 # talking mouth openness cycle (0 = nearly closed, 1 = wide) -> a mouth-like flap when re-rendered per frame.
 _TALK_OPEN = (0.15, 0.55, 1.0, 0.6, 0.25, 0.85, 0.45)
+# P2-11: the tiny bench state label is OFF by default (it shipped to the user-facing concierge face). Read
+# once at module scope -- the talking face re-renders at up to 10-15 fps. Set ROBOT_FACE_DEBUG_LABEL=1 to show.
+_DEBUG_LABEL = os.environ.get("ROBOT_FACE_DEBUG_LABEL", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _frame_key(name):
@@ -157,7 +160,8 @@ def _render(state, w, h, frame=0):
     if m.get("query"):
         _draw_query(d, w * 0.80, h * 0.16, h * 0.11, eye, max(3, int(h * 0.016)))
 
-    d.text((6, h - 16), state, fill=(150, 150, 160))   # tiny label (handy on the bench)
+    if _DEBUG_LABEL:
+        d.text((6, h - 16), state, fill=(150, 150, 160))   # bench debug label (ROBOT_FACE_DEBUG_LABEL=1)
     return img
 
 

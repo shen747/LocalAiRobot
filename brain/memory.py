@@ -40,12 +40,24 @@ def _ago(seconds):
 
 
 class Memory:
+    _PRUNE_EVERY = 500   # opportunistic prune cadence, in inserted observation rows
+
     def __init__(self, db_path=None):
         db_path = db_path or os.environ.get("ROBOT_MEMORY_DB", "~/.localairobot/memory.db")
         self.path = os.path.expanduser(db_path)
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=5.0)
+        # Step 13(a): WAL + synchronous=NORMAL -- one fsync per txn instead of per journal phase. MUST run
+        # right after connect, before any DDL/DML (journal_mode can't change mid-transaction). journal_mode
+        # persists in the DB file; synchronous is per-connection (re-set on every open).
+        try:
+            mode = self._db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            self._db.execute("PRAGMA synchronous=NORMAL")
+            if str(mode).lower() != "wal":
+                log.warning("memory: journal_mode=WAL unavailable (got %s) -- continuing", mode)
+        except Exception as e:
+            log.warning("memory: could not set WAL pragmas (%s) -- continuing", e)
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS observations (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,9 +82,35 @@ class Memory:
             """CREATE TABLE IF NOT EXISTS faces (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                    ts REAL, name TEXT, embedding BLOB)""")
+        # Step 14: indexes for the per-turn prompt-build queries (after the CREATE TABLEs, before commit).
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_visible_ts ON observations(visible, ts)")
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_source_ts  ON observations(source, ts)")
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_facts_ts       ON facts(ts)")
         self._db.commit()
         n = self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
         log.info("memory: %s (%d observations)", self.path, n)
+        # Step 12: bounded retention. Runs once here (before any behaviour/control thread exists) and
+        # opportunistically every _PRUNE_EVERY inserted rows from record()/record_scene().
+        self._since_prune = 0
+        self._prune()
+
+    def _prune(self, keep=None):
+        """Keep only the newest ROBOT_MEMORY_RETAIN observations. Log-and-continue on any error.
+        NEVER call while holding self._lock -- it acquires the (non-reentrant) lock itself."""
+        if keep is None:
+            try:
+                keep = int(os.environ.get("ROBOT_MEMORY_RETAIN", "5000") or 5000)
+            except ValueError:
+                keep = 5000
+        try:
+            with self._lock:
+                self._db.execute(
+                    "DELETE FROM observations WHERE id NOT IN "
+                    "(SELECT id FROM observations ORDER BY ts DESC LIMIT ?)", (keep,))
+                self._db.commit()
+                self._since_prune = 0
+        except Exception as e:
+            log.warning("memory: prune failed (%s) -- continuing", e)
 
     def record(self, source, target=None, visible=None, horizontal=None, distance=None,
                confidence=None, notes="", distances=None):
@@ -89,6 +127,7 @@ class Memory:
                         front_cm, left_cm, right_cm)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
                 self._db.commit()
+                self._since_prune += 1
         except Exception as e:
             # Memory is non-critical telemetry: a disk-full / I/O error must NEVER crash the
             # control loop or a running explore/find. Log and carry on.
@@ -97,6 +136,8 @@ class Memory:
         if target:
             log.info("memory: recorded %s target=%s visible=%s %s/%s",
                      source, target, visible, horizontal, distance)
+        if self._since_prune >= self._PRUNE_EVERY:
+            self._prune()   # OUTSIDE the with-block: self._lock is NOT held here (deadlock otherwise)
 
     def record_look(self, obs, distances=None):
         """Record a vision.look() result dict."""
@@ -108,14 +149,39 @@ class Memory:
     def record_scene(self, description, objects=None, distances=None):
         """Record an agentic-explore look: the FULL scene description (a source='scene' row) PLUS one row
         per named object -- so recent_scenes() can replay the rich descriptions a REMOTE run gathered for a
-        later LOCAL run to reuse, while context_string() still lists the individual objects."""
+        later LOCAL run to reuse, while context_string() still lists the individual objects.
+        Step 13(b): one executemany + ONE commit (one fsync) instead of K+1 per-row commits."""
         description = (description or "").strip()
+        distances = distances or {}
+        ts = time.time()
+        front, left, right = distances.get("front"), distances.get("left"), distances.get("right")
+        rows, targets = [], []
         if description:
-            self.record("scene", target=None, notes=description, distances=distances)
+            #      ts, source,  target, visible, horiz, dist, conf, notes,       front, left, right
+            rows.append((ts, "scene", None, None, None, None, None, description, front, left, right))
         for o in (objects or []):
             o = str(o).strip()
             if o:
-                self.record("explore", target=o, visible=True, distances=distances)
+                rows.append((ts, "explore", o, 1, None, None, None, "", front, left, right))
+                targets.append(o)
+        if not rows:
+            return
+        try:
+            with self._lock:
+                self._db.executemany(
+                    """INSERT INTO observations
+                       (ts, source, target, visible, horizontal, distance, confidence, notes,
+                        front_cm, left_cm, right_cm)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""", rows)
+                self._db.commit()
+                self._since_prune += len(rows)
+        except Exception as e:
+            log.warning("memory write failed (%s) -- continuing", e)
+            return
+        for o in targets:    # preserve record()'s per-target line, emitted outside the lock
+            log.info("memory: recorded %s target=%s visible=%s %s/%s", "explore", o, True, None, None)
+        if self._since_prune >= self._PRUNE_EVERY:
+            self._prune()   # self._lock is NOT held here
 
     # ---------- user-taught facts (the "remember this person/thing" feature) ----------
     def remember_fact(self, name, fact="", description="", image_path=None):

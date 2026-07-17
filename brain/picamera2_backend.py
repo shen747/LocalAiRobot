@@ -14,6 +14,7 @@
 
 import logging
 import os
+import threading
 from io import BytesIO
 
 from camera import _letterbox_square   # shared letterbox/JPEG helper stays in camera.py
@@ -26,6 +27,14 @@ class PiCamera2Camera:
 
     def __init__(self, size):
         self.size = size
+        # Single-flight capture watchdog state -- set FIRST so close()/capture_jpeg are safe even if
+        # construction below fails (no camera).
+        self._cap_lock = threading.Lock()
+        self._cap_worker = None
+        try:
+            self._cap_timeout = float(os.environ.get("ROBOT_CAMERA_CAPTURE_TIMEOUT_S", "12") or 12)
+        except (TypeError, ValueError):
+            self._cap_timeout = 12.0
         try:
             self.warmup = float(os.environ.get("ROBOT_CAMERA_WARMUP_S", "1.0") or 1.0)
         except ValueError:
@@ -65,38 +74,66 @@ class PiCamera2Camera:
             self.available = False
 
     def capture_jpeg(self):
-        """Capture one frame as preprocessed JPEG bytes, or None if no camera is available."""
+        """Capture one frame as preprocessed JPEG bytes, or None if no camera is available. The whole
+        blocking AF+capture+fallback block runs in a single-flight daemon worker joined with a deadline, so
+        a wedged libcamera autofocus_cycle()/capture_image() can never freeze the explore/command loop."""
         if not self.available or self._picam is None:
             return None
-        try:
-            if self._has_af:
+        result = {"data": None}
+        with self._cap_lock:
+            if self._cap_worker is not None and self._cap_worker.is_alive():
+                log.warning("capture still in-flight from a prior timeout -- skipping this frame")
+                return None
+            picam = self._picam                  # local ref: worker never touches a nulled attribute
+            def _grab():
                 try:
-                    self._picam.autofocus_cycle()   # one-shot AF scan; blocks until the lens locks (~0.3-1s)
+                    if self._has_af:
+                        try:
+                            picam.autofocus_cycle()   # one-shot AF scan; blocks until the lens locks (~0.3-1s)
+                        except Exception as e:
+                            log.debug("autofocus cycle failed (%s) -- capturing anyway", e)
+                    buf = BytesIO()
+                    try:
+                        # capture_image() returns a correctly-converted PIL.Image -- avoids the
+                        # capture_array()+Image.fromarray channel-order trap (the default XBGR8888 main
+                        # stream gets misread as RGBA, swapping colours / pinning a constant plane).
+                        img = _letterbox_square(picam.capture_image("main"), self.size)
+                        img.save(buf, format="JPEG", quality=80)
+                    except Exception:
+                        # Pillow/letterbox unavailable: send the raw still; Ollama resizes it itself.
+                        buf = BytesIO()
+                        picam.capture_file(buf, format="jpeg")
+                    result["data"] = buf.getvalue()
                 except Exception as e:
-                    log.debug("autofocus cycle failed (%s) -- capturing anyway", e)
-            buf = BytesIO()
-            try:
-                # capture_image() returns a correctly-converted PIL.Image -- avoids the
-                # capture_array()+Image.fromarray channel-order trap (the default XBGR8888 main
-                # stream gets misread as RGBA, swapping colours / pinning a constant plane).
-                img = _letterbox_square(self._picam.capture_image("main"), self.size)
-                img.save(buf, format="JPEG", quality=80)
-            except Exception:
-                # Pillow/letterbox unavailable: send the raw still; Ollama resizes it itself.
-                buf = BytesIO()
-                self._picam.capture_file(buf, format="jpeg")
-            data = buf.getvalue()
-            log.info("captured frame: %d bytes JPEG", len(data))
-            return data
-        except Exception as e:
-            log.warning("capture failed: %s", e)
+                    log.warning("capture worker failed: %s", e)
+            worker = threading.Thread(target=_grab, daemon=True, name="cam-grab")
+            self._cap_worker = worker
+            worker.start()
+        worker.join(self._cap_timeout)           # join the LOCAL ref (see gst_camera note)
+        if worker.is_alive():
+            log.warning("capture timed out after %.0fs -- returning no frame", self._cap_timeout)
             return None
+        data = result["data"]
+        if not data:
+            log.warning("capture failed: no frame from the camera")
+            return None
+        log.info("captured frame: %d bytes JPEG", len(data))
+        return data
 
     def close(self):
-        if self._picam is not None:
-            try:
-                self._picam.stop()
-            except Exception:
-                pass
-            self._picam = None
-            self.available = False
+        self.available = False
+        with self._cap_lock:
+            w = self._cap_worker
+            if w is not None and w.is_alive():
+                w.join(timeout=2.0)
+            if self._picam is not None:
+                if w is not None and w.is_alive():
+                    # Worker wedged inside libcamera; stop() from another thread can deadlock/crash.
+                    # Leave Picamera2 running -- the daemon worker + process exit clean up.
+                    log.warning("camera close: capture worker still wedged -- skipping Picamera2 stop()")
+                else:
+                    try:
+                        self._picam.stop()
+                    except Exception:
+                        pass
+                self._picam = None

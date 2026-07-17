@@ -69,7 +69,8 @@ def _vision_timeout(cfg=None):
     so it gets a MUCH shorter cap: a HUNG remote call would otherwise freeze LOOK/explore for the whole 600s
     (a stalled gemini-robotics-er request once blocked an explore mid-step -- and the wake-word STOP can't
     interrupt an in-flight network read). ROBOT_VISION_TIMEOUT_S = local; ROBOT_VISION_TIMEOUT_REMOTE_S =
-    remote. (Both are split across ROBOT_LLM_RETRIES attempts by the inference gateway.)"""
+    remote. (Both are an ABSOLUTE deadline: the inference gateway divides the remaining budget across
+    ROBOT_LLM_RETRIES attempts, so total wall-clock never exceeds the timeout.)"""
     if cfg is not None and cfg.get("ai_backend") == "gemini":
         key, default = "ROBOT_VISION_TIMEOUT_REMOTE_S", "45"
     else:

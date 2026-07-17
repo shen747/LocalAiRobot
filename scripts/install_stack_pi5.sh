@@ -92,13 +92,20 @@ case "$CAMERA_OVERLAY" in
       # for you -- the stock Bookworm tuning has NO AF algorithm, so without this AF is a no-op ("Could not set
       # AF_MODE"). Runs ONLY for the IMX519; other cameras (OV5647/CM3) don't need it. Best-effort: a failure
       # leaves the camera fixed-focus and the install continues. Set ROBOT_CAMERA_AF_INSTALL=0 to skip the fork.
+      # Step 21: gate the auto-AF re-run on a sentinel the PATCH writes ONLY on real success, so a re-run of
+      # this (deliberately re-runnable) installer doesn't re-download + re-apply the Arducam libcamera fork
+      # every time. The standalone patch stays un-gated, so an explicit run always force-reapplies the fork.
       case "$CAMERA_OVERLAY" in imx519*)
-        if [ "${ROBOT_CAMERA_AF_INSTALL:-1}" != 0 ]; then
+        AF_SENTINEL="${H}/.localairobot/.imx519_af_installed"
+        if [ "${ROBOT_CAMERA_AF_INSTALL:-1}" = 0 ]; then
+          echo "   [camera AF] skipped (ROBOT_CAMERA_AF_INSTALL=0). Enable later:  ./scripts/patches/pi5/3_camera_imx519.sh"
+        elif [ -f "$AF_SENTINEL" ]; then
+          echo "   [camera AF] already installed ($AF_SENTINEL) -- skipping the Arducam fork re-install."
+          echo "               force a reinstall:  rm \"$AF_SENTINEL\"   or run  ./scripts/patches/pi5/3_camera_imx519.sh"
+        else
           echo "   [camera AF] auto-installing IMX519 autofocus tuning (./scripts/patches/pi5/3_camera_imx519.sh)..."
           LAR_FROM_INSTALL=1 bash "${REPO}/scripts/patches/pi5/3_camera_imx519.sh" \
             || echo "   (AF tuning step failed -- camera still works fixed-focus; re-run ./scripts/patches/pi5/3_camera_imx519.sh later)"
-        else
-          echo "   [camera AF] skipped (ROBOT_CAMERA_AF_INSTALL=0). Enable later:  ./scripts/patches/pi5/3_camera_imx519.sh"
         fi ;;
       esac
     else
@@ -135,9 +142,17 @@ sudo usermod -aG i2c,gpio,dialout,audio,video "$USER" || true
 
 echo ">> [4/8] Ollama + models (text intent + vision)"
 command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
-ollama pull "${MODEL}"
-ollama pull "${VISION_MODEL}"            # dedicated vision VLM (ROBOT_VISION_MODEL); default moondream
-echo "   note: ${MODEL} (Gemma 4) needs a RECENT Ollama -- if the pull 404s, upgrade Ollama and retry. 'ollama --version' is $(ollama --version 2>/dev/null || echo '?')"
+# Step 20: guard each pull so a 404 (older Ollama) / network drop prints its OWN recovery hint before
+# exiting, instead of set -e aborting silently before the remaining install steps.
+if ! ollama pull "${MODEL}"; then
+  echo "!! 'ollama pull ${MODEL}' failed -- Gemma 4 needs a RECENT Ollama. Upgrade it" >&2
+  echo "   (curl -fsSL https://ollama.com/install.sh | sh) and re-run. Version now: $(ollama --version 2>/dev/null || echo '?')" >&2
+  exit 1
+fi
+if ! ollama pull "${VISION_MODEL}"; then   # dedicated vision VLM (ROBOT_VISION_MODEL); default moondream
+  echo "!! 'ollama pull ${VISION_MODEL}' failed -- check the model name / network and re-run." >&2
+  exit 1
+fi
 
 echo ">> [5/8] whisper.cpp"
 [ -d "${H}/whisper.cpp" ] || git clone https://github.com/ggerganov/whisper.cpp.git "${H}/whisper.cpp"
@@ -154,8 +169,10 @@ if [ ! -x "${H}/piper/piper/piper" ]; then
   tar -xf piper.tgz
 fi
 VB="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
-[ -f "${VOICE}.onnx" ]      || curl -fsSLo "${VOICE}.onnx"      "${VB}/${VOICE}.onnx"
-[ -f "${VOICE}.onnx.json" ] || curl -fsSLo "${VOICE}.onnx.json" "${VB}/${VOICE}.onnx.json"
+# Step 23: download to a .part then mv into place, so an interrupted transfer can't leave a TRUNCATED
+# ${VOICE}.onnx that the [ -f ] guard then treats as done on every re-run (-> a silently mute robot).
+[ -f "${VOICE}.onnx" ]      || { curl -fsSLo "${VOICE}.onnx.part"      "${VB}/${VOICE}.onnx"      && mv "${VOICE}.onnx.part"      "${VOICE}.onnx"; }
+[ -f "${VOICE}.onnx.json" ] || { curl -fsSLo "${VOICE}.onnx.json.part" "${VB}/${VOICE}.onnx.json" && mv "${VOICE}.onnx.json.part" "${VOICE}.onnx.json"; }
 
 echo ">> [7/8] USB-C face-panel library (turing-smart-screen-python; used via ROBOT_FACE_LIB)"
 [ -d "${H}/turing-smart-screen-python" ] || git clone "${TURING_REPO}" "${H}/turing-smart-screen-python"

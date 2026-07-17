@@ -44,7 +44,12 @@ TimeoutStopSec=15
 # unexpected CLEAN exit -- so flicking the power off and on always recovers to a running robot. A commanded
 # `systemctl stop` / `--disable-boot` still stops it (systemd never restarts a unit it deliberately stopped).
 Restart=always
-RestartSec=3
+# Step 17: 10s (was 3s) so a PERSISTENT crash-loop (bad config, missing mic, corrupt venv, OOM at model
+# load) re-imports the heavy stack ~6x/min instead of ~20x/min -- much less CPU/thermal/flash/battery burn
+# on an unattended robot. A real brown-out reboot does a single clean ExecStart next boot, so this barely
+# affects the designed common case. NB: this is the TEMPLATE -- re-run ./scripts/run_me.sh --install-boot
+# (or edit the installed unit + `sudo systemctl daemon-reload`) to apply it to an already-provisioned robot.
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

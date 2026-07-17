@@ -123,8 +123,9 @@ if [ "$PIPER_NEED" = 1 ]; then
       tar -xf piper.tgz && rm -f piper.tgz
     fi
     VB="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
-    [ -f "${VOICE}.onnx" ]      || { echo ">> download voice ${VOICE}"; curl -fsSLo "${VOICE}.onnx"      "${VB}/${VOICE}.onnx"; }
-    [ -f "${VOICE}.onnx.json" ] ||                                       curl -fsSLo "${VOICE}.onnx.json" "${VB}/${VOICE}.onnx.json"
+    # Step 23: tmp+mv so an interrupted download can't leave a TRUNCATED voice the [ -f ] guard then skips.
+    [ -f "${VOICE}.onnx" ]      || { echo ">> download voice ${VOICE}"; curl -fsSLo "${VOICE}.onnx.part"      "${VB}/${VOICE}.onnx"      && mv "${VOICE}.onnx.part"      "${VOICE}.onnx"; }
+    [ -f "${VOICE}.onnx.json" ] ||                                       { curl -fsSLo "${VOICE}.onnx.json.part" "${VB}/${VOICE}.onnx.json" && mv "${VOICE}.onnx.json.part" "${VOICE}.onnx.json"; }
   fi
 fi
 

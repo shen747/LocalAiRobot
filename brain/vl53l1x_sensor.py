@@ -12,7 +12,9 @@
 # FAIL CLOSED: a read error/timeout caches a NEGATIVE distance, so driver.distance_cm() returns its -1.0
 # "read failed" sentinel and the FORWARD gate treats it as BLOCKED (the SEN-04/05 safety rule -- an errored
 # sensor must never read "clear"). "No target in range" is a legitimate CLEAR (like an ultrasonic no-echo)
-# and caches max_distance.
+# and caches max_distance. A SILENT ranging stall (data_ready stuck False while I2C still ACKs, no exception)
+# also fails closed after a ~0.5 s staleness watchdog, so a wedged sensor can't latch "clear" forever.
+# (Residual: a fully BLOCKED I2C transaction has no upstream timeout -- Blinka busio provides none.)
 #
 # adafruit-circuitpython-vl53l1x + Blinka are imported LAZILY, so importing this module is safe on any
 # machine; only ROBOT_SENSOR_TYPE=vl53l1x on live hardware ever constructs a sensor.
@@ -69,7 +71,9 @@ class VL53L1XSensor:
         import adafruit_vl53l1x
         self.max_distance = float(max_distance)
         self._period = period
-        self._distance = self.max_distance       # start CLEAR so a not-yet-read sensor doesn't block at boot
+        # Start CLEAR so a not-yet-read sensor doesn't block at boot -- but only for the staleness grace
+        # below (~0.5 s): if no successful read EVER lands, the watchdog fails this beam closed.
+        self._distance = self.max_distance
         self._closed = False
         self._vl = adafruit_vl53l1x.VL53L1X(i2c, address=address)
         try:
@@ -78,6 +82,10 @@ class VL53L1XSensor:
         except Exception:
             pass                                 # keep library defaults if these knobs aren't exposed
         self._vl.start_ranging()
+        # Staleness watchdog: if data_ready silently sticks False (I2C still ACKs) the cached value would
+        # otherwise freeze -- possibly at "clear". Generous window: ~0.5 s >> healthy 20 ms cadence.
+        self._last_ok = time.monotonic()
+        self._stale_timeout = max(0.5, self._period * 25)
         self._thread = threading.Thread(target=self._loop, daemon=True, name=f"vl53l1x-0x{int(address):02x}")
         self._thread.start()
 
@@ -95,8 +103,12 @@ class VL53L1XSensor:
                         self._distance = self.max_distance          # no target -> clear path (like no-echo)
                     else:
                         self._distance = min(self.max_distance, max(0.0, cm / 100.0))
+                    self._last_ok = time.monotonic()                # successful read (None = legit clear counts)
+                elif time.monotonic() - self._last_ok > self._stale_timeout:
+                    self._distance = -1.0        # ranging silently stalled -> FAIL CLOSED
             except Exception:
-                self._distance = -1.0            # FAIL CLOSED: an errored read must never read "clear"
+                self._distance = -1.0            # FAIL CLOSED (deliberately does NOT touch _last_ok --
+                                                 # stays stale until a real successful read lands)
             time.sleep(self._period)
 
     def close(self):

@@ -59,6 +59,40 @@ class Board(Protocol):
 _REGISTRY = []
 _current = None
 
+# P2-7: single source of truth for the HC-SR04 TRIG/ECHO pins, shared by driver.py (which drives them) and
+# diagnostics.py (which tests them) so the two can never drift. Pi BCM last-resort fallback; boards override
+# via default_pins().
+HCSR04_HARD_DEFAULT_PINS = {
+    "ROBOT_TRIG_PIN": 23, "ROBOT_ECHO_PIN": 24,
+    "ROBOT_LEFT_TRIG_PIN": 5, "ROBOT_LEFT_ECHO_PIN": 6,
+    "ROBOT_RIGHT_TRIG_PIN": 20, "ROBOT_RIGHT_ECHO_PIN": 21,
+}
+
+
+def resolve_hcsr04_pins():
+    """The TRIG/ECHO pins the driver will actually use: env > board default_pins() > Pi hard default.
+    Never raises (board lookup is best-effort), so diagnostics can always print a pin map."""
+    try:
+        defaults = current().default_pins() or {}
+    except Exception:
+        defaults = {}
+
+    def _pin(key):
+        hard = HCSR04_HARD_DEFAULT_PINS[key]
+        try:
+            return int(os.environ.get(key, defaults.get(key, hard)))
+        except (TypeError, ValueError):
+            try:
+                return int(defaults.get(key, hard))
+            except (TypeError, ValueError):
+                return hard
+
+    return {
+        "front": (_pin("ROBOT_TRIG_PIN"), _pin("ROBOT_ECHO_PIN")),
+        "left":  (_pin("ROBOT_LEFT_TRIG_PIN"), _pin("ROBOT_LEFT_ECHO_PIN")),
+        "right": (_pin("ROBOT_RIGHT_TRIG_PIN"), _pin("ROBOT_RIGHT_ECHO_PIN")),
+    }
+
 
 def register(board):
     """Called at import time by each brain/boards/<name>.py module."""

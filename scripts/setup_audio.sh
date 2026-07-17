@@ -117,8 +117,15 @@ if [ "$AUDIO_ONLY" = 1 ]; then
 fi
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ENV="$REPO/config/robot.env"
-set_kv() {   # set_kv KEY VALUE -- replace only KEY's VALUE in place; preserve any trailing "# comment"
-  sed -i -E "s|^($1=)[^[:space:]#]*(.*)$|\1$2\2|" "$ENV"
+set_kv() {   # set_kv KEY VALUE -- replace only KEY's VALUE in place (preserve any trailing "# comment"); append if absent
+  # P2-12: a sed-replace-only set_kv silently no-ops when the key is missing (a trimmed config -> unconfigured
+  # audio device with no diagnostic). Append when absent, mirroring the patch scripts' proven pattern; the
+  # replace branch stays byte-identical so it still preserves the trailing "# comment".
+  if grep -qE "^$1=" "$ENV"; then
+    sed -i -E "s|^($1=)[^[:space:]#]*(.*)$|\1$2\2|" "$ENV"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$ENV"
+  fi
 }
 mic_id="$(arecord -l 2>/dev/null | sed -n 's/^card \([0-9]\+\): \([^ ]\+\).*/\1 \2/p' | sort -u \
             | while read -r n id; do [ -e "/proc/asound/card$n/usbid" ] && echo "$id"; done | head -n1)"
@@ -143,7 +150,12 @@ if [ -f "$ENV" ]; then
     # the pretty name couldn't be parsed. Delimiter is '@' (not '|' like set_kv) because the value regex
     # needs the ERE alternation '|' -- reusing '|' as the delimiter would end the pattern early; '@'
     # never occurs in an ALSA card name. The end-anchor is written '\$' so the shell can't eat "$@".
-    sed -i -E "s@^(ROBOT_WAKEWORD_DEVICE=)(\"[^\"]*\"|[^[:space:]#]*)(.*)\$@\1\"${mic_name:-$mic_id}\"\3@" "$ENV"
+    # P2-12: same silent-no-op-when-absent flaw as set_kv -- guard the dedicated sed with a grep + append.
+    if grep -qE '^ROBOT_WAKEWORD_DEVICE=' "$ENV"; then
+      sed -i -E "s@^(ROBOT_WAKEWORD_DEVICE=)(\"[^\"]*\"|[^[:space:]#]*)(.*)\$@\1\"${mic_name:-$mic_id}\"\3@" "$ENV"
+    else
+      printf 'ROBOT_WAKEWORD_DEVICE="%s"\n' "${mic_name:-$mic_id}" >> "$ENV"
+    fi
     echo "                          ROBOT_MIC=plughw:CARD=$mic_id,DEV=0"
     echo "                          ROBOT_WAKEWORD_DEVICE=\"${mic_name:-$mic_id}\""
     # Layer-2 collision: a mic that shares the speaker's USB product string gets a _N dedupe suffix, and

@@ -33,6 +33,7 @@ import logging
 import os
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -287,15 +288,19 @@ def _llm_retries():
 def _generate_with_retries(cfg, payload, timeout):
     """Fetch the raw model response string, retrying a TRANSIENT network failure on a FRESH connection.
     The field 'The read operation timed out' is a stalled TCP read that never delivers data within the
-    timeout; a second, fresh attempt usually returns fast. The timeout budget is SPLIT across attempts
-    (per_attempt = timeout / (retries+1), floored at 20 s) so the TOTAL wall-clock stays ~ROBOT_LLM_TIMEOUT_S
-    instead of multiplying it -- the point is to avoid the long dead-air, not to wait even longer. Content
-    errors (_gemini_generate's ValueError for a blocked/empty answer) are NOT network errors, so they
-    propagate immediately without a retry."""
+    timeout; a second, fresh attempt usually returns fast. The timeout is an ABSOLUTE deadline: each
+    attempt is derived from the REMAINING budget (targeting ~20 s per attempt only where the budget
+    allows), so the TOTAL wall-clock never exceeds ROBOT_LLM_TIMEOUT_S -- the point is to avoid the long
+    dead-air, not to wait even longer. Content errors (_gemini_generate's ValueError for a blocked/empty
+    answer) are NOT network errors, so they propagate immediately without a retry."""
     attempts = max(1, _llm_retries() + 1)
-    per_attempt = max(timeout / attempts, 20.0)
+    deadline = time.monotonic() + timeout
     is_gemini = cfg.get("ai_backend") == "gemini"
     for i in range(attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"llm budget of {timeout}s exhausted after {i} attempt(s)")
+        per_attempt = min(remaining, max(remaining / (attempts - i), 20.0))
         try:
             if is_gemini:
                 return _gemini_generate(cfg, payload, per_attempt)
@@ -307,6 +312,7 @@ def _generate_with_retries(cfg, payload, timeout):
                 raise
             log.warning("llm network attempt %d/%d failed (%s) -- retrying on a fresh connection",
                         i + 1, attempts, e)
+    raise TimeoutError(f"llm budget of {timeout}s exhausted after {attempts} attempt(s)")  # defensive
 
 
 def ollama_generate(cfg, payload, timeout):

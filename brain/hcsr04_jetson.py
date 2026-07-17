@@ -22,6 +22,10 @@ _SPEED_OF_SOUND = 343.0   # m/s (dry air, ~20C)
 # detection tight; detecting the edge slightly late only shifts `start` later -> the pulse reads SHORTER ->
 # a nearer (more conservative/safer) distance, never farther. The pulse-timing loop stays a tight busy-wait.
 _RISING_POLL_S = 0.0002
+# Serialise pings across ALL beams (anti-cross-talk: one beam must never hear another's burst -> false
+# ~0 cm). Module-level so every JetsonDistanceSensor shares it, and it survives the per-drive sensor
+# rebuild (resume_sensing) since the module stays imported. Mirrors hcsr04_pi5.py.
+_PING_LOCK = threading.Lock()
 
 
 class JetsonDistanceSensor:
@@ -50,32 +54,41 @@ class JetsonDistanceSensor:
         return self._distance                   # METRES
 
     def _measure(self):
-        """One ping. Returns metres, or None on no-echo/timeout. Busy-waits ONLY within the echo window
-        (bounded by `timeout`), so a dead sensor can't hang the thread -- it returns None each period."""
+        """One ping, under the shared lock (anti-cross-talk, same as the Pi 5 backend). Returns metres, or
+        None on no-echo/timeout. Rising edge: tight-spin the first ~2 ms (catches sub-ms near pulses), then
+        sleep-poll the long no-echo tail (yields the GIL). Falling edge: tight loop, bounded at 2x the
+        longest VALID pulse instead of the full no-echo timeout."""
         GPIO = self._GPIO
-        GPIO.output(self._trig, GPIO.HIGH)
-        time.sleep(1e-5)                         # 10us trigger pulse
-        GPIO.output(self._trig, GPIO.LOW)
-        # Bound the wait by the round-trip time to max range + margin (a no-echo ping returns after this).
+        # Bound the rising-edge wait by the round-trip time to max range + margin.
         timeout = (2.0 * self.max_distance / _SPEED_OF_SOUND) + 0.02
-        t0 = time.perf_counter()
-        while GPIO.input(self._echo) == 0:       # wait for the echo rising edge
-            if time.perf_counter() - t0 > timeout:
-                return None
-            time.sleep(_RISING_POLL_S)           # yield the GIL (this is the no-echo busy-wait that starves it)
-        start = time.perf_counter()
-        while GPIO.input(self._echo) == 1:       # ...then the falling edge (tight loop = precise pulse timing)
-            if time.perf_counter() - start > timeout:
-                return None
-        return min(self.max_distance, (time.perf_counter() - start) * _SPEED_OF_SOUND / 2.0)
+        # Longest VALID pulse (e.g. ~5.8 ms at max_distance=1.0); 2x headroom for OS preemption.
+        echo_max = 2.0 * self.max_distance / _SPEED_OF_SOUND
+        falling_bound = 2.0 * echo_max
+        with _PING_LOCK:
+            GPIO.output(self._trig, GPIO.HIGH)
+            time.sleep(1e-5)                         # 10us trigger pulse
+            GPIO.output(self._trig, GPIO.LOW)
+            t0 = time.perf_counter()
+            while GPIO.input(self._echo) == 0:       # wait for the echo rising edge
+                dt = time.perf_counter() - t0
+                if dt > timeout:
+                    return None
+                if dt > 0.002:                       # near pulses caught by the tight spin; only the long
+                    time.sleep(_RISING_POLL_S)       # no-echo tail sleep-polls (yields the GIL)
+            start = time.perf_counter()
+            while GPIO.input(self._echo) == 1:       # ...then the falling edge (tight loop = precise timing)
+                if time.perf_counter() - start > falling_bound:
+                    return None                      # wedged-HIGH / beyond-range -> no-echo (reads clear)
+            elapsed = time.perf_counter() - start
+        return min(self.max_distance, elapsed * _SPEED_OF_SOUND / 2.0)
 
     def _loop(self):
         while not self._closed:
             try:
                 d = self._measure()
+                self._distance = d if d is not None else self.max_distance  # None = no-echo = legit clear
             except Exception:
-                d = None                         # a transient GPIO error reads as "clear", never crashes
-            self._distance = d if d is not None else self.max_distance
+                self._distance = -1.0                # HW/SW fault -> FAIL CLOSED (matches VL53L1X)
             time.sleep(self._period)
 
     def close(self):

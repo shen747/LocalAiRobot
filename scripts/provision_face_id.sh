@@ -3,11 +3,14 @@
 # (brain/face_id.py): the OpenCV/onnxruntime/numpy deps + the ArcFace recognition ONNX model.
 #
 # IDEMPOTENT + BEST-EFFORT by design:
-#   * if the model is already present it exits 0 IMMEDIATELY (so every launch / boot stays cheap), and
+#   * if the model is already present it exits 0 IMMEDIATELY (the model is written atomically, so the file
+#     only ever exists fully-written -- a partial download can't latch it), and
 #   * any failure (no network, etc.) NEVER blocks the robot -- CRAWLER MODE doesn't need this at all, and
 #     Concierge Mode degrades to "smile silently" until the model is there.
-# Called automatically by scripts/run_me.sh (every launch), by `--install-boot`, and by the boot service's
-# ExecStartPre -- so "it just gets installed", regardless of how you start the robot.
+# Called by scripts/install_stack_pi5.sh / install_stack_jetson.sh (with the other models) and by
+# scripts/patches/common/5_face_id_insightface.sh. NOT run per-launch or by the boot service (its
+# ExecStartPre deliberately skips it -- a slow first-boot download could blow systemd's start timeout).
+# Re-run by hand anytime:  ./scripts/provision_face_id.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$REPO/config/robot.env" ] && { set -a; . "$REPO/config/robot.env"; set +a; }
@@ -46,15 +49,24 @@ PYEOF
 "$PY" - "$MODEL" <<'PYEOF' || true
 import io, os, sys, urllib.request, zipfile
 target = sys.argv[1]
+tmp = target + ".tmp"
 direct = os.environ.get("ROBOT_FACE_ID_MODEL_URL", "").strip()
 zips = ["https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip",
         "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"]
 def fetch(url, timeout=240):
     print("   downloading", url, "...")
     return urllib.request.urlopen(url, timeout=timeout).read()
+def commit(data):
+    # Step 24: write to a .tmp + fsync, then atomically rename -- a power cut / ENOSPC can never leave a
+    # TRUNCATED $MODEL that the [ -f ] fast path would then treat as "already provisioned" forever.
+    with open(tmp, "wb") as out:
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+    os.replace(tmp, target)          # same-dir rename: atomic even under a ROBOT_FACE_ID_MODEL override
 try:
     if direct:
-        open(target, "wb").write(fetch(direct))
+        commit(fetch(direct))
         print("   saved ->", target); sys.exit(0)
     for url in zips:
         try:
@@ -63,13 +75,15 @@ try:
             print("   (failed:", e, ")"); continue
         rec = [n for n in z.namelist() if n.lower().endswith(".onnx") and "w600k" in n.lower()]
         if rec:
-            with z.open(rec[0]) as f, open(target, "wb") as out:
-                out.write(f.read())
+            commit(z.open(rec[0]).read())
             print("   extracted", rec[0], "->", target); sys.exit(0)
     print("   could not fetch a model -- set ROBOT_FACE_ID_MODEL_URL to a direct .onnx URL and re-run.")
     sys.exit(1)
 except Exception as e:
     print("   model provisioning failed:", e); sys.exit(1)
+finally:
+    if os.path.exists(tmp):
+        os.remove(tmp)               # don't leave a stale .tmp on a failed/ENOSPC write
 PYEOF
 
 if [ -f "$MODEL" ]; then

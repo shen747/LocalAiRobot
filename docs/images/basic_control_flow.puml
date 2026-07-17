@@ -44,6 +44,7 @@ top to bottom direction
 
 ' ---------- 1. LISTEN (blue): the wake word comes first, THEN you speak ----------
 rectangle "Wake word\n(\"hey jarvis\"; ENTER in --dry)" as wake <<io>>
+rectangle "PIR motion sensor\n(Concierge mode: wakes on movement)" as pir <<io>>
 rectangle "You speak a command\n(\"go forward\" / \"find the sofa\")" as voice <<io>>
 rectangle "Speech to text" as stt <<model>>
 
@@ -68,6 +69,7 @@ rectangle "Steering servo" as servo <<motor>>
 ' ---------- 5. RESPOND (blue / orange) ----------
 rectangle "Speaks the reply" as tts <<proc>>
 rectangle "Face screen\n(shows emotions)" as face <<io>>
+rectangle "Concierge greeting\n(recognises a face -> greets by name)" as concierge <<proc>>
 
 ' ---------- the main path: wake word -> you talk -> it understands -> it decides ----------
 wake --> voice : wakes up, starts recording
@@ -75,6 +77,17 @@ voice --> stt : records a few seconds
 stt --> brain : your words
 mem --> brain : what it already knows
 brain --> decision
+
+' ---------- Concierge mode: motion (not voice) wakes a STATIONARY persona ----------
+pir --> concierge : motion seen (stationary mode)
+concierge --> cam : who is it?
+concierge --> face : greet by name
+concierge --> decision : chat only
+
+note bottom of concierge
+  Concierge mode (ROBOT_CONCIERGE_MODE): stationary desk persona.
+  Drive / Explore / Find are politely refused.
+end note
 
 ' ---------- what the decision leads to ----------
 decision --> motion : Drive / Stop

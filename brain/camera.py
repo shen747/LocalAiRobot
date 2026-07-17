@@ -17,11 +17,15 @@ import os
 
 from driver import dry_run_enabled
 
+try:                             # P2-4: hoisted but GUARDED -- main.py imports camera unconditionally, and
+    from PIL import ImageOps     # this module promises a Pillow-free import on a laptop/dry-run. Every
+except ImportError:             # provisioned board venv has Pillow, so the guard only matters off-device.
+    ImageOps = None
+
 log = logging.getLogger("robot.cam")
 
 
 def _letterbox_square(img, size):
-    from PIL import ImageOps
     return ImageOps.pad(img.convert("RGB"), (size, size), color=(0, 0, 0))
 
 

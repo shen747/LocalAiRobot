@@ -2,15 +2,18 @@
 #
 # On the Pi 5 CPU the model is slow (text up to ROBOT_LLM_TIMEOUT_S=120s, vision up to
 # ROBOT_VISION_TIMEOUT_S=600s). The only audio out today is Piper TTS, so during a long
-# think/look the operator gets NO sign the robot heard them. This module adds three cues,
+# think/look the operator gets NO sign the robot heard them. This module adds these cues,
 # adapted from the reference project's sounds/{greeting,ack,thinking,error} system but
 # re-grounded on THIS repo's aplay + half-duplex audio_lock discipline (NOT sounddevice):
 #
-#   greeting  -- once, after the stack is up / model warmed (audible "I'm online", vital headless)
-#   wake_ack  -- the instant the wake word fires ("yes?/hi" -- responding to being summoned)
-#   ack       -- after a SPOKEN command is accepted ("got it" -- confirming the command)
-#   thinking  -- a cue played WHILE the model blocks; once, or re-cued every ROBOT_THINKING_REPEAT_S
-#   error     -- optional, on obstacle / LLM failure (fire-and-forget; see SAFETY below)
+#   greeting       -- once, after the stack is up / model warmed (audible "I'm online", vital headless)
+#   wake_ack       -- the instant the wake word fires ("yes?/hi" -- responding to being summoned)
+#   ack            -- after a SPOKEN command is accepted ("got it" -- confirming the command)
+#   thinking       -- a cue played WHILE the model blocks; once, or re-cued every ROBOT_THINKING_REPEAT_S
+#   thinking_still -- the re-cues AFTER the first thinking one ("still on it...")
+#   remote_ack     -- a phone/HTTP command just arrived (the robot audibly excuses itself mid-chat)
+#   sleep          -- spoken goodbye when a conversation ends on silence ("going back to sleep...")
+#   error          -- optional, on obstacle / LLM failure (fire-and-forget; see SAFETY below)
 #
 # SAFETY: every cue is fire-and-forget on a daemon thread and is NEVER on the synchronous path
 # to driver.stop()/_neutral(). An obstacle stop is not delayed by a sound.

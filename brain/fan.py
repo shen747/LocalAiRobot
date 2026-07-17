@@ -75,7 +75,7 @@ class FanController:
         self._out = hal.current().make_digital_output(pin)   # starts LOW = fan off
         self._on = False
         self._temp = None
-        self._closed = False
+        self._closed = threading.Event()   # P2-9: waitable so close() breaks the poll sleep immediately
         self._thread = threading.Thread(target=self._loop, daemon=True, name="fan")
         self._thread.start()
         log.info("enclosure fan: pin %s, ON>=%.0fC / OFF<=%.0fC, poll %.0fs",
@@ -91,7 +91,7 @@ class FanController:
             log.warning("enclosure fan: GPIO write failed (%s)", e)
 
     def _loop(self):
-        while not self._closed:
+        while not self._closed.is_set():
             t = read_cpu_temp_c()
             self._temp = t
             if t is None:
@@ -101,16 +101,16 @@ class FanController:
             elif t <= self.off_temp:
                 self._set(False)
             # between off_temp..on_temp: hold the current state (that's the hysteresis)
-            time.sleep(self.period)
+            self._closed.wait(self.period)      # sleep, but wake immediately when close() sets the Event
 
     def status(self):
         """(temp_c or None, fan_on) -- lets diagnostics/logging peek without touching the GPIO."""
         return self._temp, self._on
 
     def close(self):
-        self._closed = True
+        self._closed.set()
         if self._thread.is_alive():
-            self._thread.join(timeout=self.period + 1.0)
+            self._thread.join(timeout=self.period + 1.0)   # returns within ms now; cap only
         try:
             self._out.off()
             self._out.close()

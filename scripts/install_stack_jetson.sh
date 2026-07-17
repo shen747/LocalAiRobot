@@ -61,8 +61,16 @@ sudo jetson_clocks 2>/dev/null || echo "   (jetson_clocks not found -- skipping)
 
 echo ">> [4/8] Ollama (Jetson CUDA runtime) + models (text intent + vision)"
 command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
-ollama pull "${MODEL}"
-ollama pull "${VISION_MODEL}"
+# Step 20: guard each pull so a 404 / network drop prints its own recovery hint before exiting.
+if ! ollama pull "${MODEL}"; then
+  echo "!! 'ollama pull ${MODEL}' failed -- Gemma 4 needs a RECENT Ollama. Upgrade it" >&2
+  echo "   (curl -fsSL https://ollama.com/install.sh | sh) and re-run. Version now: $(ollama --version 2>/dev/null || echo '?')" >&2
+  exit 1
+fi
+if ! ollama pull "${VISION_MODEL}"; then
+  echo "!! 'ollama pull ${VISION_MODEL}' failed -- check the model name / network and re-run." >&2
+  exit 1
+fi
 echo "   verify the GPU is used:  ollama run ${MODEL} 'hi'  while watching  tegrastats  (GR3D_FREQ should rise)."
 
 echo ">> [5/8] whisper.cpp (CUDA)"
@@ -80,8 +88,9 @@ if [ ! -x "${H}/piper/piper/piper" ]; then
   tar -xf piper.tgz
 fi
 VB="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
-[ -f "${VOICE}.onnx" ]      || curl -fsSLo "${VOICE}.onnx"      "${VB}/${VOICE}.onnx"
-[ -f "${VOICE}.onnx.json" ] || curl -fsSLo "${VOICE}.onnx.json" "${VB}/${VOICE}.onnx.json"
+# Step 23: tmp+mv so an interrupted download can't leave a TRUNCATED voice the [ -f ] guard then skips.
+[ -f "${VOICE}.onnx" ]      || { curl -fsSLo "${VOICE}.onnx.part"      "${VB}/${VOICE}.onnx"      && mv "${VOICE}.onnx.part"      "${VOICE}.onnx"; }
+[ -f "${VOICE}.onnx.json" ] || { curl -fsSLo "${VOICE}.onnx.json.part" "${VB}/${VOICE}.onnx.json" && mv "${VOICE}.onnx.json.part" "${VOICE}.onnx.json"; }
 
 echo ">> [7/8] USB-C face-panel library (turing-smart-screen-python; used via ROBOT_FACE_LIB)"
 [ -d "${H}/turing-smart-screen-python" ] || git clone "${TURING_REPO}" "${H}/turing-smart-screen-python"

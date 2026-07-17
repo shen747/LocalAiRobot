@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # brain/main.py -- Local AI robot orchestrator (Raspberry Pi 5 "brain").
 #
-# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama gemma4:e2b-it-qat (intent JSON) -> Piper (TTS),
+# Wake word (or ENTER in --dry) -> whisper.cpp (STT) -> Ollama (ROBOT_MODEL -- Gemma 4 intent JSON; robot.env
+# ships gemma4:e2b-it-qat, code fallback gemma4:e4b-it-qat) -> Piper (TTS),
 # driving an RC crawler (ESC (Electronic Speed Controller) throttle + steering servo) through brain/driver.py. It can also
 # SEE (Pi Camera V2 NoIR -> a dedicated vision model, ROBOT_VISION_MODEL), react with an expressive FACE
 # (USB-C screen), sense in three directions (front/left/right HC-SR04P), remember what it has
@@ -172,21 +173,25 @@ def _last_line(s):
 def listen_and_transcribe(cfg):
     wav = os.path.join(cfg["tmpdir"], "command.wav")
     t0 = time.monotonic()
+    rec_timeout = _as_int(cfg["record_secs"], 4) + 10   # never shorter than the requested capture
     with audio_lock:
         # Capture arecord's stderr instead of /dev/null: when the mic device is missing/busy/renamed
         # we want ALSA's actual reason in the log, not a bare 'exit status 1'.
         rec = subprocess.run(
             ["arecord", "-D", cfg["mic"], "-d", cfg["record_secs"],
              "-f", "S16_LE", "-r", "16000", "-c", "1", wav],
-            timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            timeout=rec_timeout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
         )
     if rec.returncode != 0:
         raise RuntimeError(f"arecord failed on ROBOT_MIC={cfg['mic']!r} (exit {rec.returncode}): "
                            f"{_last_line(rec.stderr)}  -- check `arecord -l` (card renamed/unplugged?)")
     rec_s = time.monotonic() - t0
+    # whisper.cpp cost is per 30-s window and scales with ROBOT_WHISPER_MODEL size, not capture length;
+    # a 120 s floor covers small/medium ggml models on a Pi 5 (base.en stays well under it).
+    stt_timeout = max(120, _as_int(cfg["record_secs"], 4) * 4)
     out = subprocess.run(
         [cfg["whisper_bin"], "-m", cfg["whisper_model"], "-f", wav, "-nt"],
-        timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        timeout=stt_timeout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     if out.returncode != 0:
         raise RuntimeError(f"whisper failed (exit {out.returncode}): {_last_line(out.stderr)}")
@@ -323,7 +328,6 @@ def _short_error(e):
 def _persist_env(key, value):
     """Write KEY=value into config/robot.env in place (preserving any trailing '# comment') or append it,
     like scripts/setup_audio.sh's set_kv. Used to save an auto-generated ROBOT_HTTP_TOKEN. Best-effort."""
-    import re
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "robot.env")
     try:
         lines = []
@@ -548,6 +552,18 @@ def main():
         os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None,
         lambda: (motion_event.set(), wake.cancel_listen()))
 
+    # P2-3: ONE teardown list for BOTH exit paths (the early no-trigger return AND the main finally),
+    # so the two can never drift apart again. driver.stop stays FIRST (ESC to neutral before anything
+    # closes); fan is None when disabled. remote_srv.stop() and the SIG_IGN loop stay in the finally --
+    # remote_srv does NOT exist yet at the early return.
+    def _close_devices():
+        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close,
+                       motion_wake.close) + ((fan.close,) if fan else ()):
+            try:
+                closer()
+            except Exception:
+                pass
+
     # Robot identity: persist who it is (name + what it can do) as top-priority RAG memory, and detect a
     # first run / rename so it introduces itself below. Name comes from ROBOT_NAME (default Jarvis).
     robot_name = cfg.get("robot_name") or "Jarvis"
@@ -560,7 +576,13 @@ def main():
                       "and describe what my camera sees, remember people and places you show me, and chat.")
     identity_status = mem.ensure_identity(robot_name, robot_caps)
 
-    def say(text):
+    # Step 15: the wake-mic pause is REFCOUNTED. The obstacle announcement and a behaviour's narration can
+    # overlap in two threads, and wakeword's pause/resume is a plain boolean -- without the refcount the first
+    # say() to finish would re-open the mic mid-TTS of the other and re-block its aplay on audio_lock.
+    mic_pause_lock = threading.Lock()
+    mic_pause_count = [0]
+
+    def say(text, talk_expr="talking", end_expr="idle"):
         text = (text or "").strip()
         if not text:
             return
@@ -569,18 +591,36 @@ def main():
         paused = False
         if voice_abort_active.is_set():
             try:
-                wake.pause_mic()
+                with mic_pause_lock:
+                    if mic_pause_count[0] == 0:
+                        wake.pause_mic()
+                    mic_pause_count[0] += 1
                 paused = True
             except Exception:
                 pass
-        fc.set_expression("talking")
+        fc.set_expression(talk_expr)
         speak(cfg, text)
-        fc.set_expression("idle")
+        fc.set_expression(end_expr)
         if paused:
             try:
-                wake.resume_mic()
+                with mic_pause_lock:
+                    mic_pause_count[0] -= 1
+                    if mic_pause_count[0] == 0:
+                        wake.resume_mic()
             except Exception:
                 pass
+
+    # Step 15: single-flight is MANDATORY -- repeated trips (driver debounces at 3s) during one long
+    # narration would each synthesize then block, replaying a warning backlog later.
+    obstacle_say_gate = threading.Lock()
+
+    def _announce_obstacle():
+        if not obstacle_say_gate.acquire(blocking=False):
+            return   # a warning is already speaking -- don't queue another synthesis
+        try:
+            say("Obstacle ahead. Stopping.", talk_expr="alarmed", end_expr="alarmed")
+        finally:
+            obstacle_say_gate.release()
 
     def on_obstacle(distance_cm):
         print(f"Obstacle {distance_cm:.1f} cm ahead -> stopping")
@@ -590,10 +630,9 @@ def main():
         except Exception:
             pass
         snd.play("error")   # fire-and-forget earcon; never on the synchronous driver.stop() path
-        # Run TTS off the control thread so the safety loop keeps ticking.
-        threading.Thread(
-            target=speak, args=(cfg, "Obstacle ahead. Stopping."), daemon=True
-        ).start()
+        # Run TTS off the control thread; say() (not speak()) pauses the behaviour's voice-abort mic so the
+        # warning plays NOW, and end_expr keeps the face alarmed.
+        threading.Thread(target=_announce_obstacle, daemon=True).start()
 
     # Shared abort for autonomous behaviours (explore/find): tripped by HTTP /stop, the wake word during a
     # behaviour (listener below), or Ctrl-C. behavior_active lets on_stop report whether anything is running.
@@ -697,7 +736,9 @@ def main():
     # with the command recording/transcription -- so on the fast REMOTE backend it's essentially free, and
     # the answer is fed into THAT turn's prompt so the robot replies person-aware. ROBOT_WAKE_PERSON_CHECK:
     # auto (default) = ON for remote, OFF for local (a slow local VLM would just delay the command); 1/0 force.
-    person_ctx = {"note": ""}
+    # P2-2: gen = wake-id. A SLOW check may only store into its OWN wake, never into a turn that has already
+    # consumed the note. Written only from the main thread; the worker just compares + stores (GIL-atomic).
+    person_ctx = {"note": "", "gen": 0}
 
     def _person_check_enabled():
         v = os.environ.get("ROBOT_WAKE_PERSON_CHECK", "auto").strip().lower()
@@ -707,11 +748,13 @@ def main():
             return True
         return cfg.get("ai_backend", "local") != "local"   # "auto": remote only (hidden in the record window)
 
-    def _wake_person_check():
+    def _wake_person_check(gen):
         try:
             res = vision.check_person(cfg, cam.capture_jpeg())
-            person_ctx["note"] = (f"(Right now a person is in front of the camera: "
-                                  f"{res.get('description') or 'someone'}.)") if res.get("present") else ""
+            note = (f"(Right now a person is in front of the camera: "
+                    f"{res.get('description') or 'someone'}.)") if res.get("present") else ""
+            if person_ctx["gen"] == gen:   # stale check (a later wake/turn moved on) -> drop, don't leak
+                person_ctx["note"] = note
         except Exception as e:
             log.debug("wake person-check error: %s", e)
 
@@ -731,7 +774,8 @@ def main():
                 if source == "voice":
                     if person_ctx.get("note"):
                         ctx = (person_ctx["note"] + " " + ctx).strip()
-                    person_ctx["note"] = ""   # consume: fresh each wake, never leak into the next turn
+                    person_ctx["note"] = ""
+                    person_ctx["gen"] += 1   # consume: invalidate any still-running check for this wake
                 resp = query_ollama(cfg, text, context=ctx)
             except Exception as e:
                 snd.stop_thinking()
@@ -879,11 +923,7 @@ def main():
     if not wake.dry_run and not wake.available:
         print("Live mode has no trigger: the wake word didn't load and ENTER push-to-talk is --dry "
               "only. Fix ROBOT_WAKEWORD_ENABLE/ROBOT_WAKEWORD_MODEL, or run with --dry.", file=sys.stderr)
-        for c in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close):
-            try:
-                c()
-            except Exception:
-                pass
+        _close_devices()   # P2-3: same teardown as the main finally (also closes motion_wake + fan)
         return
 
     mode = "DRY RUN — no hardware will be driven" if driver.dry_run else "LIVE HARDWARE"
@@ -1037,7 +1077,9 @@ def main():
                 # Snap + person-check IN PARALLEL with the record+transcribe below (so it's ~free on remote).
                 if _person_check_enabled() and getattr(cam, "available", False):
                     person_ctx["note"] = ""
-                    threading.Thread(target=_wake_person_check, daemon=True).start()
+                    person_ctx["gen"] += 1   # P2-2: this check belongs to THIS wake only
+                    threading.Thread(target=_wake_person_check, args=(person_ctx["gen"],),
+                                     daemon=True).start()
 
             # --- Conversation loop: the wake OPENED it; now take follow-ups with NO wake word until
             #     followup_silence_s of quiet (or a capture error) drops us back to the wake word. The
@@ -1109,12 +1151,7 @@ def main():
                 remote_srv.stop()
             except Exception:
                 pass
-        for closer in (driver.stop, driver.close, cam.close, fc.close, mem.close, snd.close, wake.close,
-                       motion_wake.close) + ((fan.close,) if fan else ()):
-            try:
-                closer()
-            except Exception:
-                pass
+        _close_devices()   # P2-3: shared with the early no-trigger return so the two can't drift apart
 
 
 if __name__ == "__main__":

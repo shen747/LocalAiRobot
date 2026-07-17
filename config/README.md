@@ -9,6 +9,10 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 - After editing it in a shell you keep using, re-source by hand: `set -a; source config/robot.env; set +a`.
 - For a robot that's already running detached / as the boot service: `./scripts/run_me.sh --reload`.
 
+**Reading the Default column:** it shows the **out-of-the-box** value — where the shipped
+[`robot.env`](robot.env) sets a key (e.g. `ROBOT_MODEL`, `ROBOT_GEMINI_MODEL`) the table shows that shipped
+value; keys `robot.env` leaves blank show the code fallback the brain uses instead.
+
 **Paths contain `YOUR_USER`** — replace it with your Linux username once:
 `sed -i "s/YOUR_USER/$(whoami)/g" config/robot.env`. Booleans are `1`/`0`. `~` expands to your home.
 
@@ -112,7 +116,7 @@ sensors, motors, face and the wake word are **always local**. Getting a key + fu
 |---|---|---|
 | `ROBOT_AI_BACKEND` | `local` | `local` = Ollama on the Pi (offline) \| `gemini` = Google Gemini (remote — needs network + a key, and camera frames leave the device). |
 | `ROBOT_GEMINI_API_KEY` | *(empty)* | Google AI Studio key — **required** when `gemini`. Keep it secret (don't commit). [How to get one →](../docs/gemini-setup.md) |
-| `ROBOT_GEMINI_MODEL` | `gemini-2.5-flash` | Remote **text/intent** model. Flash-tier is the low-latency sweet spot for command→JSON + chat; `gemini-3.1-pro` is smarter but slower. |
+| `ROBOT_GEMINI_MODEL` | `gemini-3.5-flash` | Remote **text/intent** model (shipped default; code fallback `gemini-2.5-flash`). Flash-tier is the low-latency sweet spot for command→JSON + chat; `gemini-3.1-pro` is smarter but slower. |
 | `ROBOT_GEMINI_VISION_MODEL` | `gemini-robotics-er-1.6-preview` | Remote **vision** model. **Robotics-ER 1.6** is Google's embodied-reasoning VLM (spatial reasoning, object localization, agentic navigation) — best fit for describe/LOOK/explore/person-check. Empty → reuse `ROBOT_GEMINI_MODEL`. |
 | `ROBOT_GEMINI_VISION_THINKING_BUDGET` | `0` | Gemini **thinking** budget for the vision path: `0` = off (fast, deterministic, no JSON truncation — recommended for Robotics-ER), `-1` = dynamic, `N` = fixed budget, `auto` = omit the field (for a model that rejects it). |
 | `ROBOT_GEMINI_THINKING_BUDGET` | `0` | Thinking budget for the **text** model. `0` = off — a thinking model (e.g. `gemini-3.5-flash`) left on its default can spiral to 85–120 s on ambiguous "should I look?" prompts and trip `ROBOT_LLM_TIMEOUT_S`; `0` keeps command→JSON snappy. Raise (e.g. `512`) if intent decisions degrade; empty/`auto` = model default. |
@@ -128,7 +132,7 @@ for vision).
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MODEL` | `gemma4:e4b-it-qat` | Ollama **text/intent** model (4-bit QAT) that turns a transcript into the command JSON. **E4B** = more capable (better at structured fields like REMEMBER's `note` + recall) but slower; **E2B** (`gemma4:e2b-it-qat`) = faster/lighter. Vision is a separate `ROBOT_VISION_MODEL`. |
+| `ROBOT_MODEL` | `gemma4:e2b-it-qat` | Ollama **text/intent** model (4-bit QAT) that turns a transcript into the command JSON (shipped default; code fallback `gemma4:e4b-it-qat`). **E2B** = faster/lighter — the Pi 5 CPU sweet spot; **E4B** (`gemma4:e4b-it-qat`) = more capable (better at structured fields like REMEMBER's `note` + recall) but ~2× slower. Vision is a separate `ROBOT_VISION_MODEL`. |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
@@ -173,7 +177,7 @@ wake word (drives/answers, **speaks the reply, returns it as JSON**). **On by de
 
 Deadband-compensated map — values are SIGNED throttle fractions of the 1000–2000 µs range (0.00 = 1500 µs
 neutral, +0.60 ≈ 1800 µs, +1.00 = 2000 µs, −0.20 = 1400 µs). Many brushed ESCs ignore small offsets from
-neutral, so `speed` 0–100 is mapped onto MIN→MAX (not 0→cap), skipping the dead zone. **These four are
+neutral, so `speed` 0–100 is mapped onto MIN→MAX (not 0→cap), skipping the dead zone. **These five are
 per-ESC-model and live in your ESC patch** (`scripts/patches/common/1_esc_hb_qr_1060.sh` or
 `1_esc_uliik_60a.sh` — the only two supported ESCs); `config/robot.env` ships them **blank**. Bench-sweep
 with [`BENCH_SCRIPTS.md`](../BENCH_SCRIPTS.md), then set them in the patch.
@@ -184,6 +188,7 @@ with [`BENCH_SCRIPTS.md`](../BENCH_SCRIPTS.md), then set them in the patch.
 | `ROBOT_MAX_FORWARD_SPEED` | *(ESC patch)* | Fastest FORWARD — lower = slower top speed (WP-1060 = 0.95). |
 | `ROBOT_MIN_REVERSE_SPEED` | *(ESC patch)* | Slowest REVERSE crawl — a SIGNED throttle just below neutral (WP-1060 = 0.00, 1500 µs). |
 | `ROBOT_MAX_REVERSE_SPEED` | *(ESC patch)* | Fastest REVERSE — deeper below neutral, more negative = faster (WP-1060 = −0.20, 1400 µs). |
+| `ROBOT_ESC_NEUTRAL` | *(ESC patch)* | Rest/STOP **and arm** throttle — a per-ESC signed OFFSET from 1500 µs (WP-1060 = 0.25 ≈ 1625 µs, ULIIK = 0.40 = 1700 µs; empty → 0.0 = 1500 µs). The brain holds this at startup so the ESC arms. |
 | `ROBOT_SPEED_INCREMENT_STEP` | `0.05` | Quantize the mapped throttle to steps of this size (measured from MIN) so speed changes in clean increments. `0`/empty = smooth/continuous. |
 | `ROBOT_ESC_REVERSE_DOUBLETAP` | `0` | `0` = direct reverse (crawler / F-R ESC). `1` = F/B/R "double-click" — the driver auto-taps reverse→neutral→reverse. |
 | `ROBOT_ESC_REV_BRAKE_MS` | `400` | (double-tap only) length of the first reverse tap the ESC reads as a brake. |
@@ -230,6 +235,7 @@ with [`BENCH_SCRIPTS.md`](../BENCH_SCRIPTS.md), then set them in the patch.
 | `ROBOT_CAMERA_ENABLE` | `1` | `0` disables the Pi Camera (explore/find/REMEMBER lose sight). |
 | `ROBOT_CAMERA_SIZE` | `512` | Square letterbox size (px) the frame is reduced to before the VLM. |
 | `ROBOT_CAMERA_WARMUP_S` | `1.0` | Settle time for auto-exposure/white-balance before each capture. |
+| `ROBOT_CAMERA_CAPTURE_TIMEOUT_S` | `12` | Hard cap on one still capture (autofocus + frame settle). A wedged USB/libcamera read returns "no frame" instead of freezing explore; keep it generous so a healthy-but-slow capture isn't killed. |
 | `ROBOT_CAMERA_AUTOFOCUS` | `1` | On AF sensors (IMX519), run a one-shot focus before each capture; ignored on fixed-focus (IMX219/OV5647). |
 | `ROBOT_WAKE_PERSON_CHECK` | `auto` | On wake, snap a frame + VLM-check if a **person** is in front (runs parallel to recording, so ~free on remote) and feed it into that reply. `auto` = on for remote / off for local; `1` = always, `0` = never. |
 | `ROBOT_VISION_TIMEOUT_S` | `600` | Timeout for one image call — vision is **CPU-only and slow** on the Pi 5 (tens of s to minutes). |
@@ -273,7 +279,8 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_MEMORY_DB` | `~/.localairobot/memory.db` | SQLite file holding sightings + taught people/things (survives reboots). |
+| `ROBOT_MEMORY_DB` | `~/.localairobot/memory.db` | SQLite file holding sightings + taught people/things (survives reboots). Runs in **WAL** mode — a manual backup must copy the `-wal`/`-shm` sidecars too (or use `sqlite3 "$DB" 'VACUUM INTO ...'`). |
+| `ROBOT_MEMORY_RETAIN` | `5000` | Cap on `observations` rows — the oldest are pruned once at boot and every ~500 inserts, so a forever-on robot never fills the SD card. |
 | `ROBOT_MEMORY_MAX_CONTEXT` | `8` | Recent distinct objects summarised back into the prompt each turn. |
 | `ROBOT_MEMORY_MAX_SCENES` | `3` | Recent scene **descriptions** (from agentic explore) summarised back into the prompt / shown by `rag.sh --scenes`. |
 

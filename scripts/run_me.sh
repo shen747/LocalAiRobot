@@ -47,10 +47,15 @@ install_boot() {
   fi
   echo ">> Installing the boot service (the brain will auto-start on every boot, headless)."
   # Fill the template in with the REAL repo path + username, then drop it in place.
-  sed -e "s#/home/YOUR_USER/LocalAiRobot#${REPO}#g" -e "s/YOUR_USER/${user}/g" "$src" \
-    | sudo tee "$unit" >/dev/null
-  sudo systemctl daemon-reload
-  sudo systemctl enable robot.service
+  # Step 29: this script runs WITHOUT `set -e` (deliberate for the launcher paths), so each step must fail
+  # LOUDLY -- else a failed sudo/systemctl (expired sudo timestamp in an unattended --bootstrap, read-only
+  # /etc) is silently ignored, the caller sees exit 0, and the robot stays dead after the first power cycle.
+  if ! sed -e "s#/home/YOUR_USER/LocalAiRobot#${REPO}#g" -e "s/YOUR_USER/${user}/g" "$src" \
+        | sudo tee "$unit" >/dev/null; then
+    echo "!! could not write $unit (sudo?)" >&2; exit 1
+  fi
+  sudo systemctl daemon-reload || { echo "!! systemctl daemon-reload failed" >&2; exit 1; }
+  sudo systemctl enable robot.service || { echo "!! systemctl enable robot.service failed" >&2; exit 1; }
   echo "   enabled -- starts on the NEXT boot (or now: sudo systemctl start robot.service)."
   echo "   Survives power off/on: auto-starts every boot + auto-restarts after a crash/brown-out (Restart=always)."
   echo "   watch:  journalctl -u robot.service -f       remove:  ./scripts/run_me.sh --disable-boot"

@@ -19,6 +19,11 @@ log = logging.getLogger("robot.remote")
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "LocalAiRobot/1.0"
+    # Step 18: per-socket-operation timeout (settimeout on the connection). Bounds a slow-loris / stalled
+    # client on the pre-handler reads and the response write, but can NEVER fire during the long-running
+    # /speak pipeline -- no socket I/O happens between the body read and the response, and http.server's
+    # handle_one_request catches the TimeoutError and just drops that connection.
+    timeout = 10
 
     # ---- helpers ----
     def _json(self, code, obj):
@@ -81,10 +86,13 @@ class _Handler(BaseHTTPRequestHandler):
                 log.warning("remote: stop failed: %s", e)
             return self._json(200, {"status": "stopping" if stopped else "nothing running", "stopped": stopped})
         # ---- /speak ----
+        MAX_BODY = 65536   # Step 18: a dictated command is tiny; a huge Content-Length is bogus
         try:
             n = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
             n = 0
+        if n > MAX_BODY:
+            return self._json(413, {"error": "body too large"})
         text = self._extract_text(self.rfile.read(n) if n > 0 else b"")
         if not text:
             return self._json(400, {"error": 'no text -- send JSON {"text": "..."} or form text=...'})
@@ -106,6 +114,12 @@ class RemoteServer:
     def __init__(self, port, token, on_command, on_stop=None):
         # Bind to 0.0.0.0 so the phone can reach it over Wi-Fi/hotspot (not just localhost).
         self._httpd = ThreadingHTTPServer(("0.0.0.0", int(port)), _Handler)
+        # P2-10: request workers must not block a clean shutdown. daemon_threads -> a minutes-long /speak
+        # worker can't keep the interpreter alive at exit; block_on_close=False -> server_close() doesn't
+        # join it. MUST be set before start() (ThreadingMixIn reads both per request). The pipeline's own
+        # turn_lock/estop stay the source of truth, and driver.close() in main's finally forces neutral.
+        self._httpd.daemon_threads = True
+        self._httpd.block_on_close = False
         self._httpd.token = str(token or "")
         self._httpd.on_command = on_command          # = main.py remote_command(text, source=...)
         self._httpd.on_stop = on_stop                # = main.py on_stop() -> abort a running behaviour

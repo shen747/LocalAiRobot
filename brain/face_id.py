@@ -4,8 +4,9 @@
 # it with a local ArcFace ONNX model (via onnxruntime, the SAME runtime openWakeWord already uses) -> compare
 # (cosine) against the enrolled faces in the RAG db (memory.faces). A detected face IS the "is a person
 # present?" signal, so no cloud VLM is involved. Everything degrades GRACEFULLY: if OpenCV / onnxruntime /
-# numpy or the model file is missing, .available is False and identify() returns (None, 0.0) -> the concierge
-# simply smiles and stays silent, exactly as the "no match" branch requires.
+# numpy or the model file is missing, ensure_loaded() returns False (and .available stays False) and
+# identify() returns (None, 0.0) -> the concierge simply smiles and stays silent, as the "no match" branch
+# requires. NOTE: .available is a CHEAP flag that never triggers the load; call ensure_loaded() to load.
 #
 # Enrol faces with:  ./scripts/enroll_face.sh "Ramesh"   (captures from the webcam and stores the embedding).
 # Accuracy note: Haar gives a bounding box, not 5-point landmarks, so faces aren't affine-aligned before
@@ -75,9 +76,15 @@ class FaceID:
             self._ready = False
         return self._ready
 
+    def ensure_loaded(self):
+        """Explicitly perform the (multi-second, once-only) lazy load. Returns True when usable.
+        Call this at an intended warmup point; `available` below stays a cheap flag that never loads."""
+        return self._load()
+
     @property
     def available(self):
-        return self._load()
+        """Cheap readiness flag; NEVER loads. False until ensure_loaded()/embed()/identify() ran _load()."""
+        return bool(self._ready)
 
     # -- core --------------------------------------------------------------------------------------------
     def _largest_face(self, bgr):
