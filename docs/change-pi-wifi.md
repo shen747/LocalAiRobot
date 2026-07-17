@@ -22,9 +22,9 @@ Two tiers, each set up once:
 > 🛟 Set this up **before** touching any network service, so you always have a way back in.
 
 The install scripts already did the **secret-free** groundwork for you — mDNS (`avahi`, so
-`<hostname>.local` resolves), a **persistent journal**, and (if you passed `ROBOT_INSTALL_COMITUP=1`) the
-Comitup portal. The one thing they **can't** do is store your hotspot's **password** — so you save the
-hotspot by hand, **once**:
+`<hostname>.local` resolves), a **persistent journal**, and the **Comitup portal** (both on by default;
+`ROBOT_INSTALL_COMITUP` / `ROBOT_PERSIST_JOURNAL` in `config/robot.env`). The one thing they **can't** do is
+store your hotspot's **password** — so you save the hotspot by hand, **once**:
 
 1. Turn on your phone's Wi-Fi hotspot.
 2. SSH in and **save** it as a low-priority fallback. Use `connection add` — it only *stores* the profile, it
@@ -89,9 +89,10 @@ Comitup hooks into NetworkManager. When it finds **no known network** (neither y
 saved hotspot), it spins up its **own** access point with a web portal where you pick the new network. It
 stays out of the way otherwise — the AP only appears when you're stranded.
 
-> 🤖 **Automated:** `ROBOT_INSTALL_COMITUP=1 ./scripts/install_stack_pi5.sh` (or `_jetson.sh`) installs
-> Comitup and enables it for the next boot for you — no passwords involved (the portal collects the target
-> Wi-Fi's password at runtime, nothing is stored). Or do it by hand:
+> 🤖 **Automated — on by default.** `install_stack_pi5.sh` / `_jetson.sh` install Comitup and enable it for
+> the next boot for you (`ROBOT_INSTALL_COMITUP=1`, set in `config/robot.env`). No passwords involved — the
+> portal collects the target Wi-Fi's password at runtime, nothing is stored. Opt out with
+> `ROBOT_INSTALL_COMITUP=0`. Or do it by hand:
 
 1. Update, then install Comitup + Avahi (mDNS, so you can reach the Pi by **name** instead of hunting an IP):
    ```bash

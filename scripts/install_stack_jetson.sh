@@ -21,6 +21,19 @@ TURING_REPO="https://github.com/mathoudebine/turing-smart-screen-python.git"
 H="${HOME}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Install-time flags -- precedence: inline env var > config/robot.env value > default (1 = ON). Read config
+# SURGICALLY (grep, not source) so it can NEVER clobber the OTHER inline overrides this installer documents.
+_cfg_flag() {   # _cfg_flag VARNAME DEFAULT
+  local name="$1" def="$2" cur="${!1:-}" val
+  if [ -z "$cur" ] && [ -f "${REPO}/config/robot.env" ]; then
+    val="$(sed -n "s/^${name}=\([0-9]\+\).*/\1/p" "${REPO}/config/robot.env" | head -1)"
+    [ -n "$val" ] && cur="$val"
+  fi
+  printf -v "$name" '%s' "${cur:-$def}"
+}
+_cfg_flag ROBOT_INSTALL_COMITUP 1     # Comitup captive-portal Wi-Fi fallback (docs/change-pi-wifi.md Tier 2)
+_cfg_flag ROBOT_PERSIST_JOURNAL 1     # persistent systemd journal (/var/log/journal), boot logs survive reboots
+
 BOOTSTRAP=0
 for arg in "$@"; do
   case "$arg" in
@@ -200,16 +213,17 @@ fi
 echo ">> audio: pointing ALSA's default output at your USB speaker + writing the device names into config/robot.env"
 bash "${REPO}/scripts/setup_audio.sh" || true
 
-# Field-recovery + logging (secret-free -- NO passwords are ever stored/committed):
-#   * PERSISTENT JOURNAL (default ON): if the systemd journal is kept in RAM, `journalctl -u robot.service`
-#     is WIPED on every reboot -- you can't read what the boot service did before the last power cycle.
-#     Creating /var/log/journal makes it persist to disk (journald auto-caps + rotates). Idempotent (a no-op
-#     if it's already persistent). Skip with ROBOT_PERSIST_JOURNAL=0.
-#   * COMITUP captive portal (OPT-IN): the password-free Wi-Fi backdoor -- when no known network is around,
-#     the board hosts its own AP + web page to pick a Wi-Fi (docs/change-pi-wifi.md, Tier 2). It stores NO
-#     password; the portal collects the target Wi-Fi's password at runtime. Enable with ROBOT_INSTALL_COMITUP=1.
+# Field-recovery + logging (secret-free -- NO passwords are ever stored/committed). Both flags default ON and
+# are set in config/robot.env (INSTALL-TIME FLAGS section); disable with ROBOT_X=0 in config or inline:
+#   * PERSISTENT JOURNAL: if the systemd journal is kept in RAM, `journalctl -u robot.service` is WIPED on
+#     every reboot -- you can't read what the boot service did before the last power cycle. Creating
+#     /var/log/journal makes it persist to disk (journald auto-caps + rotates). Idempotent (a no-op if it's
+#     already persistent). Skip with ROBOT_PERSIST_JOURNAL=0.
+#   * COMITUP captive portal: the password-free Wi-Fi backdoor -- when no known network is around, the board
+#     hosts its own AP + web page to pick a Wi-Fi (docs/change-pi-wifi.md, Tier 2). It stores NO password;
+#     the portal collects the target Wi-Fi's password at runtime. Skip with ROBOT_INSTALL_COMITUP=0.
 #     (The Tier-1 phone-hotspot fallback needs a password, so it stays a manual one-liner -- never committed.)
-if [ "${ROBOT_PERSIST_JOURNAL:-1}" != 0 ] && command -v journalctl >/dev/null 2>&1; then
+if [ "${ROBOT_PERSIST_JOURNAL}" != 0 ] && command -v journalctl >/dev/null 2>&1; then
   if [ -d /var/log/journal ]; then
     echo ">> journal: already persistent (/var/log/journal) -- past boots survive reboots."
   elif sudo mkdir -p /var/log/journal; then
@@ -221,8 +235,8 @@ if [ "${ROBOT_PERSIST_JOURNAL:-1}" != 0 ] && command -v journalctl >/dev/null 2>
     echo ">> journal: could not create /var/log/journal -- skipping (journal stays in RAM)."
   fi
 fi
-if [ "${ROBOT_INSTALL_COMITUP:-0}" = 1 ]; then
-  echo ">> Comitup captive-portal fallback (ROBOT_INSTALL_COMITUP=1; password-free Wi-Fi onboarding)..."
+if [ "${ROBOT_INSTALL_COMITUP}" = 1 ]; then
+  echo ">> Comitup captive-portal fallback (default ON; password-free Wi-Fi onboarding)..."
   if sudo apt install -y comitup; then
     # enable (NOT --now): activating it mid-install could reshuffle the network and drop your SSH -- let it
     # come up on the reboot at the end of install instead.

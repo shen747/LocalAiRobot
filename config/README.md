@@ -26,6 +26,15 @@ value; keys `robot.env` leaves blank show the code fallback the brain uses inste
 | `ROBOT_MOTORS_OFF` | `0` | `1` = **stationary / tabletop** mode: runs **fully live** (wake word, voice, camera, sensors, RAG, face) but the **ESC + steering get no PWM** — the console still logs the throttle/steer commands (like dry-run) yet the **wheels never move**. For talking to the assembled car on a desk without it driving off. Needs `ROBOT_DRY_RUN=0` (dry-run already fakes everything). |
 | `ROBOT_FAKE_DISTANCE_CM` | `200` | Dry-run synthetic **forward** distance fed to the gate; set `<ROBOT_OBSTACLE_CM` to make the obstacle stop trip without a sensor. |
 
+## Install-time flags (installer, not the brain)
+
+Read by `scripts/install_stack_pi5.sh` / `_jetson.sh` **at install time** to tune what the installer sets up — the brain never reads them. An inline override still wins (e.g. `ROBOT_INSTALL_COMITUP=0 ./scripts/install_stack_pi5.sh`).
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_INSTALL_COMITUP` | `1` | `1` = the installer sets up the **Comitup** captive-portal Wi-Fi fallback — when no known Wi-Fi is in range the board hosts its own AP + a web page to pick a network, so you can onboard from your phone with no monitor ([docs/change-pi-wifi.md](../docs/change-pi-wifi.md) Tier 2). **No password is stored** (the portal asks at runtime). `0` = don't install it. |
+| `ROBOT_PERSIST_JOURNAL` | `1` | `1` = the installer makes the systemd journal **persistent** (`/var/log/journal`) so the boot service's logs survive reboots — read a past boot with `journalctl -u robot.service -b -1`. `0` = leave the journal in RAM (wiped each reboot). |
+
 ## Concierge Mode (stationary greeter — PIR + local face recognition)
 
 A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary desk assistant that **never drives**, is woken by a **PIR motion sensor** as well as the wake word, and greets people it recognises **by name** via a **strictly-local** pipeline (OpenCV detect → ArcFace ONNX embed → match against the RAG db) — or smiles silently at strangers. Set it back to `0` for the normal crawler car. Full flow + wiring: [docs/concierge.md](../docs/concierge.md).
