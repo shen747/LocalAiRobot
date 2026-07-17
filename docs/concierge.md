@@ -53,8 +53,10 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 
 ## Hardware
 
-- **PIR motion sensor** (e.g. Adafruit PIR, ADA189). 5 V power, **3.3 V digital OUT** → Pi-safe on any free
-  GPIO. Set `ROBOT_PIR_PIN` to that BCM pin. Leave it empty to run concierge **wake-word-only** (no PIR).
+- **PIR motion sensor** (e.g. Adafruit PIR, ADA189). 5 V power, **3.3 V digital OUT** → Pi-safe, no divider.
+  Default wiring: **OUT → GPIO4 (pin 7), VCC → 5 V (pin 2), GND → GND (pin 6)** (`ROBOT_PIR_PIN=4`). Full
+  pinout + tuning: **[docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md)**; test it with
+  `./scripts/pir_sensor_probe.sh`. Set `ROBOT_PIR_PIN=` empty for a wake-word-only concierge.
 - **USB webcam** for the face pipeline (`ROBOT_CAMERA_BACKEND=v4l2`; see the USB-webcam patch).
 
 ## Setup
@@ -67,9 +69,8 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 ./scripts/enroll_face.sh "Ramesh"
 ./scripts/enroll_face.sh "Shani" 8
 
-# 3. Turn it on
+# 3. Turn it on  (ROBOT_PIR_PIN already defaults to 4 = GPIO4/pin 7; only change it if you wired OUT elsewhere)
 sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
-sed -i 's/^ROBOT_PIR_PIN=.*/ROBOT_PIR_PIN=17/'            config/robot.env   # your PIR's BCM pin
 
 # 4. Run
 ./scripts/run_me.sh

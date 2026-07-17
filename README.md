@@ -237,6 +237,7 @@ Everything in this repo, with a one-line "what's this for" — so nothing's a de
 - [docs/assembly.md](docs/assembly.md) — the full phased build: flash → brain → power → PCA9685 → sensors → camera → face → calibration.
 - [docs/wiring/pwm-esc-servo-wiring.md](docs/wiring/pwm-esc-servo-wiring.md) — pin-by-pin drive + steering wiring (PCA9685 → ESC/servo).
 - [docs/wiring/ultrasonic-sensors-wiring.md](docs/wiring/ultrasonic-sensors-wiring.md) — pin-by-pin wiring for the 3× HC-SR04P sensors.
+- [docs/wiring/pir-sensor-wiring.md](docs/wiring/pir-sensor-wiring.md) — pin-by-pin wiring for the optional Concierge-Mode PIR motion sensor.
 
 **Set up & run**
 - [scripts/patches/README.md](scripts/patches/README.md) — one-command hardware patches (ESC / sensors / camera / IMU / encoder), sorted into `common/` + your board's folder.
