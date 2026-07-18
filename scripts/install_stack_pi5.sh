@@ -341,15 +341,21 @@ echo
 echo "   * Reboot so I2C + your new device groups take effect:   sudo reboot"
 echo "     ...then SSH back in:   cd ~/LocalAiRobot        (new shells auto-load config/robot.env)"
 echo
-echo "   3. Patch in your ESC's tested defaults:   ./scripts/patches/common/<your-esc>.sh   (e.g. 1_esc_hb_qr_1060.sh)"
-echo "   4. Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
+echo "   3. Patch YOUR hardware -- run ONE patch per part you use (full catalog: scripts/patches/README.md):"
+echo "        ./scripts/patches/common/1_esc_hb_qr_1060.sh    # your ESC  (REQUIRED -- writes its throttle map)"
+echo "        ./scripts/patches/pi5/3_camera_usb_webcam.sh    # ONLY for a USB webcam (skip for the CSI cam)"
+echo "        # + sensor (common/2_sensor_*) / IMU / encoder / concierge face-id patches as needed"
+echo "   4. Prove the wiring (ESC ON, WHEELS OFF the ground):  ./scripts/run_diagnostics.sh --wheels-off"
 echo "   5. Drive it:   ./scripts/run_me.sh         (live: say 'hey jarvis' | bench: ./scripts/run_me.sh --dry)"
+echo
+echo "   Then (optional) auto-start the brain on every boot:   ./scripts/run_me.sh --install-boot"
 echo
 if [ "$BOOTSTRAP" = 1 ]; then
   echo "   Boot autostart is ENABLED (--bootstrap): the brain starts on the next boot. Watch it with"
   echo "   'journalctl -u robot.service -f'; undo with './scripts/run_me.sh --disable-boot'."
 else
-  echo "   Auto-start the brain on every boot?   ./scripts/install_stack_pi5.sh --bootstrap   (or run_me.sh --install-boot)"
+  echo "   (The optional --install-boot line above enables boot autostart; or bundle it into the install"
+  echo "    next time with --bootstrap.)"
 fi
 echo "   Diagnostics (step 4) flags anything wrong -- audio not right? just re-run ./scripts/setup_audio.sh."
 echo "   Inspect the robot's memory any time:   ./scripts/rag.sh   (--seen | --all | --forget <name>)"

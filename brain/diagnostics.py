@@ -393,82 +393,42 @@ class Diag:
             for la in ("Camera picture", "Camera video clip", "Camera live feed"):
                 self.skip(la, "ROBOT_CAMERA_ENABLE=0")
             return
-        # USB webcam (ROBOT_CAMERA_BACKEND=v4l2)? The robot captures through OpenCV (cv2.VideoCapture), NOT
-        # libcamera -- rpicam-jpeg/-vid don't drive UVC webcams and would falsely report "no cameras
-        # available". Test the REAL robot path instead of the CSI tools below.
-        if os.environ.get("ROBOT_CAMERA_BACKEND", "").strip().lower() == "v4l2":
-            return self._check_camera_usb()
-        # CSI camera: use the libcamera CLI tools (subprocess + timeout) so a detected-but-undelivering camera
-        # (bad CSI ribbon -> "Failed to queue buffer") can't HANG the run -- it times out and fails cleanly.
-        for label, cmd, fname, t in (
-            ("Camera picture (still)", ["rpicam-jpeg", "-n", "-t", "2000", "-o"], "diag_picture.jpg", 10),
-            ("Camera video clip (3 s)", ["rpicam-vid", "-n", "-t", "3000", "-o"], "diag_video.h264", 12),
-        ):
-            path = os.path.join(OUTDIR, fname)
-            try:
-                r = subprocess.run(cmd + [path], timeout=t,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-                if r.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
-                    self.ok(label, f"{os.path.getsize(path)} bytes -> {path}")
-                else:
-                    self.bad(label, f"{cmd[0]} failed: {(r.stderr or '').strip()[-160:]}", DOC_ASM)
-            except subprocess.TimeoutExpired:
-                self.bad(label, f"{cmd[0]} timed out -- camera detected but no frames: reseat the CSI ribbon /"
-                                " 22->15 adapter (contacts the right way, latches closed)", DOC_ASM)
-            except FileNotFoundError:
-                self.bad(label, f"{cmd[0]} not found (libcamera apps missing)", DOC_ASM)
-            except Exception as e:
-                self.bad(label, f"{e}", DOC_ASM)
-        self.skip("Camera live feed", "not viewable over headless SSH; the saved clip covers the pipeline")
-
-    def _check_camera_usb(self):
-        """USB webcam (ROBOT_CAMERA_BACKEND=v4l2): test the ACTUAL robot path -- camera.Camera() ->
-        cv2.VideoCapture -- not rpicam (the libcamera CLIs don't drive UVC webcams). Pre-checks (cv2 present,
-        /dev/videoN exists) so a failure names the cause instead of a bare 'no cameras available'."""
+        # Test the camera the SAME way the BRAIN does: camera.Camera().capture_jpeg() through the CONFIGURED
+        # backend -- picamera2 (a CSI cam, OR a USB/UVC webcam that libcamera opens fine), or cv2/v4l2 for a
+        # USB webcam. This is the TRUTH. We do NOT use rpicam-jpeg/-vid here: those libcamera CLIs only drive
+        # CSI cameras and falsely report "no cameras available" for a UVC webcam that picamera2 captures fine.
         import glob
-        label = "Camera picture (USB webcam / v4l2)"
-        src = (os.environ.get("ROBOT_CAMERA_SOURCE", "0") or "0").strip()
-        vids = ", ".join(sorted(glob.glob("/dev/video*"))) or "none"
-        # 1) OpenCV present? (installed by scripts/patches/pi5/3_camera_usb_webcam.sh, not the base install)
-        try:
-            import cv2  # noqa: F401
-        except Exception as e:
-            self.bad(label, f"OpenCV (cv2) not importable: {e} -- run "
-                     "./scripts/patches/pi5/3_camera_usb_webcam.sh (installs opencv-python)", DOC_ASM)
-            self.skip("Camera video clip", "skipped (cv2 missing)")
-            self.skip("Camera live feed", "not viewable over headless SSH")
-            return
-        # 2) device node present? (a bare index N addresses /dev/videoN)
-        if src.isdigit() and not os.path.exists(f"/dev/video{src}"):
-            self.bad(label, f"/dev/video{src} not found (present: {vids}) -- is the webcam plugged in? point "
-                     "ROBOT_CAMERA_SOURCE at a listed index (`v4l2-ctl --list-devices`)", DOC_ASM)
-            self.skip("Camera video clip", "skipped (no device)")
-            self.skip("Camera live feed", "not viewable over headless SSH")
-            return
-        # 3) capture through the real backend (camera.Camera -> GstCamera -> cv2.VideoCapture(SOURCE))
+        label = "Camera picture (still)"
+        backend = os.environ.get("ROBOT_CAMERA_BACKEND", "").strip().lower() or "picamera2/CSI"
+        src = (os.environ.get("ROBOT_CAMERA_SOURCE", "") or "").strip()
+        data, err = None, None
         try:
             from camera import Camera
             cam = Camera()
             try:
-                if not cam.available:
-                    self.bad(label, f"backend could not open the webcam (source={src}; /dev/video*: {vids}) -- "
-                             "another process may hold it, or try a different index", DOC_ASM)
-                else:
-                    data = cam.capture_jpeg()
-                    if data:
-                        os.makedirs(OUTDIR, exist_ok=True)
-                        path = os.path.join(OUTDIR, "diag_webcam.jpg")
-                        with open(path, "wb") as f:
-                            f.write(data)
-                        self.ok(label, f"{len(data)} bytes -> {path}  (cv2, source={src})")
-                    else:
-                        self.bad(label, f"opened the webcam (source={src}) but captured NO frame -- try "
-                                 "another index or unplug/replug the cam", DOC_ASM)
+                data = cam.capture_jpeg() if getattr(cam, "available", False) else None
             finally:
                 cam.close()
         except Exception as e:
-            self.bad(label, f"capture failed: {e}", DOC_ASM)
-        self.skip("Camera video clip", "n/a for a USB webcam -- the robot only does still capture on v4l2")
+            err = e
+        if data:
+            os.makedirs(OUTDIR, exist_ok=True)
+            path = os.path.join(OUTDIR, "diag_picture.jpg")
+            with open(path, "wb") as f:
+                f.write(data)
+            self.ok(label, f"{len(data)} bytes -> {path}  (backend={backend}"
+                           + (f", source={src}" if src else "") + ")")
+        else:
+            # Named, backend-aware hint. A USB webcam usually needs the v4l2 patch; a CSI cam the ribbon +
+            # boot-overlay. List the /dev/video* nodes so the fix is obvious.
+            vids = ", ".join(sorted(glob.glob("/dev/video*"))) or "none"
+            reason = f"backend could not capture (backend={backend}, source={src or 'default'}; /dev/video*: {vids})"
+            if err is not None:
+                reason += f": {err}"
+            self.bad(label, reason + " -- USB webcam? run ./scripts/patches/pi5/3_camera_usb_webcam.sh "
+                     "(sets ROBOT_CAMERA_BACKEND=v4l2 + installs cv2). CSI cam? check the ribbon + the "
+                     "boot-config dtoverlay (assembly Phase 5).", DOC_ASM)
+        self.skip("Camera video clip", "n/a -- the robot only does still capture (camera.Camera)")
         self.skip("Camera live feed", "not viewable over headless SSH; the still capture covers the pipeline")
 
     def check_mic(self):

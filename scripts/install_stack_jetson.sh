@@ -273,7 +273,8 @@ echo "   * Reboot so the group membership + any jetson-io pin changes take effec
 echo "   * Board + pins: this script set ROBOT_BOARD=jetson + ROBOT_I2C_BUS=7 and commented out the Pi BCM"
 echo "     pins in config/robot.env -- VERIFY the jetson BOARD pins (16/18/29/31/32/33) match your wiring."
 echo "   * PWM board:  i2cdetect -y 7   (expect 0x40)."
-echo "   * Patch in your ESC's tested defaults:   ./scripts/patches/common/<your-esc>.sh   (e.g. 1_esc_hb_qr_1060.sh)"
+echo "   * Patch YOUR hardware (ESC REQUIRED, + any sensor/IMU/encoder; full catalog: scripts/patches/README.md):"
+echo "       ./scripts/patches/common/1_esc_hb_qr_1060.sh   (your ESC -- writes its throttle map)"
 echo "   * Prove the wiring (ESC ON, wheels OFF):  ./scripts/run_diagnostics.sh --wheels-off"
 echo "   * Camera (USB webcam = the Jetson default): this script set it up if it found one; else run"
 echo "       ./scripts/patches/jetson/3_camera_usb_webcam.sh"
@@ -282,6 +283,7 @@ echo "       gstreamer backend and prints the SEPARATE, JetPack-version-specific
 echo "       pins to your EXACT L4T kernel). After it works, 'sudo apt-mark hold nvidia-l4t-kernel' so an apt"
 echo "       upgrade can't silently revert the driver."
 echo "   * Drive it:   ./scripts/run_me.sh        (bench: ./scripts/run_me.sh --dry)"
+echo "   * Auto-start on every boot (optional):   ./scripts/run_me.sh --install-boot"
 echo
 echo "${GRN}==============================================================${RST}"
 echo "${GRN}   ✓  LocalAiRobot Brain (Jetson) Installed !!!${RST}"
