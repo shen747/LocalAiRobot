@@ -275,8 +275,38 @@ def query_ollama(cfg, user_text, context=""):
     }, _llm_timeout())
 
 
+# --- TTS pronunciation fixups -----------------------------------------------------------------------
+# Piper mis-says some names (it reads "Ramesh" as "RAM-esh"). We respell them phonetically JUST before
+# synthesis, so EVERY spoken string -- LLM replies, concierge greetings/refusals, spoken errors -- comes out
+# right without polluting the text the LLM sees (or the on-screen face caption, which speaks the same text).
+# Matches are whole-word and case-insensitive. Add/override entries via config/robot.env:
+#   ROBOT_TTS_PRONUNCIATIONS="Ramesh=R uh - m ai sh; Shani=Shah-nee"
+_PRONUNCIATIONS = {"Ramesh": "R uh - m ai sh"}
+_pron_re = None    # compiled lazily from _PRONUNCIATIONS (+ env) on first _fix_pronunciation() call
+_pron_lut = None   # lowercased key -> respelling, for the case-insensitive substitution
+
+
+def _fix_pronunciation(text):
+    """Respell known-mispronounced names phonetically for Piper. Whole-word, case-insensitive. Returns the
+    text unchanged if nothing matches. Overridable/extendable via ROBOT_TTS_PRONUNCIATIONS ('Name=respell;...')."""
+    global _pron_re, _pron_lut
+    if _pron_re is None:
+        table = dict(_PRONUNCIATIONS)
+        for pair in os.environ.get("ROBOT_TTS_PRONUNCIATIONS", "").split(";"):
+            key, sep, val = pair.partition("=")
+            if sep and key.strip():
+                table[key.strip()] = val.strip()
+        _pron_lut = {k.lower(): v for k, v in table.items() if k.strip()}
+        # A never-matching pattern when the table is empty, so the sub below is a cheap no-op.
+        _pron_re = re.compile(r"\b(" + "|".join(re.escape(k) for k in _pron_lut) + r")\b",
+                              re.IGNORECASE) if _pron_lut else re.compile(r"(?!)")
+    if not _pron_lut:
+        return text
+    return _pron_re.sub(lambda m: _pron_lut[m.group(0).lower()], text)
+
+
 def speak(cfg, text):
-    text = (text or "").strip()
+    text = _fix_pronunciation((text or "").strip())
     if not text:
         return
     wav = os.path.join(cfg["tmpdir"], f"reply-{os.getpid()}-{int(time.time() * 1000)}.wav")

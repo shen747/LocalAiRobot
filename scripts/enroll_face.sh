@@ -10,6 +10,7 @@
 #
 # Prereqs: the face model is installed (scripts/patches/common/5_face_id_insightface.sh) and the webcam works
 # (ROBOT_CAMERA_BACKEND=v4l2 + ROBOT_CAMERA_SOURCE). Remove someone: rag.sh, or DELETE FROM faces WHERE name=.
+# To enrol FROM PHOTO FILES instead (no camera, adds a description too): ./scripts/enroll_person.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$REPO/config/robot.env" ] && { set -a; . "$REPO/config/robot.env"; set +a; }

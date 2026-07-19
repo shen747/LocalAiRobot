@@ -66,8 +66,12 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 #    (Re)fetch on demand: ./scripts/provision_face_id.sh  (or ./scripts/patches/common/5_face_id_insightface.sh)
 
 # 2. Enrol the people you want greeted (a few shots each, from slightly different angles)
-./scripts/enroll_face.sh "Ramesh"
+./scripts/enroll_face.sh "Ramesh"          # capture live from the webcam (face embedding only)
 ./scripts/enroll_face.sh "Shani" 8
+
+#    ...or enrol FROM PHOTO FILES you already have -- stores a face embedding AND a description in one go,
+#    and is safe to run while the robot is live (it reads files, not the camera):
+./scripts/enroll_person.sh "Ramesh" "my creator, wears glasses" ~/pics/ramesh1.jpg ~/pics/ramesh2.jpg
 
 # 3. Turn it on  (ROBOT_PIR_PIN already defaults to 4 = GPIO4/pin 7; only change it if you wired OUT elsewhere)
 sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
@@ -100,7 +104,9 @@ Edit those lists to change the wording.
 
 - **Privacy:** enrolled faces are stored **locally** as ArcFace embeddings (not images) in the RAG db
   (`~/.localairobot/memory.db`, table `faces`). Nothing leaves the device for recognition. Remove someone
-  with `DELETE FROM faces WHERE name='…'` (or `mem.forget_face()`).
+  with `DELETE FROM faces WHERE name='…'` (or `mem.forget_face()`). Note that `enroll_person.sh` and the voice
+  *"remember this is…"* flow additionally keep a **reference JPEG** under `~/.localairobot/photos/` and a text
+  fact in table `facts` — clear those with `./scripts/rag.sh --forget "Name"` and by deleting the JPEG.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
   tuned for a handful of known desk visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
