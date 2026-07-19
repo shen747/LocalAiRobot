@@ -123,13 +123,17 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         think_lead, think_repeat = _envi("ROBOT_THINKING_LEAD_MS", 500), _envi("ROBOT_THINKING_REPEAT_S", 10)
     step_ms = _envi("ROBOT_EXPLORE_STEP_MS", 900)
     speed = _envi("ROBOT_EXPLORE_SPEED", 15)
+    # The weak LOCAL VLM often returns done=True on the very FIRST frame (it "recognised" a few objects and
+    # calls the room explored) -- which made explore stop having driven ZERO steps. Force at least this many
+    # movement steps before honouring "done", so an explore command ALWAYS actually moves.
+    min_iters = max(0, _envi("ROBOT_EXPLORE_MIN_ITERS", 2))
     narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
     face.set_expression("exploring")
     log.info("EXPLORE (agentic) start: backend=%s max_iters=%d max_secs=%.0f speed=%d",
              "remote" if remote else "local", max_iters, max_secs, speed)
     deadline = time.monotonic() + max_secs
-    seen, reason = [], "iteration cap"
+    seen, reason, moves = [], "iteration cap", 0
     for i in range(max_iters):
         if aborted():
             reason = "aborted (stop)"
@@ -159,9 +163,17 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
             face.set_expression("talking")
             say(step["speak"][:140])
             face.set_expression("exploring")
-        if step.get("done"):
+        if step.get("done") and i >= min_iters:
             reason = "model satisfied"
             break
+        if step.get("done"):
+            # Weak LOCAL VLM: it called "done" before driving (this is why explore sometimes never moved).
+            # Ignore it until min_iters, and make sure THIS step drives -- coerce a STOP/blank into a FORWARD
+            # crawl (still ultrasonic-gated in the control thread).
+            log.info("EXPLORE iter %d: model said DONE at %d/%d min steps -- overriding to keep moving",
+                     i, i, min_iters)
+            if step.get("move") in (None, "", "STOP"):
+                step["move"] = "FORWARD"
         if aborted():
             reason = "aborted (stop)"
             break
@@ -174,6 +186,7 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
             steer = "CENTER"
         log.info("EXPLORE iter %d: FORWARD %s (%s)", i, steer, step.get("reason", "")[:60])
         driver.command("FORWARD", steer, speed, step_ms)   # sensor-gated in the 20Hz control thread
+        moves += 1
         _sleep(step_ms / 1000.0 + 0.1, aborted)
 
     driver.stop()
@@ -183,5 +196,5 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     else:
         say("I had a look around but I'm not sure what I'm seeing.")
     face.set_expression("idle")
-    log.info("EXPLORE (agentic) done (%s), objects=%s", reason, seen)
+    log.info("EXPLORE (agentic) done (%s) -- drove %d step(s), objects=%s", reason, moves, seen)
     return seen
