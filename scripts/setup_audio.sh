@@ -96,7 +96,7 @@ EOF
     if [ "$AUDIO_ONLY" = 1 ]; then
       echo "   volume re-applied 100% ('$vol_ctl')"
     else
-      sudo alsactl store >/dev/null 2>&1 || true
+      sudo -n alsactl store >/dev/null 2>&1 || true   # -n: never prompt -- ExecStartPre has no tty, so fail fast, never hang
       echo "   volume set to 100% ('$vol_ctl') and persisted (alsactl store)"
     fi
   else

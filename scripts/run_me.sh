@@ -138,9 +138,15 @@ if [ "$reload" != 1 ] && { pgrep -f 'python.*brain/main\.py' >/dev/null 2>&1 \
   "$REPO/scripts/shutdown.sh" || true
 fi
 
-# Re-apply the USB-speaker default + volume before launching: USB audio volume often resets to 0/low across
-# a reboot, and re-running setup_audio.sh fixes it. --audio-only skips the config rewrite + sudo; best-effort.
-bash "$REPO/scripts/setup_audio.sh" --audio-only || true
+# Re-apply the USB-speaker default + volume before launching AND refresh the auto-detected device NAMES: USB
+# audio volume resets to 0/low across a reboot, and -- critically -- ALSA USB card ids are enumeration-ORDER
+# dependent, so across a power cycle the speaker/mic ids can SWAP and silently break the explicit
+# ROBOT_SOUNDS_DEVICE / ROBOT_MIC the brain uses (aplay/arecord 'No such file or directory'). A FULL
+# setup_audio re-detects + rewrites those names to THIS boot's enumeration; we then re-source so the brain we
+# exec below inherits them, re-applying the per-run --verbose overrides the re-source would otherwise reset.
+bash "$REPO/scripts/setup_audio.sh" || true
+if [ -f config/robot.env ]; then set -a; . config/robot.env; set +a; fi
+if [ "$verbose" = 1 ]; then export ROBOT_SENSOR_VERBOSE=1; export ROBOT_LOG_LEVEL="${ROBOT_LOG_LEVEL:-DEBUG}"; fi
 
 # DRY RUN -> foreground, interactive.
 if [ "$DRY" = 1 ]; then

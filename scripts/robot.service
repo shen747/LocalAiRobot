@@ -20,12 +20,15 @@ StartLimitIntervalSec=0
 Type=simple
 User=YOUR_USER
 WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
-# Re-apply the USB-speaker ALSA default (~/.asoundrc) + volume BEFORE the brain starts. USB-audio volume
-# resets to 0 across every reboot, and this service has no login session that would have set ~/.asoundrc --
-# so without this the startup "systems online" greeting (and all earcons) are silent under systemd. This is
-# the same setup_audio.sh --audio-only that run_me.sh runs on every foreground launch. Best-effort: the
-# trailing `|| true` keeps a missing/unready speaker from blocking the brain from starting.
-ExecStartPre=/bin/bash -c '/home/YOUR_USER/LocalAiRobot/scripts/setup_audio.sh --audio-only || true'
+# Re-detect + re-apply the USB audio setup BEFORE the brain starts: re-point the ALSA default (~/.asoundrc)
+# + volume AND refresh the auto-detected device NAMES in config/robot.env. USB-audio volume resets to 0 across
+# every reboot, AND -- critically -- ALSA USB card ids are enumeration-ORDER dependent: across a power cycle a
+# speaker's and mic's ids can SWAP (especially two dongles that share a USB product string, e.g. "UACDemo
+# V1.0"), which silently breaks the explicit ROBOT_SOUNDS_DEVICE / ROBOT_MIC the ExecStart below reads
+# (aplay/arecord 'No such file or directory' -> silent earcons + dead mic). A FULL setup_audio (NOT
+# --audio-only) rewrites those names to THIS boot's enumeration; because ExecStartPre fully completes before
+# ExecStart, the config the brain then sources is already corrected. Best-effort: `|| true` never blocks boot.
+ExecStartPre=/bin/bash -c '/home/YOUR_USER/LocalAiRobot/scripts/setup_audio.sh || true'
 # NB: the Concierge face-recognition model is NOT provisioned here on purpose -- a slow first-boot download
 # could exceed systemd's start timeout. It's installed by scripts/install_stack_pi5.sh / _jetson.sh (with the
 # other models), so by the time this service boots the model is already present.
