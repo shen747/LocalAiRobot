@@ -139,9 +139,11 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     # margin ABOVE the hard gate) we skip the slow VLM step and do a deterministic back-up-and-turn toward the
     # more-open side. escape_cm should be > ROBOT_OBSTACLE_CM so we react BEFORE slamming into the gate.
     escape_cm = _envf("ROBOT_EXPLORE_ESCAPE_CM", 25.0)
-    # The escape REVERSE is BLIND -- there is no rear beam -- so keep it SLOW + SHORT: a gentle nudge that
-    # taps (not slams) anything behind. escape_speed is a low crawl, NOT the roam speed; escape_ms is brief.
-    escape_ms = _envi("ROBOT_EXPLORE_ESCAPE_MS", 500)
+    # The escape REVERSE is BLIND (no rear beam), so keep the SPEED a low crawl -- a gentle back-off that taps,
+    # never slams, anything behind. Give it DURATION instead (escape_ms, default 1.5s) to actually clear the
+    # obstacle before turning: at crawl speed a longer reverse is still a tap. Raise escape_ms (the SAFE lever)
+    # if it doesn't back up far enough; raise escape_speed only if you must (faster = a harder blind bump).
+    escape_ms = _envi("ROBOT_EXPLORE_ESCAPE_MS", 1500)
     escape_speed = max(1, _envi("ROBOT_EXPLORE_ESCAPE_SPEED", 8))
     narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
@@ -157,28 +159,35 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         if time.monotonic() >= deadline:
             reason = "time cap"
             break
-        # Boxed in? Back up + turn toward the more-open side BEFORE the slow VLM step (the VLM only knows
-        # FORWARD/STOP and would just pin us at the wall). A failed front read (-1.0) is NOT treated as close.
+        # Boxed in? Run a deterministic back-up-and-turn BEFORE the slow VLM step (the VLM only knows
+        # FORWARD/STOP and would just oscillate at the wall). Sequence, matching the intended maneuver:
+        #   1. reverse STRAIGHT for escape_ms -- BLIND rear (no beam) so a gentle crawl, but LONG enough to
+        #      actually pull back off the obstacle (this is the fix for the old 500ms nudge that the 1.5s
+        #      forward out-ran, so it only ever slowly rotated in place).
+        #   2-3. RE-READ the left + right beams from the NEW backed-up position (fresher than reading before we
+        #      reversed -- the car has moved, so the "which side is clearer" decision should use where it IS now).
+        #   4-5. turn toward whichever side has MORE room and drive that way (still front-gated).
+        #   6. `continue` -> the loop re-checks front at the top and repeats from step 1 if it's still boxed.
+        # A failed front read (-1.0) is NOT treated as close.
         dist = driver.distances()
         front = dist.get("front")
         if isinstance(front, (int, float)) and 0 <= front <= escape_cm:
-            left, right = _clear(dist.get("left")), _clear(dist.get("right"))
-            open_side = "LEFT" if left >= right else "RIGHT"
-            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in) -> ESCAPE reverse(spd=%d,%dms) + turn %s (L=%.0f R=%.0f)",
-                     i, front, escape_cm, escape_speed, escape_ms, open_side, left, right)
+            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in) -> ESCAPE: reverse %dms (spd=%d), then turn to the open side",
+                     i, front, escape_cm, escape_ms, escape_speed)
             driver.stop()
-            # GENTLE, SHORT, BLIND reverse: no rear beam exists, so a slow brief nudge only -- it must never
-            # build the momentum that let it slam the sofa hard enough to brown-out the Pi. Then creep-curve
-            # into the more-open side (that forward IS front-gated). Both at the low escape speed, not the roam speed.
-            driver.command("REVERSE", "CENTER", escape_speed, escape_ms)
+            driver.command("REVERSE", "CENTER", escape_speed, escape_ms)     # 1. back straight (blind rear -> crawl)
             _sleep(escape_ms / 1000.0 + 0.1, aborted)
             if aborted():
                 reason = "aborted (stop)"
                 break
-            driver.command("FORWARD", open_side, escape_speed, step_ms)
+            d2 = driver.distances()                                          # 2-3. fresh side reads AFTER backing up
+            left, right = _clear(d2.get("left")), _clear(d2.get("right"))
+            open_side = "LEFT" if left >= right else "RIGHT"                  # 4. more room -> the turn direction
+            log.info("EXPLORE iter %d: after reverse -> L=%.0fcm R=%.0fcm, turning %s and going", i, left, right, open_side)
+            driver.command("FORWARD", open_side, escape_speed, step_ms)      # 5. drive the open way (front-gated)
             moves += 1
             _sleep(step_ms / 1000.0 + 0.1, aborted)
-            continue
+            continue                                                          # 6. loop repeats if still boxed
         driver.stop()                                  # NEUTRAL while the (slow) camera + LLM step runs
         face.set_expression("capturing")
         frame = cam.capture_jpeg()
