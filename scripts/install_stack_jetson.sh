@@ -223,18 +223,10 @@ bash "${REPO}/scripts/setup_audio.sh" || true
 #     hosts its own AP + web page to pick a Wi-Fi (docs/change-pi-wifi.md, Tier 2). It stores NO password;
 #     the portal collects the target Wi-Fi's password at runtime. Skip with ROBOT_INSTALL_COMITUP=0.
 #     (The Tier-1 phone-hotspot fallback needs a password, so it stays a manual one-liner -- never committed.)
-if [ "${ROBOT_PERSIST_JOURNAL}" != 0 ] && command -v journalctl >/dev/null 2>&1; then
-  if [ -d /var/log/journal ]; then
-    echo ">> journal: already persistent (/var/log/journal) -- past boots survive reboots."
-  elif sudo mkdir -p /var/log/journal; then
-    echo ">> journal: made the systemd journal PERSISTENT across reboots (/var/log/journal)."
-    sudo systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
-    sudo systemctl restart systemd-journald >/dev/null 2>&1 || true
-    echo "   read a PREVIOUS boot's brain log with:  journalctl -u robot.service -b -1"
-  else
-    echo ">> journal: could not create /var/log/journal -- skipping (journal stays in RAM)."
-  fi
-fi
+# Persistent journal (robust): an explicit Storage=persistent drop-in + a VERIFY step, via the shared helper
+# (single source of truth; also runnable standalone). Fixes the Storage=auto timing trap that silently left a
+# field robot logging to RAM -- so a crash/brown-out is readable next boot with 'journalctl -u robot.service -b -1'.
+ROBOT_PERSIST_JOURNAL="${ROBOT_PERSIST_JOURNAL}" bash "${REPO}/scripts/enable_persistent_journal.sh" || true
 if [ "${ROBOT_INSTALL_COMITUP}" = 1 ]; then
   echo ">> Comitup captive-portal fallback (default ON; password-free Wi-Fi onboarding)..."
   if sudo apt install -y comitup; then
