@@ -139,7 +139,10 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     # margin ABOVE the hard gate) we skip the slow VLM step and do a deterministic back-up-and-turn toward the
     # more-open side. escape_cm should be > ROBOT_OBSTACLE_CM so we react BEFORE slamming into the gate.
     escape_cm = _envf("ROBOT_EXPLORE_ESCAPE_CM", 25.0)
-    escape_ms = _envi("ROBOT_EXPLORE_ESCAPE_MS", 1200)
+    # The escape REVERSE is BLIND -- there is no rear beam -- so keep it SLOW + SHORT: a gentle nudge that
+    # taps (not slams) anything behind. escape_speed is a low crawl, NOT the roam speed; escape_ms is brief.
+    escape_ms = _envi("ROBOT_EXPLORE_ESCAPE_MS", 500)
+    escape_speed = max(1, _envi("ROBOT_EXPLORE_ESCAPE_SPEED", 8))
     narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
     face.set_expression("exploring")
@@ -161,15 +164,18 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         if isinstance(front, (int, float)) and 0 <= front <= escape_cm:
             left, right = _clear(dist.get("left")), _clear(dist.get("right"))
             open_side = "LEFT" if left >= right else "RIGHT"
-            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in) -> ESCAPE reverse + turn %s (L=%.0f R=%.0f)",
-                     i, front, escape_cm, open_side, left, right)
+            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in) -> ESCAPE reverse(spd=%d,%dms) + turn %s (L=%.0f R=%.0f)",
+                     i, front, escape_cm, escape_speed, escape_ms, open_side, left, right)
             driver.stop()
-            driver.command("REVERSE", "CENTER", speed, escape_ms)   # back straight off the wall (rear is unsensed)
+            # GENTLE, SHORT, BLIND reverse: no rear beam exists, so a slow brief nudge only -- it must never
+            # build the momentum that let it slam the sofa hard enough to brown-out the Pi. Then creep-curve
+            # into the more-open side (that forward IS front-gated). Both at the low escape speed, not the roam speed.
+            driver.command("REVERSE", "CENTER", escape_speed, escape_ms)
             _sleep(escape_ms / 1000.0 + 0.1, aborted)
             if aborted():
                 reason = "aborted (stop)"
                 break
-            driver.command("FORWARD", open_side, speed, step_ms)    # then curve into the more-open side (still gated)
+            driver.command("FORWARD", open_side, escape_speed, step_ms)
             moves += 1
             _sleep(step_ms / 1000.0 + 0.1, aborted)
             continue
