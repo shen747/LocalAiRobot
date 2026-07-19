@@ -36,9 +36,10 @@ def _envf(key, default):
 
 
 def _is_remote(cfg):
-    """True when a REMOTE model backend is configured (Gemini or any non-local) -- it's faster + smarter,
-    so agentic explore gets 2x the caps and near-silent per-step cues."""
-    return (cfg.get("ai_backend") or "local").lower() != "local"
+    """True when VISION is served by a REMOTE model (Gemini) -- faster + smarter, so agentic explore (whose
+    every step IS a vision call) gets 2x the caps and near-silent per-step cues. Under ROBOT_AI_BACKEND=mixed
+    this tracks the VISION backend (remote only when a key is set), NOT the local text LLM."""
+    return vision.vision_backend(cfg) == "gemini"
 
 
 def _sleep(secs, aborted):

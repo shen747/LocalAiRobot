@@ -756,7 +756,9 @@ def main():
         non-local) stays silent ~4s so a fast reply plays NO cue, and plays only ONCE if it's slow;
         LOCAL leads quickly (~0.5s) and re-cues with the 'still...' set. All keys have safe defaults so
         config/robot.env need not set them."""
-        if cfg.get("ai_backend", "local") != "local":
+        # This cue covers the command turn's INTENT call -- remote (pure gemini) only. Under 'mixed' the
+        # intent stays LOCAL (only vision is remote), so mixed uses the LOCAL quick-lead + re-cue timing.
+        if cfg.get("ai_backend", "local") == "gemini":
             snd.start_thinking(lead_ms=_as_int(os.environ.get("ROBOT_THINKING_LEAD_REMOTE_MS"), 4000),
                                repeat_s=_as_int(os.environ.get("ROBOT_THINKING_REPEAT_REMOTE_S"), 0))
         else:
@@ -776,7 +778,7 @@ def main():
             return False
         if v in ("1", "on", "yes", "true"):
             return True
-        return cfg.get("ai_backend", "local") != "local"   # "auto": remote only (hidden in the record window)
+        return vision.vision_backend(cfg) == "gemini"   # "auto": ON only when VISION is remote (fast; hidden in the record window)
 
     def _wake_person_check(gen):
         try:
@@ -962,7 +964,8 @@ def main():
     if getattr(driver, "hw_failed", False):
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
-    if cfg.get("ai_backend") == "gemini":
+    _ab = cfg.get("ai_backend", "local")
+    if _ab == "gemini":
         if cfg.get("gemini_api_key"):
             _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
             _split = f"text={cfg.get('gemini_model')}, vision={_vm}" if _vm != cfg.get("gemini_model") \
@@ -972,6 +975,16 @@ def main():
             print("AI brain: ROBOT_AI_BACKEND=gemini but ROBOT_GEMINI_API_KEY is EMPTY — commands will "
                   "fail. Set the key (see docs/gemini-setup.md) or switch back to local.", file=sys.stderr)
             log.error("ROBOT_AI_BACKEND=gemini with no ROBOT_GEMINI_API_KEY — model calls will fail-safe")
+    elif _ab == "mixed":
+        if cfg.get("gemini_api_key"):
+            _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
+            print(f"AI brain: MIXED — text LOCAL Ollama ({cfg.get('model')}), vision REMOTE Gemini ({_vm}); "
+                  "vision auto-falls back to local if the network/remote is down.")
+        else:
+            print(f"AI brain: MIXED but ROBOT_GEMINI_API_KEY is EMPTY — vision stays LOCAL "
+                  f"({cfg.get('vision_model') or cfg.get('model')}). Set the key for remote vision "
+                  "(docs/gemini-setup.md).", file=sys.stderr)
+            log.warning("ROBOT_AI_BACKEND=mixed with no ROBOT_GEMINI_API_KEY — vision runs on the local VLM")
     else:
         print(f"AI brain: LOCAL Ollama ({cfg.get('model')}) — fully offline.")
     if wake.dry_run:

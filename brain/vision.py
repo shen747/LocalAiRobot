@@ -15,6 +15,9 @@
 import base64
 import logging
 import os
+import re
+import socket
+import urllib.error
 
 import inference
 
@@ -22,6 +25,34 @@ log = logging.getLogger("robot.vision")
 
 _HORIZ = ("left", "center", "right")
 _DIST = ("near", "far")
+
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tif", ".tiff")
+
+
+def _clean_object(s):
+    """The weak LOCAL VLM (moondream) sometimes emits filename-like tokens -- './monopoly.png',
+    'books on shelf.png' -- instead of plain object names, which then get SPOKEN as 'dot slash monopoly
+    dot png'. Strip any path + image extension and de-underscore so what's stored/spoken is plain words."""
+    s = str(s or "").strip().strip('"\'')
+    if s.lower().endswith(_IMG_EXT):
+        s = os.path.basename(s.replace("\\", "/"))          # drop any ./ or path prefix
+        for ext in _IMG_EXT:
+            if s.lower().endswith(ext):
+                s = s[: -len(ext)]
+                break
+        s = re.sub(r"[_\-]+", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _clean_objects(objs):
+    """Clean + de-dupe a VLM object list (drops filename artifacts, keeps first-seen order)."""
+    out = []
+    for o in (objs or []):
+        c = _clean_object(o)
+        if c and c.lower() not in (x.lower() for x in out):
+            out.append(c)
+    return out
 
 LOOK_SCHEMA = {
     "type": "object",
@@ -81,18 +112,67 @@ def _vision_timeout(cfg=None):
         return float(default)
 
 
+def vision_backend(cfg):
+    """Which backend serves VISION for this cfg -- 'gemini' (remote) or 'local' (Ollama/moondream):
+      ai_backend=gemini -> remote (as today);
+      ai_backend=mixed  -> remote WHEN a Gemini key is present, else local (vision goes remote, text stays
+                           local -- so LOOK/EXPLORE use the strong remote VLM while intents stay offline);
+      anything else     -> local.
+    Callers that time or pace on the VISION model (explore caps, wake person-check, thinking cues) key off
+    THIS, not cfg['ai_backend']."""
+    ab = (cfg.get("ai_backend") or "local").strip().lower()
+    have_key = bool((cfg.get("gemini_api_key") or "").strip())
+    if ab == "gemini":
+        return "gemini"
+    if ab == "mixed":
+        return "gemini" if have_key else "local"
+    return "local"
+
+
+def _classify_remote_error(e):
+    """Short human reason a REMOTE vision call failed -- so a mixed-mode fallback logs WHY, letting you tell
+    'network dropped' / 'Gemini is overloaded (503)' apart from 'my API key is wrong'."""
+    if isinstance(e, urllib.error.HTTPError):
+        kind = ("overloaded/unavailable" if e.code in (429, 500, 502, 503, 504)
+                else "auth/quota" if e.code in (401, 403)
+                else "model/request")
+        return f"HTTP {e.code} ({kind})"
+    if isinstance(e, (socket.timeout, TimeoutError)):
+        return "timeout"
+    if isinstance(e, urllib.error.URLError):
+        return f"network unreachable ({getattr(e, 'reason', e)})"
+    if isinstance(e, (ConnectionError, OSError)):
+        return f"network ({e})"
+    return str(e) or e.__class__.__name__
+
+
 def _ollama_image(cfg, prompt, jpeg_bytes, schema):
-    # Route through the shared inference gateway: ONE model_lock serialises this with the text
-    # intent call so two generates never hit Ollama at once (the software twin of the reference's
-    # /dev/hailo0 device-exclusivity crash), and keep_alive keeps the model resident. Uses a
-    # dedicated vision model when ROBOT_VISION_MODEL is set, otherwise falls back to ROBOT_MODEL.
-    return inference.ollama_generate(cfg, {
+    # Route through the shared inference gateway (ONE model_lock serialises this with the text intent call so
+    # two generates never hit Ollama at once, the software twin of the reference's /dev/hailo0 exclusivity
+    # crash; keep_alive keeps the model resident). Backend per vision_backend(): under 'mixed' the REMOTE
+    # (Gemini) VLM handles the look, and if that remote call FAILS for ANY reason -- network down, timeout,
+    # 503/overloaded, auth -- we fall back to the LOCAL VLM for THIS call so the robot's eyes never go blank
+    # (the reason is classified + logged). Pure 'gemini' does NOT auto-fall-back (a remote-only rig may have
+    # no local model pulled). Local uses ROBOT_VISION_MODEL, else ROBOT_MODEL.
+    payload = {
         "model": cfg.get("vision_model") or cfg["model"],
         "prompt": prompt,
         "images": [base64.b64encode(jpeg_bytes).decode("ascii")],
         "format": schema,
         "options": {"temperature": 0, "num_predict": 220},
-    }, _vision_timeout(cfg))
+    }
+    ab = (cfg.get("ai_backend") or "local").strip().lower()
+    if vision_backend(cfg) == "gemini":
+        gcfg = {**cfg, "ai_backend": "gemini"}
+        try:
+            return inference.ollama_generate(gcfg, payload, _vision_timeout(gcfg))
+        except Exception as e:
+            if ab != "mixed":
+                raise            # pure remote: surface it (caller fail-safes); no silent local fallback
+            log.warning("mixed: remote vision unavailable (%s) -> falling back to the LOCAL VLM",
+                        _classify_remote_error(e))
+    lcfg = {**cfg, "ai_backend": "local"}
+    return inference.ollama_generate(lcfg, payload, _vision_timeout(lcfg))
 
 
 def _parse_fake():
@@ -192,7 +272,7 @@ def describe(cfg, jpeg_bytes, query=None):
     try:
         obj = _ollama_image(cfg, prompt, jpeg_bytes, DESCRIBE_SCHEMA)
         desc = str(obj.get("description") or "")
-        objs = [str(o) for o in obj.get("objects", []) if o]
+        objs = _clean_objects(obj.get("objects"))
         log.info("vision DESCRIBE: %s | objects=%s", desc[:80], objs)
         return {"description": desc, "objects": objs}
     except Exception as e:
@@ -209,7 +289,7 @@ def _normalize_step(obj):
         steer = "CENTER"
     return {
         "description": str(obj.get("description") or ""),
-        "objects": [str(o) for o in (obj.get("objects") or []) if o],
+        "objects": _clean_objects(obj.get("objects")),
         "move": move,
         "steer": steer,
         "speak": str(obj.get("speak") or ""),
