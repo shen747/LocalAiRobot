@@ -13,10 +13,12 @@
 #   ROBOT_MIN_FORWARD_SPEED=0.55 forward has a dead-band -- it won't PULL until ~1775us (0.55); below that =
 #                                nothing (bench: 0.55 crawls, 0.45 does nothing). speed 1..100 maps 0.55..0.95.
 #   ROBOT_MAX_FORWARD_SPEED=0.95 capped top speed (~1975us), indoor-friendly.
-#   ROBOT_MIN_REVERSE_SPEED=0.00 slowest reverse. Reverse is a throttle BELOW the 0.25 neutral: 0.00 (1500us)
-#                                just crawls back. A value AT/above neutral does NOT reverse. This is what a
-#                                crawl "go back" writes -- raise toward neutral for slower, but too close = dead-band.
-#   ROBOT_MAX_REVERSE_SPEED=-0.20 fastest reverse (deeper below neutral = faster); -0.20 = 1400us. Bench-sweep to taste.
+#   ROBOT_MIN_REVERSE_SPEED=-0.01 slowest reverse that engages. Reverse kicks in JUST below the 1500us center:
+#                                0.00 (1500us) sits ON the boundary and does NOT move (field-confirmed: it just
+#                                sat still), but -0.01 (1495us) already creeps back (bench-confirmed). The offset
+#                                0.25 neutral (1625us) + the forward dead-band leave a dead zone ~1500-1775us, so
+#                                the floor MUST be a hair past 0.00. (Neutral drifts -- nudge to -0.03 for margin.)
+#   ROBOT_MAX_REVERSE_SPEED=-0.20 fastest reverse (more negative = faster); -0.20 = 1400us. Bench-sweep to taste.
 #   ROBOT_ESC_REVERSE_DOUBLETAP=0   F/R jumper = direct reverse (no F/B/R "double-click").
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -39,7 +41,7 @@ echo ">> Patching config/robot.env for a HobbyWing QuicRun WP-1060 (F/R direct r
 set_kv ROBOT_ESC_NEUTRAL           0.25
 set_kv ROBOT_MIN_FORWARD_SPEED     0.55
 set_kv ROBOT_MAX_FORWARD_SPEED     0.95
-set_kv ROBOT_MIN_REVERSE_SPEED     0.00
+set_kv ROBOT_MIN_REVERSE_SPEED     -0.01
 set_kv ROBOT_MAX_REVERSE_SPEED     -0.20
 set_kv ROBOT_ESC_REVERSE_DOUBLETAP 0
 set_kv ROBOT_THROTTLE_INVERT       0

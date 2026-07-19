@@ -32,8 +32,10 @@ editing its values: `scripts/patches/common/1_esc_hb_qr_1060.sh` or `1_esc_uliik
 
 - `0.00` = 1500 µs (center) · `+` = forward · `−` = reverse.
 - Many crawler ESCs have an **offset neutral** — the WP-1060 arms/stops at **`+0.25` (1625 µs)**, not `0.0`.
-- Forward only pulls **above a dead-band** (WP-1060: ~`+0.55`/1775 µs). Reverse only engages **below neutral**
-  (WP-1060: at/under `0.00`/1500 µs); **more negative = faster reverse.**
+- Forward only pulls **above a dead-band** (WP-1060: ~`+0.55`/1775 µs). Reverse engages **just below the 1500 µs
+  center**: `0.00`/1500 µs sits **on** the boundary and does **nothing**, but `−0.01`/1495 µs already creeps back
+  (both field-confirmed). The offset neutral (1625 µs) + the forward dead-band leave a dead zone ~1500–1775 µs.
+  **More negative = faster reverse.**
 
 ---
 
@@ -50,7 +52,7 @@ from adafruit_servokit import ServoKit
 # ---- tweak these (throttle -1..1; 0.0 = 1500us neutral, + = forward, - = reverse) ----
 NEUTRAL = 0.25     # arms + STOPS (this ESC's true neutral; WP-1060 is offset to ~+0.25 / 1625us)
 FORWARD = 0.55     # slowest forward crawl (won't PULL below ~0.55 / 1775us -- the dead-band)
-REVERSE = 0.00     # slowest reverse crawl (a throttle BELOW neutral; more negative = faster)
+REVERSE = -0.01    # slowest reverse that engages -- just past the 1500us center (0.00 sits ON the boundary = no motion)
 ARM_S   = 2.0      # hold NEUTRAL this long to ARM (ESC powered ON -> wait for the long 'ready' beep)
 MOVE_S  = 2.0      # how long each move runs
 # --------------------------------------------------------------------------------------
@@ -87,7 +89,7 @@ from adafruit_servokit import ServoKit
 
 NEUTRAL = 0.25          # your ESC's arm/stop point (sweep to where wheels sit DEAD STILL + the long beep)
 STEP, HOLD_S = 0.05, 1.2
-FWD_MAX, REV_MAX = 0.95, -0.30      # how far each sweep goes
+FWD_MAX, REV_MAX = 0.95, -0.30      # how far each sweep goes (reverse engages just under 0.00; -0.30 covers crawl..fast)
 
 ch = int(sys.argv[1]) if len(sys.argv) > 1 else 14
 esc = ServoKit(channels=16).continuous_servo[ch]
