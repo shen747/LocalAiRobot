@@ -58,6 +58,19 @@ install_boot() {
   sudo systemctl enable robot.service || { echo "!! systemctl enable robot.service failed" >&2; exit 1; }
   echo "   enabled -- starts on the NEXT boot (or now: sudo systemctl start robot.service)."
   echo "   Survives power off/on: auto-starts every boot + auto-restarts after a crash/brown-out (Restart=always)."
+  # Persistent journal: the boot service is HEADLESS, so its journal is the ONLY record of why it crashed or
+  # brown-out-rebooted -- but Raspberry Pi OS keeps the journal in RAM by default (wiped every reboot). Make it
+  # persist to disk HERE too (not only in install_stack, which a long-installed robot may predate), so ANY robot
+  # that enables autostart can read a PREVIOUS boot. Idempotent; honours ROBOT_PERSIST_JOURNAL=0 to opt out.
+  if [ "${ROBOT_PERSIST_JOURNAL:-1}" != 0 ] && command -v journalctl >/dev/null 2>&1; then
+    if [ -d /var/log/journal ]; then
+      echo "   journal: already persistent (/var/log/journal) -- past boots survive reboots."
+    elif sudo mkdir -p /var/log/journal; then
+      sudo systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+      sudo systemctl restart systemd-journald >/dev/null 2>&1 || true
+      echo "   journal: made PERSISTENT across reboots -- read a prior boot with: journalctl -u robot.service -b -1"
+    fi
+  fi
   echo "   watch:  journalctl -u robot.service -f       remove:  ./scripts/run_me.sh --disable-boot"
 }
 disable_boot() {
