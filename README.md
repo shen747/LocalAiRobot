@@ -204,7 +204,14 @@ it injects known entities into the prompt — a lightweight RAG — so context s
 
 **Face.** A small display shows the robot's state (`idle / listening / thinking / …`) — the built-in
 procedural face, or your PNG frames in `brain/faces/<state>/`. It auto-selects a backend (USB-C → DSI/HDMI
-→ simulated) and is optional; a missing panel never blocks driving. Design your own on your PC
+→ simulated) and is optional; a missing panel never blocks driving. **Switching panels** (e.g. from the USB-C
+serial panel to a **DSI ribbon screen**)? Pin the backend — `turing` for the USB-C panel, **`framebuffer` for a
+DSI/HDMI screen** (writes straight to `/dev/fb0`):
+```bash
+sed -i 's/^ROBOT_FACE_BACKEND=.*/ROBOT_FACE_BACKEND=framebuffer/' config/robot.env
+```
+A **DSI/HDMI face only renders on a console boot** (`sudo systemctl set-default multi-user.target`) — on the
+desktop, the Wayland compositor owns the framebuffer and the face won't show. Design your own on your PC
 (`./scripts/host_setup.sh` installs the tools): [`brain/faces/README.md`](brain/faces/README.md), [`sounds/README.md`](sounds/README.md).
 
 **Wake word & warmup.** Control is the wake word (*"hey jarvis"*, shipped in [`models/`](models/README.md);
