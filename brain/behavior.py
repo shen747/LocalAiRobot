@@ -145,13 +145,17 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     # if it doesn't back up far enough; raise escape_speed only if you must (faster = a harder blind bump).
     escape_ms = _envi("ROBOT_EXPLORE_ESCAPE_MS", 1500)
     escape_speed = max(1, _envi("ROBOT_EXPLORE_ESCAPE_SPEED", 8))
+    # If the front stays blocked after this many CONSECUTIVE escapes, STOP escaping and end the explore -- a
+    # wedged corner (or a front sensor STARVED to a false-low read under a power sag) would otherwise grind the
+    # whole iteration budget escaping in place. The reverse also lengthens on each repeat (the SAFE lever).
+    escape_max_tries = max(1, _envi("ROBOT_EXPLORE_ESCAPE_MAX_TRIES", 3))
     narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
     face.set_expression("exploring")
     log.info("EXPLORE (agentic) start: backend=%s max_iters=%d max_secs=%.0f speed=%d",
              "remote" if remote else "local", max_iters, max_secs, speed)
     deadline = time.monotonic() + max_secs
-    seen, reason, moves = [], "iteration cap", 0
+    seen, reason, moves, escape_tries = [], "iteration cap", 0, 0
     for i in range(max_iters):
         if aborted():
             reason = "aborted (stop)"
@@ -172,11 +176,22 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         dist = driver.distances()
         front = dist.get("front")
         if isinstance(front, (int, float)) and 0 <= front <= escape_cm:
-            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in) -> ESCAPE: reverse %dms (spd=%d), then turn to the open side",
-                     i, front, escape_cm, escape_ms, escape_speed)
+            escape_tries += 1
+            if escape_tries > escape_max_tries:
+                # Front is STILL blocked after escape_max_tries in a row -- a wedged corner, or a front sensor
+                # starved to a false-low read (power sag). Bail instead of grinding the rest of the budget.
+                log.warning("EXPLORE iter %d: front=%.0fcm STILL blocked after %d escapes -> stopping (stuck)",
+                            i, front, escape_max_tries)
+                face.set_expression("confused")
+                say("I seem to be stuck, so I'll stop exploring here.")
+                reason = "stuck (front blocked after %d escapes)" % escape_max_tries
+                break
+            rev_ms = int(escape_ms * (1.0 + 0.5 * (escape_tries - 1)))       # escalate the DURATION each repeat (safe lever)
+            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in, escape %d/%d) -> reverse %dms (spd=%d), then turn to the open side",
+                     i, front, escape_cm, escape_tries, escape_max_tries, rev_ms, escape_speed)
             driver.stop()
-            driver.command("REVERSE", "CENTER", escape_speed, escape_ms)     # 1. back straight (blind rear -> crawl)
-            _sleep(escape_ms / 1000.0 + 0.1, aborted)
+            driver.command("REVERSE", "CENTER", escape_speed, rev_ms)        # 1. back straight (blind rear -> crawl)
+            _sleep(rev_ms / 1000.0 + 0.1, aborted)
             if aborted():
                 reason = "aborted (stop)"
                 break
@@ -188,6 +203,7 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
             moves += 1
             _sleep(step_ms / 1000.0 + 0.1, aborted)
             continue                                                          # 6. loop repeats if still boxed
+        escape_tries = 0     # reached here => front is CLEAR (not boxed) -> reset the consecutive-escape counter
         driver.stop()                                  # NEUTRAL while the (slow) camera + LLM step runs
         face.set_expression("capturing")
         frame = cam.capture_jpeg()
@@ -231,10 +247,16 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         if steer in ("LEFT", "RIGHT") and driver.side_blocked(steer):
             log.info("EXPLORE iter %d: side %s blocked -> CENTER", i, steer)
             steer = "CENTER"
-        log.info("EXPLORE iter %d: FORWARD %s (%s)", i, steer, step.get("reason", "")[:60])
-        driver.command("FORWARD", steer, speed, step_ms)   # sensor-gated in the 20Hz control thread
+        # Ease off near obstacles: a full-length step at roam speed can overshoot from "clear" to nose-in
+        # before the gate reacts (esp. an angled wall the ultrasonic beam misses until very close). Halve the
+        # step when the front beam already shows we're approaching something (within 2x the escape margin).
+        this_step_ms = step_ms
+        if isinstance(front, (int, float)) and 0 <= front < 2 * escape_cm:
+            this_step_ms = max(400, step_ms // 2)
+        log.info("EXPLORE iter %d: FORWARD %s (%dms) (%s)", i, steer, this_step_ms, step.get("reason", "")[:60])
+        driver.command("FORWARD", steer, speed, this_step_ms)   # sensor-gated in the 20Hz control thread
         moves += 1
-        _sleep(step_ms / 1000.0 + 0.1, aborted)
+        _sleep(this_step_ms / 1000.0 + 0.1, aborted)
 
     driver.stop()
     face.set_expression("talking")
