@@ -14,6 +14,10 @@ lgpio                             # gpiozero pin-factory backend for the Raspber
 adafruit-circuitpython-vl53l1x    # 3x VL53L1X laser ToF sensors -- ONLY when ROBOT_SENSOR_TYPE=vl53l1x (I2C, no GPIO)
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
 numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
+opencv-python-headless<5          # Concierge Mode face detect (brain/face_id.py) + the USB-webcam v4l2 path.
+                                  # ALWAYS installed so ROBOT_CONCIERGE_MODE can be toggled on/off with no extra
+                                  # step. PINNED <5: OpenCV 5.0 dropped the top-level cv2.CascadeClassifier the
+                                  # Haar face detector uses. headless = no GUI libs (piwheels prebuilt aarch64).
 pyserial                          # USB-C face panel (turing-smart-screen serial protocol)
 
 # --- Wake word "Richard" (only exercised when ROBOT_WAKEWORD_ENABLE=1; still 100% offline) ---

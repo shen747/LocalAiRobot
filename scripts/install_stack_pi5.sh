@@ -201,8 +201,9 @@ if [ ! -d .venv ] || ! ./.venv/bin/python -c "import picamera2" >/dev/null 2>&1;
 fi
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -r requirements.txt
-# USB webcam instead of the CSI camera? that path needs OpenCV (the CSI/picamera2 default does not), so it is
-# NOT in requirements.txt -- run scripts/patches/pi5/3_camera_usb_webcam.sh, which sets the keys + installs cv2.
+# requirements.txt now includes opencv-python-headless<5 + onnxruntime, so Concierge face-id works out of the
+# box whenever ROBOT_CONCIERGE_MODE is flipped on -- no mode-gated install. (The USB-webcam patch just sets the
+# camera keys now; cv2 is already present.)
 
 # openWakeWord wake-word models. Behaviour differs by version: 0.5+ DOWNLOAD the feature models via
 # utils.download_models(); 0.4.x (what installs on Python 3.13 / aarch64) BUNDLES them in the wheel.
@@ -224,10 +225,11 @@ else:
     assert n_onnx or n_tfl, f"no bundled models found under {res}"
 PY
 
-# Concierge Mode (opt-in; ROBOT_CONCIERGE_MODE) face recognition: download the LOCAL ArcFace model + any
-# missing deps (cv2/onnxruntime) so the mode works out of the box. Best-effort -- a failure NEVER fails the
-# install (crawler mode doesn't need it; concierge degrades to a silent smile). Idempotent (skips if present).
-echo ">> Concierge face-recognition model + deps (for ROBOT_CONCIERGE_MODE; best-effort)"
+# Concierge Mode face recognition: download the LOCAL ArcFace model. The deps (cv2/onnxruntime/numpy) are
+# already installed above via requirements.txt, so this just fetches the model -- and Concierge is then ready
+# whenever ROBOT_CONCIERGE_MODE is toggled on. Best-effort -- a failure NEVER fails the install (crawler mode
+# doesn't need it; concierge degrades to a silent smile). Idempotent (skips if the model is already present).
+echo ">> Concierge face-recognition model (for ROBOT_CONCIERGE_MODE; best-effort)"
 bash "${REPO}/scripts/provision_face_id.sh" \
   || echo "   (face-id provisioning skipped/failed -- re-run ./scripts/provision_face_id.sh later; crawler mode is unaffected)"
 

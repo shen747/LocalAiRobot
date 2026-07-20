@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# provision_face_id.sh -- one-time download + install of the LOCAL face-recognition assets for Concierge Mode
-# (brain/face_id.py): the OpenCV/onnxruntime/numpy deps + the ArcFace recognition ONNX model.
+# provision_face_id.sh -- one-time download of the LOCAL ArcFace recognition model for Concierge Mode
+# (brain/face_id.py). The Python deps it needs (OpenCV + onnxruntime + numpy) are installed by the stack
+# installers as BASE dependencies -- opencv-python-headless<5 in brain/requirements.txt on the Pi, apt
+# python3-opencv on the Jetson -- so this script only fetches the MODEL. That means Concierge Mode is ready
+# the moment you flip ROBOT_CONCIERGE_MODE on (and it's harmless when off), with no extra install step.
 #
-# IDEMPOTENT + BEST-EFFORT by design:
-#   * if the model is already present it exits 0 IMMEDIATELY (the model is written atomically, so the file
-#     only ever exists fully-written -- a partial download can't latch it), and
-#   * any failure (no network, etc.) NEVER blocks the robot -- CRAWLER MODE doesn't need this at all, and
-#     Concierge Mode degrades to "smile silently" until the model is there.
-# Called by scripts/install_stack_pi5.sh / install_stack_jetson.sh (with the other models) and by
-# scripts/patches/common/5_face_id_insightface.sh. NOT run per-launch or by the boot service (its
-# ExecStartPre deliberately skips it -- a slow first-boot download could blow systemd's start timeout).
-# Re-run by hand anytime:  ./scripts/provision_face_id.sh
+# IDEMPOTENT + BEST-EFFORT: if the model is already present it exits 0 immediately (atomic write => a present
+# file is always complete); any failure (no network) NEVER blocks the robot -- crawler mode doesn't need it,
+# and Concierge degrades to "smile silently" until the model is there. Called by install_stack_pi5.sh /
+# install_stack_jetson.sh and scripts/patches/common/5_face_id_insightface.sh. Re-run anytime:
+#   ./scripts/provision_face_id.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$REPO/config/robot.env" ] && { set -a; . "$REPO/config/robot.env"; set +a; }
@@ -21,53 +20,11 @@ MODEL="${ROBOT_FACE_ID_MODEL:-$MODELS/arcface.onnx}"
 # Fast path: already provisioned -> nothing to do.
 [ -f "$MODEL" ] && exit 0
 [ -x "$PY" ] || { echo "provision_face_id: venv python not found ($PY) -- skipping (run install_stack first)."; exit 0; }
-
-echo ">> Concierge face-recognition: first-time provisioning (deps + model)..."
 mkdir -p "$MODELS"
 
-# 1) Python deps -- installed ONLY if missing (import test). opencv-python-headless is the light build (no GUI
-#    libs) and ships prebuilt aarch64 wheels via piwheels, so this is a download, not a compile. onnxruntime +
-#    numpy are usually already present (openWakeWord uses them). Skips anything already importable, so it can't
-#    clash with an existing opencv-python from the USB-webcam patch.
-"$PY" - <<'PYEOF' || true
-import importlib, subprocess, sys
-
-def pip_install(pkgs, force=False):
-    if not pkgs:
-        return
-    cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-cache-dir"]
-    if force:
-        cmd.append("--force-reinstall")
-    print("   installing:", " ".join(pkgs), "(force-reinstall)" if force else "")
-    subprocess.run(cmd + pkgs, check=False)
-
-# cv2 must actually WORK, not merely import: a broken/partial or numpy-ABI-mismatched OpenCV imports fine but
-# is missing its native bindings (e.g. CascadeClassifier), which silently defeats the whole face pipeline. So
-# test a real native attribute -- and FORCE-reinstall if it's broken, because a plain `pip install` would see
-# the broken same-name build as "already satisfied" and skip it (this is exactly how a bad cv2 survives setup).
-try:
-    import cv2
-    cv2_ok = hasattr(cv2, "CascadeClassifier")
-except Exception:
-    cv2_ok = False
-if not cv2_ok:
-    pip_install(["opencv-python-headless"], force=True)
-
-# onnxruntime + numpy: a plain import test is enough (openWakeWord usually already pulled them in).
-missing = []
-for mod, pkg in (("onnxruntime", "onnxruntime"), ("numpy", "numpy")):
-    try:
-        importlib.import_module(mod)
-    except Exception:
-        missing.append(pkg)
-pip_install(missing)
-
-if cv2_ok and not missing:
-    print("   deps ok (cv2 / onnxruntime / numpy)")
-PYEOF
-
-# 2) Model -- ArcFace recognition ONNX (112x112 -> 512-d). Direct-URL override first, else the InsightFace
-#    buffalo packs (small then large) from the pinned v0.7 release; extract the w600k recogniser to $MODEL.
+# ArcFace recognition ONNX (112x112 -> 512-d). Direct-URL override first, else the InsightFace buffalo packs
+# (small then large) from the pinned v0.7 release; extract the w600k recogniser to $MODEL.
+echo ">> Concierge face-recognition: downloading the ArcFace model..."
 "$PY" - "$MODEL" <<'PYEOF' || true
 import io, os, sys, urllib.request, zipfile
 target = sys.argv[1]
