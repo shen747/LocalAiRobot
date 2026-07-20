@@ -48,7 +48,7 @@ A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary des
 | `ROBOT_FACE_ID_INPUT` | `112` | Face-model input size (px square). |
 | `ROBOT_FACE_ID_DETECTOR` | *(bundled)* | Optional Haar cascade XML for detection; empty = OpenCV's default frontal-face cascade. |
 
-Enrol people to greet: `./scripts/enroll_person.sh "Ramesh" "my creator" photo.jpg` (or `--camera` for live webcam shots; stores a face **embedding** in the RAG db, not an image).
+Enrol people to greet: `./scripts/enroll_person.sh "Ramesh" "my creator" "Ruh-mesh" photo.jpg` — the 3rd field is a **say-as** respelling spoken in the greeting (`""` = greet by the real name); `--camera` captures live webcam shots. Stores a face **embedding** in the RAG db, not an image.
 
 ## Robot identity
 

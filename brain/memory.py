@@ -64,12 +64,19 @@ class Memory:
                    ts REAL, source TEXT, target TEXT, visible INTEGER,
                    horizontal TEXT, distance TEXT, confidence REAL, notes TEXT,
                    front_cm REAL, left_cm REAL, right_cm REAL)""")
-        # User-taught people / things ("this is my wife Shani"): a name + relationship/note, an
-        # optional photo on disk, and a VLM description of that photo. Injected into the prompt.
+        # User-taught people / things ("this is my wife Shani"): a name + relationship/note, an optional photo
+        # on disk, a VLM description, and an optional PRONUNCIATION (a phonetic respelling of the name used for
+        # the spoken greeting instead of the real name -- e.g. Ramesh -> "Ruh-mesh"). Injected into the prompt.
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS facts (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   ts REAL, name TEXT, fact TEXT, description TEXT, image_path TEXT)""")
+                   ts REAL, name TEXT, fact TEXT, description TEXT, image_path TEXT, pronunciation TEXT)""")
+        # Migration: add `pronunciation` to a facts table created BEFORE this column existed. ADD COLUMN raises
+        # if it's already there (SQLite has no IF NOT EXISTS for it), so swallow that -- it makes this a no-op.
+        try:
+            self._db.execute("ALTER TABLE facts ADD COLUMN pronunciation TEXT")
+        except Exception:
+            pass
         # Singleton key/value facts. The robot's OWN identity (who it is + what it can do) lives here and is
         # injected FIRST into every prompt (prompt_context) -- top-priority memory so the robot always knows
         # itself, and the marker used to detect a first run (introduce itself) or a name change.
@@ -184,21 +191,42 @@ class Memory:
             self._prune()   # self._lock is NOT held here
 
     # ---------- user-taught facts (the "remember this person/thing" feature) ----------
-    def remember_fact(self, name, fact="", description="", image_path=None):
-        """Store a person/thing the user named. Non-critical: a write error is logged, not raised."""
+    def remember_fact(self, name, fact="", description="", image_path=None, pronunciation=""):
+        """Store a person/thing the user named. `pronunciation` is an optional phonetic respelling of the name
+        for the spoken greeting (e.g. 'Ruh-mesh'). Non-critical: a write error is logged, not raised."""
         name = (name or "").strip()
         if not name:
             return
+        pronunciation = (pronunciation or "").strip() or name   # default say-as = the name itself
         try:
             with self._lock:
                 self._db.execute(
-                    "INSERT INTO facts (ts, name, fact, description, image_path) VALUES (?,?,?,?,?)",
-                    (time.time(), name, (fact or "").strip(), (description or "").strip(), image_path))
+                    "INSERT INTO facts (ts, name, fact, description, image_path, pronunciation) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (time.time(), name, (fact or "").strip(), (description or "").strip(), image_path,
+                     pronunciation))
                 self._db.commit()
-            log.info("memory: remembered '%s'%s%s", name, f" ({fact})" if fact else "",
+            log.info("memory: remembered '%s'%s%s%s", name, f" ({fact})" if fact else "",
+                     f" say-as '{pronunciation}'" if pronunciation != name else "",
                      f" [photo {image_path}]" if image_path else "")
         except Exception as e:
             log.warning("memory: remember_fact failed (%s) -- continuing", e)
+
+    def pronunciation_for(self, name):
+        """The stored phonetic respelling for `name` (newest non-empty), or '' if none. Used for the spoken
+        greeting so a tricky name is said right (e.g. Ramesh -> 'Ruh-mesh')."""
+        name = (name or "").strip()
+        if not name:
+            return ""
+        try:
+            with self._lock:
+                row = self._db.execute(
+                    "SELECT pronunciation FROM facts WHERE lower(name)=lower(?) AND pronunciation IS NOT NULL "
+                    "AND pronunciation != '' ORDER BY ts DESC LIMIT 1", (name,)).fetchone()
+            return (row[0] or "").strip() if row else ""
+        except Exception as e:
+            log.warning("memory: pronunciation_for failed (%s)", e)
+            return ""
 
     def save_photo(self, jpeg_bytes, name):
         """Save a captured JPEG into a 'photos' dir next to the DB. Returns the path, or None."""

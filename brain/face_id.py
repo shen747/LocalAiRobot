@@ -8,7 +8,7 @@
 # identify() returns (None, 0.0) -> the concierge simply smiles and stays silent, as the "no match" branch
 # requires. NOTE: .available is a CHEAP flag that never triggers the load; call ensure_loaded() to load.
 #
-# Enrol faces with:  ./scripts/enroll_person.sh "Ramesh" "desc" photo.jpg   (files and/or --camera; stores the embedding).
+# Enrol faces with:  ./scripts/enroll_person.sh "Ramesh" "my creator" "Ruh-mesh" photo.jpg  (files and/or --camera).
 # Accuracy note: Haar gives a bounding box, not 5-point landmarks, so faces aren't affine-aligned before
 # embedding -- fine for greeting a handful of known desk visitors; raise/lower ROBOT_FACE_ID_THRESHOLD to
 # taste. All heavy imports are LAZY so importing this module is safe on any machine.

@@ -70,7 +70,7 @@ These land the reader + config only (see `brain/imu.py` / `brain/encoder.py`); d
 ./scripts/patches/common/5_face_id_insightface.sh   # local ArcFace ONNX face-ID for ROBOT_CONCIERGE_MODE=1
 ```
 Checks deps (reuses onnxruntime; face detection needs `cv2` from the USB-webcam patch) and installs the
-recognition model. Then enrol people with `./scripts/enroll_person.sh "Name" "desc" photo.jpg` (or `--camera`) and set `ROBOT_CONCIERGE_MODE=1`.
+recognition model. Then enrol people with `./scripts/enroll_person.sh "Name" "desc" "say-as" photo.jpg` (or `--camera`) and set `ROBOT_CONCIERGE_MODE=1`.
 Full flow: [docs/concierge.md](../../docs/concierge.md).
 
 ---

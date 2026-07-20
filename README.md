@@ -253,14 +253,14 @@ the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
 
 Walk up and it greets enrolled faces by name; strangers get a silent smile. Remove someone: `./scripts/rag.sh --forget "Name"`.
 
-**One enrol script, two sources.** `./scripts/enroll_person.sh` stores a face embedding **+ a description** under a name, and **re-running REPLACES that person** (idempotent — never stacks duplicates):
+**One enrol script, two sources.** `./scripts/enroll_person.sh "Name" "description" "say-as"` stores a face embedding **+ a description + a say-as** under a name, and **re-running REPLACES that person** (idempotent — never stacks duplicates). The **say-as** is a phonetic respelling *spoken in the greeting* so a tricky name is said right (e.g. `Ramesh` → `"Ruh-mesh"`); pass `""` to greet with the real name.
 
 | Source | Command | Notes |
 |---|---|---|
-| **Photo files** you already have | `enroll_person.sh "Name" "desc" a.jpg b.jpg` | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
-| The Pi's **live camera** | `enroll_person.sh --camera [N] "Name" "desc"` | N shots (default 5) from the webcam — **stop the brain first** (`./scripts/shutdown.sh`); add files in the same call to enrol both |
+| **Photo files** you already have | `enroll_person.sh "Name" "desc" "say-as" a.jpg b.jpg` | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
+| The Pi's **live camera** | `enroll_person.sh --camera [N] "Name" "desc" "say-as"` | N shots (default 5) from the webcam — **stop the brain first** (`./scripts/shutdown.sh`); add files in the same call to enrol both |
 
-**Enrolling a crowd?** Put everyone's photos in a folder as `<Name>.jpg` (+ `<Name>_02.jpg`, … for more shots) and run **`./scripts/create_enrollments.sh`** on your PC — it generates a single `enroll_all.sh` you scp to the Pi and run. It's **amend-safe**: re-run it after adding people and it keeps the descriptions you already edited.
+**Enrolling a crowd?** Put everyone's photos in a folder as `<Name>.jpg` (+ `<Name>_02.jpg`, … for more shots) and run **`./scripts/create_enrollments.sh`** on your PC — it generates a single `enroll_all.sh` you scp to the Pi and run. Each line's **say-as is pre-filled with the name** (edit it for tricky ones). It's **amend-safe**: re-run after adding people and it keeps the descriptions + say-as you already edited.
 
 **Multiple photos per person → better recognition.** Each photo is stored as its own embedding under the
 person's name; on a match they're combined per **`ROBOT_FACE_ID_AGGREGATE`**: `max` (default — the

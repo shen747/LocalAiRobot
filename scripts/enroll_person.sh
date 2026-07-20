@@ -2,15 +2,15 @@
 # enroll_person.sh -- enrol a person into Concierge Mode's RAG db, from PHOTO FILES and/or the LIVE CAMERA.
 #
 # Stores, under the person's NAME: a face embedding per usable shot (table `faces` -> the concierge greets
-# them BY NAME on a motion wake) AND a name+description fact (table `facts` -> LLM prompt context).
-# IDEMPOTENT: each run REPLACES that person -- it clears their prior embeddings + fact FIRST, so the args you
-# pass are their COMPLETE enrolment and re-running never stacks duplicates. (scripts/create_enrollments.sh
-# preserves the descriptions, so a re-enrol loses nothing.)
+# them BY NAME on a motion wake) AND a name + description + SAY-AS fact (table `facts` -> LLM prompt context).
+# "say-as" is a phonetic respelling of the name SPOKEN in the greeting instead of the real name (e.g. Ramesh
+# -> "Ruh-mesh"); pass "" to greet with the real name. IDEMPOTENT: each run REPLACES that person -- it clears
+# their prior embeddings + fact FIRST, so the args you pass are their COMPLETE enrolment and re-running never
+# stacks duplicates. (scripts/create_enrollments.sh preserves the descriptions + say-as, so a re-enrol loses nothing.)
 #
-#   ./scripts/enroll_person.sh "Ramesh" "my creator" ~/people_named/Ramesh.jpg ~/people_named/Ramesh_02.jpg
-#   ./scripts/enroll_person.sh "Shani"  ""           shani.png                 # empty description is fine
-#   ./scripts/enroll_person.sh --camera "Ramesh" "my creator"                  # 5 LIVE webcam shots (no files)
-#   ./scripts/enroll_person.sh --camera 8 "Ramesh" "my creator" ~/people_named/Ramesh.jpg   # file + 8 shots
+#   ./scripts/enroll_person.sh "Ramesh" "my creator" "Ruh-mesh" ~/people_named/Ramesh.jpg ~/people_named/Ramesh_02.jpg
+#   ./scripts/enroll_person.sh "Shani"  "my wife"    ""         shani.png       # "" say-as = greet as "Shani"
+#   ./scripts/enroll_person.sh --camera 8 "Ramesh" "my creator" "Ruh-mesh"      # 8 LIVE webcam shots (no files)
 #
 # Photo FILES need no camera, so file-only runs are SAFE while the brain is live. --camera needs the camera,
 # so it REFUSES while the brain is running (stop it first: ./scripts/shutdown.sh). Accepts any format OpenCV
@@ -22,8 +22,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$REPO/brain/.venv/bin/python"
 
 usage() {
-  echo "usage: $(basename "$0") [--camera [N]] \"Name\" \"description\" [image ...]" >&2
-  echo "  files and/or --camera (default 5 shots); pass \"\" for an empty description." >&2
+  echo "usage: $(basename "$0") [--camera [N]] \"Name\" \"description\" \"say-as\" [image ...]" >&2
+  echo "  files and/or --camera (default 5 shots); pass \"\" for an empty description or say-as." >&2
+  echo "  say-as = a phonetic respelling SPOKEN in the greeting (e.g. \"Ruh-mesh\"); \"\" = greet as the real name." >&2
   echo "  Re-running REPLACES the person (idempotent) -- the args are their complete enrolment." >&2
   exit 2
 }
@@ -43,8 +44,9 @@ done
 
 NAME="${1:-}"
 DESC="${2:-}"
-{ [ -n "$NAME" ] && [ "$#" -ge 2 ]; } || usage
-shift 2
+PRON="${3:-}"
+{ [ -n "$NAME" ] && [ "$#" -ge 3 ]; } || usage
+shift 3
 if [ "$CAMERA" = 0 ] && [ "$#" -eq 0 ]; then
   echo "no image files given and --camera not set -- give at least one photo source." >&2; usage
 fi
@@ -60,14 +62,14 @@ if [ "$CAMERA" = 1 ] && { pgrep -f 'python.*brain/main\.py' >/dev/null 2>&1 \
 fi
 
 cd "$REPO/brain"
-exec "$PY" - "$CAMERA" "$NSHOTS" "$NAME" "$DESC" "$@" <<'PYEOF'
+exec "$PY" - "$CAMERA" "$NSHOTS" "$NAME" "$DESC" "$PRON" "$@" <<'PYEOF'
 import os, sys, time
 from memory import Memory
 from face_id import FaceID
 
 camera = sys.argv[1] == "1"
 nshots = int(sys.argv[2])
-name, desc, images = sys.argv[3], sys.argv[4], sys.argv[5:]
+name, desc, pron, images = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:]
 mem = Memory()
 fid = FaceID(mem)
 if not fid.ensure_loaded():   # loads cv2 + onnxruntime + the ArcFace model; clear message if not installed
@@ -118,9 +120,9 @@ if camera:   # folded-in live capture (was scripts/enroll_face.sh): grab N shots
     except Exception:
         pass
 
-# Store the name + description fact + a saved reference photo (first usable shot), even if 0 faces embedded.
+# Store the name + description + say-as fact + a saved reference photo (first usable shot), even if 0 embedded.
 img_path = mem.save_photo(first_bytes, name) if first_bytes else None
-mem.remember_fact(name, "", desc, img_path)
+mem.remember_fact(name, "", desc, img_path, pron)
 mem.close()
 
 if enrolled:

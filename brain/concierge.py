@@ -84,6 +84,8 @@ def refusal():
     return random.choice(MOVEMENT_REFUSALS)
 
 
-def greeting(name):
-    """A random personalised greeting with [Name] filled in."""
-    return random.choice(GREETINGS).replace("[Name]", (name or "friend").strip())
+def greeting(name, pronunciation=None):
+    """A random personalised greeting. If `pronunciation` (a phonetic respelling from the RAG db) is given it
+    is spoken INSTEAD of the real name, so a tricky name is said right (e.g. Ramesh -> 'Ruh-mesh')."""
+    spoken = (pronunciation or name or "").strip() or "friend"
+    return random.choice(GREETINGS).replace("[Name]", spoken)

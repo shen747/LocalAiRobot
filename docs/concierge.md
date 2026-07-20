@@ -66,11 +66,12 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 # 1. Model + deps are installed by scripts/install_stack_pi5.sh / _jetson.sh (with the other models).
 #    (Re)fetch on demand: ./scripts/provision_face_id.sh  (or ./scripts/patches/common/5_face_id_insightface.sh)
 
-# 2. Enrol the people you want greeted. enroll_person.sh stores a face embedding + a description under a name
-#    and REPLACES that person on a re-run (idempotent). Two sources -- from PHOTO FILES you already have:
-./scripts/enroll_person.sh "Ramesh" "my creator, wears glasses" ~/people_named/Ramesh.jpg ~/people_named/Ramesh_02.jpg
+# 2. Enrol the people you want greeted. enroll_person.sh stores a face embedding + a description + a "say-as"
+#    (a phonetic respelling SPOKEN in the greeting; "" = greet with the real name) and REPLACES that person on
+#    a re-run (idempotent). Args: "Name" "description" "say-as" [images]. From PHOTO FILES you already have:
+./scripts/enroll_person.sh "Ramesh" "my creator, wears glasses" "Ruh-mesh" ~/people_named/Ramesh.jpg ~/people_named/Ramesh_02.jpg
 #    ...or capture live from the webcam (stop the brain first -- it holds the camera):
-./scripts/enroll_person.sh --camera 8 "Ramesh" "my creator"      # 8 shots; combine with files to enrol both
+./scripts/enroll_person.sh --camera 8 "Ramesh" "my creator" "Ruh-mesh"   # 8 shots; combine with files to enrol both
 
 #    A crowd? name photos <Name>.jpg (+ <Name>_02.jpg for more) and generate one batch script on your PC:
 #      ./scripts/create_enrollments.sh   ->  edit descriptions in enroll_all.sh  ->  scp + run on the Pi

@@ -1091,14 +1091,32 @@ def main():
     # mid-run on LiPo/UBEC power) as explicit log lines. No-op off-Pi / when ROBOT_POWER_MONITOR=0.
     _start_power_monitor()
 
-    waiting_face = "idle"   # face while waiting for the wake word; becomes "sleeping" once a chat has ended
+    # Idle presentation. In CONCIERGE MODE the robot acts like a greeter: it sits AWAKE ('idle' = eyes open,
+    # listening for the wake word) and, after followup_silence_s of nothing, DROWSES to the 'sleeping' face --
+    # still listening the whole time (sleep is cosmetic). In CRAWLER MODE that drowse is OFF: behaviour is
+    # UNCHANGED (stays on 'idle' until a chat ends), so normal driving is never affected. A dict so the drowse
+    # Timer thread can flip the shared state; a timed-out chat sets it to 'sleeping' in either mode.
+    concierge_mode = concierge.enabled()
+    idle = {"face": "idle"}
+    def _drowse():
+        idle["face"] = "sleeping"
+        fc.set_expression("sleeping")
     try:
         while True:
-            fc.set_expression(waiting_face)
+            fc.set_expression(idle["face"])
+            # Concierge Mode ONLY: arm a one-shot drowse to 'sleeping' after the idle timeout (cancelled the
+            # instant a trigger arrives). NEVER armed in crawler mode -> normal driving behaviour is untouched.
+            drowse = None
+            if concierge_mode and idle["face"] != "sleeping":
+                drowse = threading.Timer(followup_silence_s, _drowse)
+                drowse.daemon = True
+                drowse.start()
             # IDLE: quiesce the ultrasonics so their software-timed threads don't starve the wake-word mic
             # while we wait (the "runs forever" fix). A wake / drive / HTTP command below resumes them.
             driver.pause_sensing()
             trigger = wait_for_trigger(cfg, wake, motion_event)
+            if drowse is not None:
+                drowse.cancel()   # a trigger arrived -> stop the pending drowse
             if trigger == "QUIT":
                 driver.stop()
                 print("Bye.")
@@ -1114,9 +1132,10 @@ def main():
             if trigger in ("CANCELLED", "RETRY"):
                 continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
             if trigger == "MOTION":
-                # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. A detected face IS the
-                # "person present" signal (no cloud VLM); match it against the enrolled faces (face_id.py).
-                fc.set_expression("happy")     # friendly face the instant motion is seen
+                # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant motion
+                # is seen and HOLD it through the look; a detected face IS the "person present" signal (no cloud
+                # VLM), matched against the enrolled faces (face_id.py).
+                fc.set_expression("happy")     # smile now; held while we capture + match
                 jpeg = None
                 try:
                     if getattr(cam, "available", False):
@@ -1125,15 +1144,18 @@ def main():
                     log.debug("concierge capture failed: %s", e)
                 name = face_identifier.identify(jpeg)[0] if jpeg else None
                 if not name:
-                    # no person / not a KNOWN face -> do nothing, keep smiling, drop back to sleep
-                    log.info("concierge: motion but no known face -> smiling silently")
-                    fc.set_expression("happy")
-                    waiting_face = "sleeping"
+                    # unknown / no person -> stop smiling and go BACK to the state we were in (awake or asleep),
+                    # NOT a forced sleep. (The smile lasted only as long as the look.)
+                    log.info("concierge: motion but no known face -> back to %r", idle["face"])
+                    fc.set_expression(idle["face"])
                     continue
-                # recognised: greet by name, then FALL THROUGH into the conversation loop (remote handoff)
-                log.info("concierge: recognised %r -> greeting", name)
+                # recognised: greet by name -- say() transitions the smile -> talking -> idle -- then FALL
+                # THROUGH into the conversation loop for follow-ups (which sleeps after followup_silence_s).
+                # Use the stored PRONUNCIATION (a phonetic respelling) for the SPOKEN greeting when set.
+                pron = mem.pronunciation_for(name)
+                log.info("concierge: recognised %r%s -> greeting", name, f" (say-as '{pron}')" if pron else "")
                 snd.play("wake_ack")
-                say(concierge.greeting(name))
+                say(concierge.greeting(name, pron))
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record
@@ -1173,7 +1195,7 @@ def main():
                         fc.set_expression("sleeping")   # peaceful closed-eyes + Zzz
                         snd.play_blocking("sleep")      # say goodbye + how to wake me, FULLY, before we re-enter
                                                         # the wake listen (which then holds audio_lock)
-                        waiting_face = "sleeping"       # stay "asleep" until the next wake
+                        idle["face"] = "sleeping"       # stay "asleep" until the next wake / motion
                         break
                     fc.set_expression("idle")   # nothing heard yet; keep waiting for a follow-up
                     continue
