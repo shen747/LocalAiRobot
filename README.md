@@ -253,6 +253,13 @@ Walk up and it greets enrolled faces by name; strangers get a silent smile. Remo
 | **`enroll_person.sh "Name" "desc" a.jpg b.jpg`** | **photo files** you already have | face embedding **+ a description** | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
 | `enroll_face.sh "Name"` | the Pi's **live camera** (stand in front of it) | face embedding only | enrolling someone physically present — **stop the brain first** (`./scripts/shutdown.sh`), it holds the camera |
 
+**Multiple photos per person → better recognition.** Enrol the *same* person several times (different angles /
+lighting) — each photo is stored as its own embedding under their name, and both enrol scripts accumulate
+(`enroll_person.sh` takes many files at once; `enroll_face.sh` takes N webcam shots). On a match, all of a
+person's photos are combined per **`ROBOT_FACE_ID_AGGREGATE`**: `max` (default — the best-matching photo wins,
+so more photos = better recall), or `topk` / `mean` / `centroid` if a single stray shot ever causes a false
+greeting. Check who's enrolled and with how many photos: **`./scripts/rag.sh --faces`**.
+
 ## 📚 Documentation
 
 Everything in this repo, with a one-line "what's this for" — so nothing's a dead end.
