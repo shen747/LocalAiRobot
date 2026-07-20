@@ -247,25 +247,25 @@ the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
 3. **Install** — `./scripts/install_stack_pi5.sh` (grabs the AI stack **and** the local face-recognition model), then `sudo reboot` and SSH back in.
 4. **Test the PIR** — `./scripts/pir_sensor_probe.sh`, wave your hand, watch it flip to `#### MOTION ####` (Ctrl-C to stop). *Runs only after step 3 — it uses the installed venv.*
 5. **Enable Concierge Mode** — `sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env`
-6. **Copy your photos to the Pi** *(run on your laptop)* — `scp ~/people/ramesh*.jpg pi@raspberrypi.local:~/`
-7. **Enrol each person from those photos** — `./scripts/enroll_person.sh "Ramesh" "my creator" ~/ramesh1.jpg ~/ramesh2.jpg` — repeat per person; give a few photos each (different angles/lighting) for better matching.
+6. **Copy your photos to the Pi** *(on your laptop)* — name them `<Name>.jpg` (add `<Name>_02.jpg` for more angles), then `scp ~/people_named/* pi@raspberrypi.local:~/people_named/`.
+7. **Enrol** — one person: `./scripts/enroll_person.sh "Ramesh" "my creator" ~/people_named/Ramesh.jpg`. A crowd: run `./scripts/create_enrollments.sh` **on your PC** to generate `enroll_all.sh`, fill in the descriptions, scp it over, and `bash enroll_all.sh`.
 8. **Run it** — foreground now: `./scripts/run_me.sh`. Always-on (headless desk greeter): `./scripts/run_me.sh --install-boot` **then** `sudo systemctl start robot.service`.
 
 Walk up and it greets enrolled faces by name; strangers get a silent smile. Remove someone: `./scripts/rag.sh --forget "Name"`.
 
-**Two enrol scripts — which one?**
+**One enrol script, two sources.** `./scripts/enroll_person.sh` stores a face embedding **+ a description** under a name, and **re-running REPLACES that person** (idempotent — never stacks duplicates):
 
-| Script | Enrols from | Stores | Use when |
-|---|---|---|---|
-| **`enroll_person.sh "Name" "desc" a.jpg b.jpg`** | **photo files** you already have | face embedding **+ a description** | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
-| `enroll_face.sh "Name"` | the Pi's **live camera** (stand in front of it) | face embedding only | enrolling someone physically present — **stop the brain first** (`./scripts/shutdown.sh`), it holds the camera |
+| Source | Command | Notes |
+|---|---|---|
+| **Photo files** you already have | `enroll_person.sh "Name" "desc" a.jpg b.jpg` | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
+| The Pi's **live camera** | `enroll_person.sh --camera [N] "Name" "desc"` | N shots (default 5) from the webcam — **stop the brain first** (`./scripts/shutdown.sh`); add files in the same call to enrol both |
 
-**Multiple photos per person → better recognition.** Enrol the *same* person several times (different angles /
-lighting) — each photo is stored as its own embedding under their name, and both enrol scripts accumulate
-(`enroll_person.sh` takes many files at once; `enroll_face.sh` takes N webcam shots). On a match, all of a
-person's photos are combined per **`ROBOT_FACE_ID_AGGREGATE`**: `max` (default — the best-matching photo wins,
-so more photos = better recall), or `topk` / `mean` / `centroid` if a single stray shot ever causes a false
-greeting. Check who's enrolled and with how many photos: **`./scripts/rag.sh --faces`**.
+**Enrolling a crowd?** Put everyone's photos in a folder as `<Name>.jpg` (+ `<Name>_02.jpg`, … for more shots) and run **`./scripts/create_enrollments.sh`** on your PC — it generates a single `enroll_all.sh` you scp to the Pi and run. It's **amend-safe**: re-run it after adding people and it keeps the descriptions you already edited.
+
+**Multiple photos per person → better recognition.** Each photo is stored as its own embedding under the
+person's name; on a match they're combined per **`ROBOT_FACE_ID_AGGREGATE`**: `max` (default — the
+best-matching photo wins, so more photos = better recall), or `topk` / `mean` / `centroid` if a single stray
+shot ever causes a false greeting. Check who's enrolled and with how many photos: **`./scripts/rag.sh --faces`**.
 
 ## 📚 Documentation
 

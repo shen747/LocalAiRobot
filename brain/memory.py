@@ -76,7 +76,7 @@ class Memory:
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT, ts REAL)")
         # Enrolled faces for Concierge Mode (brain/face_id.py): a name + an L2-normalised ArcFace embedding
-        # stored as raw float32 bytes. Written by ./scripts/enroll_face.sh; matched on each motion wake. Empty
+        # stored as raw float32 bytes. Written by ./scripts/enroll_person.sh; matched on each motion wake. Empty
         # unless you enrol someone -- the rest of the robot ignores this table.
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS faces (

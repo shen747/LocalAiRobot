@@ -17,7 +17,7 @@ bash "$REPO/scripts/provision_face_id.sh" || true
 
 echo
 echo ">> NEXT:"
-echo "     1) enrol people ->  ./scripts/enroll_face.sh \"Ramesh\""
+echo "     1) enrol people ->  ./scripts/enroll_person.sh \"Ramesh\" \"desc\" photo.jpg   (or --camera for live shots)"
 echo "     2) (optional) PIR ->  set ROBOT_PIR_PIN=<BCM gpio>  (empty = wake-word-only concierge)"
 echo "     3) turn it on   ->  set ROBOT_CONCIERGE_MODE=1  (top of config/robot.env)"
 echo "   Tune matching with ROBOT_FACE_ID_THRESHOLD (higher = stricter). Docs: docs/concierge.md"

@@ -66,13 +66,14 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 # 1. Model + deps are installed by scripts/install_stack_pi5.sh / _jetson.sh (with the other models).
 #    (Re)fetch on demand: ./scripts/provision_face_id.sh  (or ./scripts/patches/common/5_face_id_insightface.sh)
 
-# 2. Enrol the people you want greeted (a few shots each, from slightly different angles)
-./scripts/enroll_face.sh "Ramesh"          # capture live from the webcam (face embedding only)
-./scripts/enroll_face.sh "Shani" 8
+# 2. Enrol the people you want greeted. enroll_person.sh stores a face embedding + a description under a name
+#    and REPLACES that person on a re-run (idempotent). Two sources -- from PHOTO FILES you already have:
+./scripts/enroll_person.sh "Ramesh" "my creator, wears glasses" ~/people_named/Ramesh.jpg ~/people_named/Ramesh_02.jpg
+#    ...or capture live from the webcam (stop the brain first -- it holds the camera):
+./scripts/enroll_person.sh --camera 8 "Ramesh" "my creator"      # 8 shots; combine with files to enrol both
 
-#    ...or enrol FROM PHOTO FILES you already have -- stores a face embedding AND a description in one go,
-#    and is safe to run while the robot is live (it reads files, not the camera):
-./scripts/enroll_person.sh "Ramesh" "my creator, wears glasses" ~/pics/ramesh1.jpg ~/pics/ramesh2.jpg
+#    A crowd? name photos <Name>.jpg (+ <Name>_02.jpg for more) and generate one batch script on your PC:
+#      ./scripts/create_enrollments.sh   ->  edit descriptions in enroll_all.sh  ->  scp + run on the Pi
 
 # 3. Turn it on  (ROBOT_PIR_PIN already defaults to 4 = GPIO4/pin 7; only change it if you wired OUT elsewhere)
 sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
@@ -113,9 +114,9 @@ Edit those lists to change the wording.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
   tuned for a handful of known desk visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
-- **Multiple photos per person:** enrolling someone several times (different angles / lighting) just adds more
-  embedding rows under their name — `enroll_person.sh` takes many photos at once, `enroll_face.sh` takes N
-  webcam shots, and both accumulate. On a match, all of a person's photos are combined per
+- **Multiple photos per person:** give `enroll_person.sh` several photos (files) and/or `--camera N` webcam
+  shots in one call — each becomes an embedding row under their name. Re-running REPLACES that person (so the
+  args are their complete enrolment; no duplicates). On a match, all of a person's photos are combined per
   `ROBOT_FACE_ID_AGGREGATE` (default `max` = the best-matching photo wins, so more photos = better recall;
   switch to `topk`/`centroid` if a single stray shot causes false greetings). See who's enrolled and with how
   many photos: `./scripts/rag.sh --faces`.
