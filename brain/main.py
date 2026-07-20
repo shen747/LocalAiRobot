@@ -280,8 +280,10 @@ def query_ollama(cfg, user_text, context=""):
 # synthesis, so EVERY spoken string -- LLM replies, concierge greetings/refusals, spoken errors -- comes out
 # right without polluting the text the LLM sees (or the on-screen face caption, which speaks the same text).
 # Matches are whole-word and case-insensitive. Add/override entries via config/robot.env:
-#   ROBOT_TTS_PRONUNCIATIONS="Ramesh=R uh - m ai sh; Shani=Shah-nee"
-_PRONUNCIATIONS = {"Ramesh": "R uh - m ai sh"}
+#   ROBOT_TTS_PRONUNCIATIONS="Ramesh=Ruh-mesh; Shani=Shah-nee"
+# NOTE: use a SINGLE joined respelling ("Ruh-mesh"), NOT space-separated letters ("R uh m ai sh") -- Piper's
+# espeak phonemizer reads spaced single letters as the ALPHABET (it says "R-A-M-E-S-H").
+_PRONUNCIATIONS = {"Ramesh": "Ruh-mesh"}
 _pron_re = None    # compiled lazily from _PRONUNCIATIONS (+ env) on first _fix_pronunciation() call
 _pron_lut = None   # lowercased key -> respelling, for the case-insensitive substitution
 

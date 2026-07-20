@@ -31,16 +31,38 @@ mkdir -p "$MODELS"
 #    clash with an existing opencv-python from the USB-webcam patch.
 "$PY" - <<'PYEOF' || true
 import importlib, subprocess, sys
-need = []
-for mod, pkg in (("cv2", "opencv-python-headless"), ("onnxruntime", "onnxruntime"), ("numpy", "numpy")):
+
+def pip_install(pkgs, force=False):
+    if not pkgs:
+        return
+    cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-cache-dir"]
+    if force:
+        cmd.append("--force-reinstall")
+    print("   installing:", " ".join(pkgs), "(force-reinstall)" if force else "")
+    subprocess.run(cmd + pkgs, check=False)
+
+# cv2 must actually WORK, not merely import: a broken/partial or numpy-ABI-mismatched OpenCV imports fine but
+# is missing its native bindings (e.g. CascadeClassifier), which silently defeats the whole face pipeline. So
+# test a real native attribute -- and FORCE-reinstall if it's broken, because a plain `pip install` would see
+# the broken same-name build as "already satisfied" and skip it (this is exactly how a bad cv2 survives setup).
+try:
+    import cv2
+    cv2_ok = hasattr(cv2, "CascadeClassifier")
+except Exception:
+    cv2_ok = False
+if not cv2_ok:
+    pip_install(["opencv-python-headless"], force=True)
+
+# onnxruntime + numpy: a plain import test is enough (openWakeWord usually already pulled them in).
+missing = []
+for mod, pkg in (("onnxruntime", "onnxruntime"), ("numpy", "numpy")):
     try:
         importlib.import_module(mod)
     except Exception:
-        need.append(pkg)
-if need:
-    print("   installing:", " ".join(need))
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet"] + need, check=False)
-else:
+        missing.append(pkg)
+pip_install(missing)
+
+if cv2_ok and not missing:
     print("   deps ok (cv2 / onnxruntime / numpy)")
 PYEOF
 
