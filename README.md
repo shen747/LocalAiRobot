@@ -226,8 +226,32 @@ Flip `ROBOT_CONCIERGE_MODE=1` and Jarvis becomes a **stationary desk concierge**
 Concierge"*, and — on top of the wake word — wakes on a **PIR motion sensor**. When someone walks up it shows
 a friendly face and runs a **strictly-local** pipeline (OpenCV face-detect → ArcFace ONNX embed → match
 against the RAG database) to **greet people it knows by name**, or smile silently at strangers; then it hands
-off to a normal chat. Set it back to `0` for the crawler car — nothing else changes. Enrol faces with
-`./scripts/enroll_face.sh "Name"`. Full setup, wiring + the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
+off to a normal chat. Set it back to `0` for the crawler car — nothing else changes. Full setup, wiring +
+the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
+
+**Quick start (Pi 5 — greet people from photos you already have):**
+
+> Needs a **PIR motion sensor** + a **camera** (the CSI camera the installer sets up works; USB webcam? add
+> `./scripts/patches/pi5/3_camera_usb_webcam.sh`). Concierge **never drives**, so **skip** the ESC patch and
+> the wheels-off diagnostics from the main Quickstart.
+
+1. **Wire the PIR** — `OUT → GPIO4 (physical pin 7)`, `VCC → 5V (pin 2)`, `GND → GND (pin 6)`. The Adafruit PIR's OUT is 3.3 V → Pi-safe, no divider. `ROBOT_PIR_PIN=4` is already the default. Wiring guide: [docs/wiring/pir-sensor-wiring.md](docs/wiring/pir-sensor-wiring.md).
+2. **Clone** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
+3. **Install** — `./scripts/install_stack_pi5.sh` (grabs the AI stack **and** the local face-recognition model), then `sudo reboot` and SSH back in.
+4. **Test the PIR** — `./scripts/pir_sensor_probe.sh`, wave your hand, watch it flip to `#### MOTION ####` (Ctrl-C to stop). *Runs only after step 3 — it uses the installed venv.*
+5. **Enable Concierge Mode** — `sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env`
+6. **Copy your photos to the Pi** *(run on your laptop)* — `scp ~/people/ramesh*.jpg pi@raspberrypi.local:~/`
+7. **Enrol each person from those photos** — `./scripts/enroll_person.sh "Ramesh" "my creator" ~/ramesh1.jpg ~/ramesh2.jpg` — repeat per person; give a few photos each (different angles/lighting) for better matching.
+8. **Run it** — foreground now: `./scripts/run_me.sh`. Always-on (headless desk greeter): `./scripts/run_me.sh --install-boot` **then** `sudo systemctl start robot.service`.
+
+Walk up and it greets enrolled faces by name; strangers get a silent smile. Remove someone: `./scripts/rag.sh --forget "Name"`.
+
+**Two enrol scripts — which one?**
+
+| Script | Enrols from | Stores | Use when |
+|---|---|---|---|
+| **`enroll_person.sh "Name" "desc" a.jpg b.jpg`** | **photo files** you already have | face embedding **+ a description** | the scp workflow above; **safe while the robot is live** (reads files, not the camera) |
+| `enroll_face.sh "Name"` | the Pi's **live camera** (stand in front of it) | face embedding only | enrolling someone physically present — **stop the brain first** (`./scripts/shutdown.sh`), it holds the camera |
 
 ## 📚 Documentation
 
