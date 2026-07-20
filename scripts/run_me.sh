@@ -10,8 +10,9 @@
 #
 # Other actions:
 #   --verbose / -v  diagnosis run: live SENSORS front/left/right read-out (even while idle), every
-#                   no-echo shown (not collapsed), and DEBUG log level. Combine with any mode
-#                   (e.g. --live --verbose). Off by default (the sensor sweep adds a little load).
+#                   no-echo shown (not collapsed), and DEBUG log level. In CONCIERGE MODE the ultrasonic
+#                   read-out + ESC/PWM are dropped (it never drives) and PIR triggers are logged instead.
+#                   Combine with any mode (e.g. --live --verbose). Off by default (a little extra load).
 #   --detach        run LIVE in the BACKGROUND (survives SSH logout). Stop with scripts/shutdown.sh.
 #   --reload        re-apply an edited config/robot.env to a RUNNING robot (restarts the boot service
 #                   if it's installed, else the --detach instance).
@@ -95,7 +96,11 @@ done
 if [ "$verbose" = 1 ]; then
   export ROBOT_SENSOR_VERBOSE=1
   export ROBOT_LOG_LEVEL="${ROBOT_LOG_LEVEL:-DEBUG}"
-  echo ">> VERBOSE on: live SENSORS front/left/right read-out + every no-echo shown + DEBUG logs."
+  if [ "${ROBOT_CONCIERGE_MODE:-0}" = 1 ]; then
+    echo ">> VERBOSE on (Concierge): PIR motion triggers logged + DEBUG logs (ultrasonics + ESC/PWM unused, so not shown)."
+  else
+    echo ">> VERBOSE on: live SENSORS front/left/right read-out + every no-echo shown + DEBUG logs."
+  fi
 fi
 
 # A robot.pid is only trusted if its PID is still OUR brain: PIDs get recycled (especially after a

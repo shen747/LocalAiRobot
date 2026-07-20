@@ -10,6 +10,7 @@
 # degrade: no ROBOT_PIR_PIN, or no gpiozero (laptop/Jetson) -> available=False, a harmless no-op.
 
 import logging
+import os
 
 log = logging.getLogger("robot.hw")
 
@@ -23,6 +24,10 @@ class MotionWake:
         self._on_motion = on_motion
         self.available = False
         pin = str(pin).strip() if pin is not None else ""
+        self._pin = pin
+        # --verbose (ROBOT_SENSOR_VERBOSE=1): log every PIR trigger. In Concierge Mode the ultrasonic read-out
+        # is suppressed (driver.py), so the PIR is what you watch instead -- like scripts/pir_sensor_probe.sh.
+        self._verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
         if not pin:
             return
         try:
@@ -36,6 +41,8 @@ class MotionWake:
                         "(the wake word still works)", pin, e)
 
     def _fire(self):
+        if self._verbose:
+            log.info("PIR: motion detected on GPIO %s -> wake", self._pin)
         try:
             self._on_motion()
         except Exception as e:

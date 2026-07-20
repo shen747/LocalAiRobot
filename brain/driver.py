@@ -183,6 +183,14 @@ class RobotDriver:
         # actively reads all 3 beams, which adds a little load -- fine for a diagnosis run, not for "forever").
         self.sensor_verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
         self.sensor_log_period = _envf("ROBOT_SENSOR_LOG_PERIOD_S", 2.0)
+        # Concierge Mode is a STATIONARY desk assistant that NEVER drives (main.py refuses movement). So it
+        # uses no ESC/PWM (an absent motor board is EXPECTED, not a failure) and doesn't care about the
+        # ultrasonics -- the PIR is the sensor of interest there (pir.py logs its triggers under --verbose).
+        # _watch_sensors gates the --verbose ULTRASONIC watch (live read-out + keep-them-on) so Concierge
+        # drops it: the beams idle-quiesce as usual and the log isn't spammed with front/left/right.
+        import concierge
+        self.concierge = concierge.enabled()
+        self._watch_sensors = self.sensor_verbose and not self.concierge
         # Resolve the board once via the HAL. Its default_pins() supply the PER-BOARD pin fallback below,
         # so core carries no board-specific pin constants: a Jetson gets its header pins, a Pi gets BCM.
         # An explicit env value (config/robot.env) still wins. hal.current() also applies the board's launch
@@ -291,6 +299,11 @@ class RobotDriver:
                 log.info("*** MOTORS OFF (stationary): ESC/servo PWM is SIMULATED -- wheels will NOT move; "
                          "sensors, camera, face, voice + wake word are LIVE. ***")
                 self.kit = FakeServoKit(channels=channels)
+            elif self.concierge:
+                # Concierge Mode never drives, so DON'T probe the PCA9685/ESC at all -- an absent motor board
+                # is EXPECTED here, not a HARDWARE FAILURE. Fake the PWM silently (no degraded banner).
+                log.info("Concierge Mode: stationary desk assistant -- ESC/PWM not used (motor board not probed).")
+                self.kit = FakeServoKit(channels=channels)
             else:
                 try:
                     self.kit = self._board.make_pwm_kit(channels)
@@ -343,11 +356,14 @@ class RobotDriver:
 
         # --verbose: a low-rate background beam read-out so you can watch the sensors even while idle
         # (the control loop only reads the front beam while DRIVING, so without this you'd see nothing).
-        if self.sensor_verbose:
+        if self._watch_sensors:
             log.info("SENSOR VERBOSE: logging front/left/right every %.1fs -- and idle-quiescing is OFF "
                      "in verbose (sensors stay ON so you can watch them, so expect the wake mic to overflow; "
                      "run WITHOUT --verbose to see the quiescing fix).", self.sensor_log_period)
             threading.Thread(target=self._sensor_log_loop, daemon=True).start()
+        elif self.sensor_verbose and self.concierge:
+            log.info("Concierge Mode: ultrasonic read-out suppressed under --verbose (beams idle-quiesce as "
+                     "usual); watch the PIR instead -- its triggers are logged on each motion.")
 
     # ---------- public API (mutate state only; the control thread drives the hardware) ----------
     def command(self, drive, steer, speed, duration_ms):
@@ -525,9 +541,9 @@ class RobotDriver:
     def pause_sensing(self):
         """Quiesce the ultrasonics while IDLE (waiting for the wake word): CLOSE the 3 gpiozero sensors so
         their software-timed ping threads stop hogging the GIL + starving the wake mic. Rebuilt on the next
-        drive/explore. Idempotent. No-op in dry-run, when quiescing is off, or in --verbose (there you WANT
-        to keep watching the sensors)."""
-        if self.dry_run or not self.sensor_quiesce or self.sensor_verbose:
+        drive/explore. Idempotent. No-op in dry-run, when quiescing is off, or while --verbose is WATCHING the
+        ultrasonics (not in Concierge Mode -- there the beams quiesce as usual since Concierge never drives)."""
+        if self.dry_run or not self.sensor_quiesce or self._watch_sensors:
             return
         with self._lock:
             wait_s = self._deadline - time.monotonic()
@@ -551,8 +567,8 @@ class RobotDriver:
 
     def resume_sensing(self):
         """Rebuild the ultrasonics after a pause (before a drive/explore reads them). Idempotent; no-op in
-        dry-run / quiescing-off / --verbose (they were never paused there)."""
-        if self.dry_run or not self.sensor_quiesce or self.sensor_verbose:
+        dry-run / quiescing-off / while --verbose is watching the beams (they were never paused there)."""
+        if self.dry_run or not self.sensor_quiesce or self._watch_sensors:
             return
         with self._sense_lock:
             if self._closed:
