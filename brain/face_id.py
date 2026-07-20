@@ -36,6 +36,13 @@ class FaceID:
         self.model_path = os.path.expanduser(os.environ.get("ROBOT_FACE_ID_MODEL", "") or _DEFAULT_MODEL)
         self.threshold = _envf("ROBOT_FACE_ID_THRESHOLD", 0.38)   # cosine similarity; higher = stricter
         self.input_size = int(_envf("ROBOT_FACE_ID_INPUT", 112))
+        # How to combine a person's MULTIPLE enrolled photos when matching (see identify()). Default 'max' is
+        # exactly the old best-single-view behaviour, so single-photo enrolments are completely unaffected.
+        self._aggregate = (os.environ.get("ROBOT_FACE_ID_AGGREGATE", "") or "max").strip().lower()
+        if self._aggregate not in ("max", "mean", "topk", "centroid"):
+            log.warning("face_id: unknown ROBOT_FACE_ID_AGGREGATE=%r -- using 'max'", self._aggregate)
+            self._aggregate = "max"
+        self._topk = max(1, int(_envf("ROBOT_FACE_ID_TOPK", 3)))
         self._sess = None            # onnxruntime session (lazy)
         self._cascade = None         # cv2 Haar detector (lazy)
         self._np = None              # numpy (lazy)
@@ -125,25 +132,58 @@ class FaceID:
             log.debug("face_id embed failed: %s", e)
             return None
 
+    def _combine(self, person_sims, person_embs, vec):
+        """Reduce ONE person's per-photo cosine sims to a single score, per ROBOT_FACE_ID_AGGREGATE.
+        With a single enrolled photo every strategy returns that one sim (so single-photo is unchanged)."""
+        np = self._np
+        if self._aggregate == "mean":
+            return float(sum(person_sims) / len(person_sims))
+        if self._aggregate == "topk":
+            top = sorted(person_sims, reverse=True)[:self._topk]
+            return float(sum(top) / len(top))
+        if self._aggregate == "centroid" and person_embs:
+            proto = np.mean(np.stack(person_embs), axis=0)   # average the enrolled embeddings -> one prototype
+            nrm = float(np.linalg.norm(proto))
+            if nrm > 0:
+                return float(np.dot(vec, proto / nrm))        # cosine vs the (re-normalised) prototype
+        return max(person_sims)                               # 'max' (default): best-matching enrolled photo wins
+
     def identify(self, jpeg_bytes):
         """JPEG bytes -> (name, score) of the best enrolled match at/above the threshold, else (None, score).
-        (None, 0.0) means: no face / not set up -> caller smiles silently. Never raises."""
+        (None, 0.0) means: no face / not set up -> caller smiles silently. Never raises.
+
+        A person may have SEVERAL enrolled photos (one embedding row each); they're combined PER PERSON by
+        ROBOT_FACE_ID_AGGREGATE so extra images sharpen recognition instead of just adding rows:
+          max      best-matching enrolled photo wins   (default; most tolerant of pose/light, best recall)
+          topk     mean of the person's top-K photos    (K=ROBOT_FACE_ID_TOPK; robust middle ground)
+          mean     average over ALL their photos        (strictest; the visitor must resemble every shot)
+          centroid cosine vs their averaged 'prototype' (smooths per-photo noise into one template)
+        """
         vec = self.embed(jpeg_bytes)
         if vec is None:
             return None, 0.0
         np = self._np
-        best_name, best = None, -1.0
+        # Group every enrolled row by person: their per-photo cosine sims (+ raw embeddings for 'centroid').
+        sims, embs = {}, {}
         for name, emb_bytes in self.mem.all_faces():
             other = np.frombuffer(emb_bytes, dtype=np.float32)
             if other.shape != vec.shape:
                 continue
-            score = float(np.dot(vec, other))   # both L2-normalised -> dot == cosine similarity
+            sims.setdefault(name, []).append(float(np.dot(vec, other)))   # both L2-normalised -> dot == cosine
+            if self._aggregate == "centroid":
+                embs.setdefault(name, []).append(other)
+        if not sims:
+            return None, 0.0
+        best_name, best = None, -1.0
+        for name, person_sims in sims.items():
+            score = self._combine(person_sims, embs.get(name), vec)
             if score > best:
                 best_name, best = name, score
         if best_name is not None and best >= self.threshold:
-            log.info("face_id: matched %r (cosine %.3f >= %.2f)", best_name, best, self.threshold)
+            log.info("face_id: matched %r (%s %.3f >= %.2f over %d photo(s))",
+                     best_name, self._aggregate, best, self.threshold, len(sims[best_name]))
             return best_name, best
-        log.info("face_id: no match (best cosine %.3f < %.2f)", max(best, 0.0), self.threshold)
+        log.info("face_id: no match (best %s %.3f < %.2f)", self._aggregate, max(best, 0.0), self.threshold)
         return None, max(best, 0.0)
 
     def enroll(self, jpeg_bytes, name):

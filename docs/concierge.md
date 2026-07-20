@@ -90,6 +90,8 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 | `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine match threshold. **Higher = stricter** (fewer false greetings, more misses). |
 | `ROBOT_FACE_ID_INPUT` | `112` | Face model input size (px). |
 | `ROBOT_FACE_ID_DETECTOR` | *(bundled)* | Optional Haar cascade XML; empty = OpenCV's default frontal-face cascade. |
+| `ROBOT_FACE_ID_AGGREGATE` | `max` | How to combine a person's **multiple enrolled photos** when matching (only matters for 2+ images). `max` = best-matching photo wins (best recall). `topk` = mean of their top `ROBOT_FACE_ID_TOPK` photos. `mean` = average of all. `centroid` = match vs their averaged prototype. |
+| `ROBOT_FACE_ID_TOPK` | `3` | For `ROBOT_FACE_ID_AGGREGATE=topk`: how many best-matching photos to average. |
 
 ## Dynamic responses
 
@@ -110,6 +112,12 @@ Edit those lists to change the wording.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
   tuned for a handful of known desk visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
+- **Multiple photos per person:** enrolling someone several times (different angles / lighting) just adds more
+  embedding rows under their name — `enroll_person.sh` takes many photos at once, `enroll_face.sh` takes N
+  webcam shots, and both accumulate. On a match, all of a person's photos are combined per
+  `ROBOT_FACE_ID_AGGREGATE` (default `max` = the best-matching photo wins, so more photos = better recall;
+  switch to `topk`/`centroid` if a single stray shot causes false greetings). See who's enrolled and with how
+  many photos: `./scripts/rag.sh --faces`.
 - **Kids / cloud:** the greeting pipeline is fully local, so the cloud child-safety filter that blocks remote
   vision (`PROHIBITED_CONTENT`) does **not** apply here — Concierge can recognise anyone you enrol. The
   *post-greeting chat* still uses the remote backend if enabled.
