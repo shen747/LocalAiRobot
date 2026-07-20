@@ -249,6 +249,18 @@ class Memory:
             log.warning("memory: forget_face failed (%s)", e)
             return 0
 
+    def forget_fact(self, name):
+        """Delete all taught facts for `name` (case-insensitive, like rag.sh --forget). Returns rows removed.
+        Used by enroll_person.sh --replace so a re-enroll REPLACES a person instead of stacking duplicates."""
+        try:
+            with self._lock:
+                cur = self._db.execute("DELETE FROM facts WHERE lower(name)=lower(?)", ((name or "").strip(),))
+                self._db.commit()
+                return cur.rowcount
+        except Exception as e:
+            log.warning("memory: forget_fact failed (%s)", e)
+            return 0
+
     # ---------- the robot's own identity (top-priority memory) ----------
     def get_meta(self, key):
         with self._lock:

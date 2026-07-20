@@ -41,3 +41,7 @@ __pycache__/
 # Scratch implementation plan (working notes; not part of the shipped repo)
 /PLAN.md
 
+# Generated batch enrollment script (scripts/create_enrollments.sh output) -- personal (names + descriptions),
+# regenerated on demand; never committed. The GENERATOR is committed; its OUTPUT is not.
+/enroll_all.sh
+

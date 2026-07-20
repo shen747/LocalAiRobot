@@ -25,6 +25,7 @@ _cfg_flag() {   # _cfg_flag VARNAME DEFAULT
 }
 _cfg_flag ROBOT_INSTALL_COMITUP 1     # Comitup captive-portal Wi-Fi fallback (docs/change-pi-wifi.md Tier 2)
 _cfg_flag ROBOT_PERSIST_JOURNAL 1     # persistent systemd journal (/var/log/journal), boot logs survive reboots
+_cfg_flag ROBOT_BOOT_TO_CONSOLE 1     # boot to console (multi-user.target), NOT the desktop -- headless robot + the DSI/HDMI face needs /dev/fb0
 
 # --bootstrap: after installing the stack, also enable the systemd boot service so the brain auto-starts
 # on every boot (see scripts/robot.service + run_me.sh --install-boot). Off by default -- a plain install
@@ -152,6 +153,27 @@ echo ">> [3/8] enable I2C + hardware group access (PCA9685 I2C, 3x HC-SR04 GPIO,
 sudo raspi-config nonint do_i2c 0 || echo "   (raspi-config not found -- enable I2C manually: dtparam=i2c_arm=on)"
 # i2c/gpio = motion + sensors;  dialout = USB-C face panel (/dev/ttyACM0);  audio = mic/speaker;  video = /dev/fb0 fallback
 sudo usermod -aG i2c,gpio,dialout,audio,video "$USER" || true
+
+# Boot to the CONSOLE (multi-user.target), NOT the graphical desktop. The robot is a HEADLESS appliance and
+# its DSI/HDMI face is drawn straight to /dev/fb0 -- under the desktop the Wayland compositor OWNS the
+# framebuffer, so the face never shows (and the desktop just wastes RAM/CPU). Idempotent. Opt out with
+# ROBOT_BOOT_TO_CONSOLE=0 (keep the desktop). Takes effect on the reboot at the end of install.
+if [ "${ROBOT_BOOT_TO_CONSOLE}" = 1 ] && command -v systemctl >/dev/null 2>&1; then
+  if sudo systemctl set-default multi-user.target >/dev/null 2>&1; then
+    echo "   boot target -> multi-user.target (console; the DSI/HDMI face renders on /dev/fb0)."
+    echo "   keep a desktop instead: ROBOT_BOOT_TO_CONSOLE=0, or undo with 'sudo systemctl set-default graphical.target'."
+  else
+    echo "   (could not set multi-user.target -- set it by hand: sudo systemctl set-default multi-user.target)"
+  fi
+  # Hide the blinking text-console CURSOR so it doesn't sit on top of the framebuffer face. cmdline.txt is a
+  # SINGLE line -> append with sed (never a newline). Idempotent (only added once).
+  CMDLINE=/boot/firmware/cmdline.txt; [ -f "$CMDLINE" ] || CMDLINE=/boot/cmdline.txt
+  if [ -f "$CMDLINE" ] && ! grep -q 'vt.global_cursor_default=0' "$CMDLINE"; then
+    if sudo sed -i 's/$/ vt.global_cursor_default=0/' "$CMDLINE"; then
+      echo "   hid the console cursor (vt.global_cursor_default=0 in $(basename "$CMDLINE"); live after reboot)."
+    fi
+  fi
+fi
 
 echo ">> [4/8] Ollama + models (text intent + vision)"
 command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
@@ -368,7 +390,7 @@ echo "${GRN}==============================================================${RST}
 # after a reboot. Interactive only: skip cleanly when piped / non-interactive (curl | bash, CI) so it can't hang.
 echo
 if [ -t 0 ]; then
-  printf ">> A reboot is needed for I2C, your new device groups, and the camera overlay to take effect.\n"
+  printf ">> A reboot is needed for I2C, your new device groups, the camera overlay, and the console boot to take effect.\n"
   printf "   Reboot now? [y/N] "
   read -r REBOOT_ANS || REBOOT_ANS=""
   case "$REBOOT_ANS" in
@@ -376,5 +398,5 @@ if [ -t 0 ]; then
     *)     echo "   Skipped -- reboot later with:  sudo reboot" ;;
   esac
 else
-  echo ">> Reboot required for I2C, device groups, and the camera overlay to take effect:  sudo reboot"
+  echo ">> Reboot required for I2C, device groups, the camera overlay, and the console boot to take effect:  sudo reboot"
 fi

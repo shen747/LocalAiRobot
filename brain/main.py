@@ -307,12 +307,21 @@ def _fix_pronunciation(text):
     return _pron_re.sub(lambda m: _pron_lut[m.group(0).lower()], text)
 
 
-def speak(cfg, text):
+def _talk_delay_ms():
+    """ms to delay the 'talking' face AFTER playback starts (ROBOT_FACE_TALK_DELAY_MS, default 0). Nudge it up
+    (e.g. 150) if the DSI framebuffer face leads the first audible sample; 0 = start with aplay."""
+    return max(0, _as_int(os.environ.get("ROBOT_FACE_TALK_DELAY_MS"), 0))
+
+
+def speak(cfg, text, on_play=None):
+    """Synthesize `text` with Piper and play it. `on_play` (optional) is fired IN STEP with playback -- callers
+    use it to start the 'talking' face exactly when sound begins, not before the (multi-second) synthesis."""
     text = _fix_pronunciation((text or "").strip())
     if not text:
         return
     wav = os.path.join(cfg["tmpdir"], f"reply-{os.getpid()}-{int(time.time() * 1000)}.wav")
     t0 = time.monotonic()
+    talk_timer = None
     try:
         # Synthesize: pipe text via stdin (no shell -> no injection). Capture stderr so a Piper/voice
         # failure is logged with its reason, not silently swallowed.
@@ -326,6 +335,12 @@ def speak(cfg, text):
         # Play back under the audio lock (serialized, never overlaps recording). aplay errors
         # (wrong/busy speaker, bad ~/.asoundrc) are the usual 'no voice' culprit -- surface them.
         with audio_lock:
+            # Kick the 'talking' face HERE (playback), not before synthesis above -- a long reply takes Piper
+            # seconds, which used to animate the mouth silently well ahead of any sound. A timer (vs an inline
+            # call) lets ROBOT_FACE_TALK_DELAY_MS push it a touch past the first sample if the DSI face leads.
+            if on_play:
+                talk_timer = threading.Timer(_talk_delay_ms() / 1000.0, on_play)
+                talk_timer.start()
             pb = subprocess.run(["aplay", wav], timeout=30,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         if pb.returncode != 0:
@@ -335,6 +350,8 @@ def speak(cfg, text):
         print(f"tts: {e}", file=sys.stderr)
         log.warning("TTS failed: %s", e)
     finally:
+        if talk_timer is not None:
+            talk_timer.cancel()   # a tuned delay outlasting very short audio: don't flip to 'talking' after it ends
         try:
             os.remove(wav)
         except OSError:
@@ -630,8 +647,10 @@ def main():
                 paused = True
             except Exception:
                 pass
-        fc.set_expression(talk_expr)
-        speak(cfg, text)
+        # Start the 'talking' face WHEN the audio plays (via on_play), not now -- otherwise the mouth animates
+        # through the whole (slow) Piper synthesis before any sound. The face holds its prior state (e.g.
+        # 'thinking') until playback begins, then end_expr once speak() returns.
+        speak(cfg, text, on_play=lambda: fc.set_expression(talk_expr))
         fc.set_expression(end_expr)
         if paused:
             try:

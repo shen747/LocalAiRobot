@@ -33,6 +33,7 @@ _cfg_flag() {   # _cfg_flag VARNAME DEFAULT
 }
 _cfg_flag ROBOT_INSTALL_COMITUP 1     # Comitup captive-portal Wi-Fi fallback (docs/change-pi-wifi.md Tier 2)
 _cfg_flag ROBOT_PERSIST_JOURNAL 1     # persistent systemd journal (/var/log/journal), boot logs survive reboots
+_cfg_flag ROBOT_BOOT_TO_CONSOLE 1     # boot to console (multi-user.target), NOT the desktop -- headless robot + the DSI/HDMI face needs /dev/fb0
 
 BOOTSTRAP=0
 for arg in "$@"; do
@@ -67,6 +68,19 @@ echo ">> [2/8] I2C + GPIO group access (PCA9685 I2C, 3x HC-SR04 GPIO, USB-C pane
 sudo usermod -aG i2c,gpio,dialout,audio,video "$USER" || true
 echo "   NOTE: some header pins default to SFIO (not GPIO). Free the ultrasonic TRIG/ECHO pins with:"
 echo "         sudo /opt/nvidia/jetson-io/jetson-io.py   (then reboot). Verify I2C: i2cdetect -y 7 (expect 0x40)."
+
+# Boot to the CONSOLE (multi-user.target), NOT the graphical desktop. The robot is a HEADLESS appliance and
+# its DSI/HDMI face is drawn straight to /dev/fb0 -- under the desktop the compositor OWNS the framebuffer, so
+# the face never shows (and the desktop just wastes the Orin's shared RAM). Idempotent. Opt out with
+# ROBOT_BOOT_TO_CONSOLE=0 (keep the desktop). Takes effect on the reboot at the end of install.
+if [ "${ROBOT_BOOT_TO_CONSOLE}" = 1 ] && command -v systemctl >/dev/null 2>&1; then
+  if sudo systemctl set-default multi-user.target >/dev/null 2>&1; then
+    echo "   boot target -> multi-user.target (console; the DSI/HDMI face renders on /dev/fb0)."
+    echo "   keep a desktop instead: ROBOT_BOOT_TO_CONSOLE=0, or undo with 'sudo systemctl set-default graphical.target'."
+  else
+    echo "   (could not set multi-user.target -- set it by hand: sudo systemctl set-default multi-user.target)"
+  fi
+fi
 
 echo ">> [3/8] performance mode (MAXN + clocks) for lowest inference latency"
 sudo nvpmodel -m 0 2>/dev/null || echo "   (nvpmodel not found -- set the max power mode from the desktop if needed)"
@@ -285,7 +299,7 @@ echo "${GRN}==============================================================${RST}
 # a reboot. Interactive only: skip cleanly when piped / non-interactive (curl | bash, CI) so it can't hang.
 echo
 if [ -t 0 ]; then
-  printf ">> A reboot is needed for your new device groups (and any jetson-io pin changes) to take effect.\n"
+  printf ">> A reboot is needed for your new device groups, the console boot (and any jetson-io pin changes) to take effect.\n"
   printf "   Reboot now? [y/N] "
   read -r REBOOT_ANS || REBOOT_ANS=""
   case "$REBOOT_ANS" in
@@ -293,5 +307,5 @@ if [ -t 0 ]; then
     *)     echo "   Skipped -- reboot later with:  sudo reboot" ;;
   esac
 else
-  echo ">> Reboot required for device groups (and any jetson-io pin changes) to take effect:  sudo reboot"
+  echo ">> Reboot required for device groups, the console boot (and any jetson-io pin changes) to take effect:  sudo reboot"
 fi
