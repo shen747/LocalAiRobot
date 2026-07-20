@@ -5,16 +5,21 @@ The optional **PIR (passive-infrared) motion sensor** is the extra wake trigger 
 can greet them. It's a **3-wire** sensor — power, ground, and one digital output — and it's **only used when
 `ROBOT_CONCIERGE_MODE=1`** (in the normal crawler build the pin is never touched).
 
-Reference part: **Adafruit PIR (ADA189)** — but any HC-SR501-style PIR works. It runs on **5 V** and its
-**OUT is 3.3 V logic**, so it's **Pi-safe with no level shifter**.
+Reference part: **Adafruit PIR (ADA189)** — but any HC-SR501-style PIR works. Power it from **5 V** — **not**
+the Pi's 3.3 V pin: a PIR under-powered at 3.3 V typically won't trigger (or reads stuck/erratic). Only its
+**OUT is 3.3 V logic**, so the signal line is **Pi-safe with no level shifter**.
 
 ## Pins (default wiring)
 
 | PIR pin (board label) | Connect to | Pi physical pin | Notes |
 |---|---|---|---|
-| **VCC / `+`** | **5 V** | **pin 2** (or 4) | powers the sensor |
-| **OUT** | **GPIO4** (`ROBOT_PIR_PIN=4`) | **pin 7** | the signal — HIGH on motion |
+| **VCC / `+`** | **5 V** — ⚠️ **not 3.3 V** | **pin 2** (or 4) | powers the sensor; on 3.3 V it won't trigger reliably |
+| **OUT** | **GPIO4** (`ROBOT_PIR_PIN=4`) | **pin 7** | the signal — HIGH on motion (this line *is* 3.3 V, Pi-safe) |
 | **GND / `-`** | **GND** | **pin 6** (or 9/14/20/25/30/34/39) | common ground |
+
+> ⚠️ **Power from 5 V, not 3.3 V.** VCC must go to a **5 V** header pin (**2** or **4**). On the Pi's 3.3 V
+> rail most PIRs are unreliable — they miss motion or never fire. The **only** 3.3 V part is the **OUT** line
+> (that's what makes the *signal* Pi-safe); it is not the supply voltage.
 
 > **Match the board's silkscreen** (`+`/`OUT`/`-` or `VCC`/`OUT`/`GND`) — jumper-wire colours vary between
 > sellers, so don't rely on colour alone.

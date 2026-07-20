@@ -53,8 +53,9 @@ Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_
 
 ## Hardware
 
-- **PIR motion sensor** (e.g. Adafruit PIR, ADA189). 5 V power, **3.3 V digital OUT** → Pi-safe, no divider.
-  Default wiring: **OUT → GPIO4 (pin 7), VCC → 5 V (pin 2), GND → GND (pin 6)** (`ROBOT_PIR_PIN=4`). Full
+- **PIR motion sensor** (e.g. Adafruit PIR, ADA189). **5 V power (⚠️ not 3.3 V — it won't trigger reliably
+  on 3.3 V)**, **3.3 V digital OUT** → Pi-safe, no divider. Default wiring: **OUT → GPIO4 (pin 7), VCC → 5 V
+  (pin 2), GND → GND (pin 6)** (`ROBOT_PIR_PIN=4`). Full
   pinout + tuning: **[docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md)**; test it with
   `./scripts/pir_sensor_probe.sh`. Set `ROBOT_PIR_PIN=` empty for a wake-word-only concierge.
 - **USB webcam** for the face pipeline (`ROBOT_CAMERA_BACKEND=v4l2`; see the USB-webcam patch).

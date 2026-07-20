@@ -42,7 +42,7 @@ A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary des
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable Concierge Mode (stationary greeter; every drive/explore/find is refused with a random in-character line). `0` = normal crawler car. Sits at the **top** of `robot.env` in the RUN MODE block. |
-| `ROBOT_PIR_PIN` | `4` | PIR motion-sensor OUT pin (Pi **BCM** / Jetson **BOARD**). **Default GPIO4 (pin 7)** — free in the HC-SR04 + ToF builds. Wiring: OUT→GPIO4/pin 7, VCC→5 V/pin 2, GND→GND/pin 6 ([guide](../docs/wiring/pir-sensor-wiring.md); probe: `scripts/pir_sensor_probe.sh`). OUT is 3.3 V → Pi-safe. Empty = motion wake off (wake-word-only concierge). |
+| `ROBOT_PIR_PIN` | `4` | PIR motion-sensor OUT pin (Pi **BCM** / Jetson **BOARD**). **Default GPIO4 (pin 7)** — free in the HC-SR04 + ToF builds. Wiring: OUT→GPIO4/pin 7, VCC→5 V/pin 2 (**not 3.3 V** — won't trigger reliably on 3.3 V), GND→GND/pin 6 ([guide](../docs/wiring/pir-sensor-wiring.md); probe: `scripts/pir_sensor_probe.sh`). Only OUT is 3.3 V → Pi-safe. Empty = motion wake off (wake-word-only concierge). |
 | `ROBOT_FACE_ID_MODEL` | `~/.localairobot/models/arcface.onnx` | ArcFace recognition ONNX (112×112 → 512-d), auto-downloaded by `install_stack_pi5.sh` / `_jetson.sh`. Missing → face match off (smiles at everyone, greets no one). |
 | `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine-similarity match threshold. **Higher = stricter** (fewer false greetings, more misses); lower = looser. |
 | `ROBOT_FACE_ID_INPUT` | `112` | Face-model input size (px square). |

@@ -235,7 +235,7 @@ the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
 > `./scripts/patches/pi5/3_camera_usb_webcam.sh`). Concierge **never drives**, so **skip** the ESC patch and
 > the wheels-off diagnostics from the main Quickstart.
 
-1. **Wire the PIR** — `OUT → GPIO4 (physical pin 7)`, `VCC → 5V (pin 2)`, `GND → GND (pin 6)`. The Adafruit PIR's OUT is 3.3 V → Pi-safe, no divider. `ROBOT_PIR_PIN=4` is already the default. Wiring guide: [docs/wiring/pir-sensor-wiring.md](docs/wiring/pir-sensor-wiring.md).
+1. **Wire the PIR** — `OUT → GPIO4 (physical pin 7)`, `VCC → 5V (pin 2)` ⚠️ **not 3.3 V — a PIR on 3.3 V won't trigger reliably**, `GND → GND (pin 6)`. Only the OUT line is 3.3 V → Pi-safe, no divider. `ROBOT_PIR_PIN=4` is already the default. Wiring guide: [docs/wiring/pir-sensor-wiring.md](docs/wiring/pir-sensor-wiring.md).
 2. **Clone** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
 3. **Install** — `./scripts/install_stack_pi5.sh` (grabs the AI stack **and** the local face-recognition model), then `sudo reboot` and SSH back in.
 4. **Test the PIR** — `./scripts/pir_sensor_probe.sh`, wave your hand, watch it flip to `#### MOTION ####` (Ctrl-C to stop). *Runs only after step 3 — it uses the installed venv.*
