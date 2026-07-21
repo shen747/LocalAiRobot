@@ -262,6 +262,15 @@ Walk up and it greets enrolled faces by name; strangers get a silent smile. Remo
 
 **Enrolling a crowd?** Put everyone's photos in a folder as `<Name>.jpg` (+ `<Name>_02.jpg`, … for more shots) and run **`./scripts/create_enrollments.sh`** on your PC — it generates a single `enroll_all.sh` you scp to the Pi and run. Each line's **say-as is pre-filled with the name** (edit it for tricky ones). It's **amend-safe**: re-run after adding people and it keeps the descriptions + say-as you already edited.
 
+**Getting a name's say-as right → `pronounce_my_name.sh`.** Not sure how a respelling will sound? Audition it in Jarvis's own voice before committing to it — no file editing:
+
+```bash
+./scripts/pronounce_my_name.sh Ruh-mesh                 # speak it: bare, then in a greeting
+./scripts/pronounce_my_name.sh Ruh-mesh --name=Ramesh   # ...and save it as Ramesh's say-as in enroll_all.sh
+```
+
+It uses the **same Piper voice the robot speaks with**, so what you hear is what visitors hear. With `--name=<Name>` it rewrites that person's **say-as** (the 3rd field) in `~/LocalAiRobot/enroll_all.sh` for you — and fails with a clear message if the name isn't enrolled there (it lists who is) or the file is missing. Re-run **`bash enroll_all.sh`** on the Pi to push it into the RAG db. Respell by **sound**, joined with hyphens (`Ruh-mesh`) — never spaced single letters (`R uh m e sh`), which Piper reads as the alphabet.
+
 **Multiple photos per person → better recognition.** Each photo is stored as its own embedding under the
 person's name; on a match they're combined per **`ROBOT_FACE_ID_AGGREGATE`**: `max` (default — the
 best-matching photo wins, so more photos = better recall), or `topk` / `mean` / `centroid` if a single stray

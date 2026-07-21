@@ -179,61 +179,19 @@ end-to-end with `./scripts/run_diagnostics.sh --wheels-off`.
 ## 4. Piper voice — dial in a name's pronunciation
 
 Piper mis-says some names (it reads *"Ramesh"* as *"RAM-esh"*, or spells tricky ones out letter-by-letter).
-This bench does **one name at a time**: set `NAME` + a single `PRONOUNCE` respelling at the top, run it to hear
-that spelling — bare, then inside a greeting — then tweak `PRONOUNCE` and re-run until it sounds right. It goes
-through the **exact same Piper binary + voice the robot uses**, so what you hear is precisely what Jarvis will
-say (the robot just substitutes your respelling for the name before handing the text to this same Piper). Once
-it's right, drop it into the generated `enroll_all.sh` as that person's **say-as** (the 3rd field).
-
-No wheels, no ESC — just a speaker (uses the same ALSA default as the robot voice, so set audio up first with
-`./scripts/setup_audio.sh` if you hear nothing).
+This one isn't a paste-in bench — it's a committed script, **`./scripts/pronounce_my_name.sh`** — because you
+re-run it a lot while tuning a name. Give it a phonetic **respelling** and it speaks it in Jarvis's own voice,
+once bare and once inside a greeting, so what you hear is exactly what a visitor hears:
 
 ```bash
-brain/.venv/bin/python - <<'PYEOF'
-import os, subprocess, tempfile, time
-
-# ---- edit these two, run, LISTEN, tweak PRONOUNCE, re-run (one name at a time) ----
-NAME      = "Ramesh"       # the real name (used only in the printout + the enroll line at the end)
-PRONOUNCE = "Ruh-mesh"     # the ONE respelling to hear -- by SOUND, joined with hyphens (NOT spaced letters)
-# ----------------------------------------------------------------------------------------------------
-GREETING  = "Welcome back, {}!"   # also hear it in the concierge greeting shape, not just bare
-
-# SAME Piper binary + voice the robot's speak() uses (main.py cfg piper_bin/piper_voice defaults), so what you
-# hear here is EXACTLY what Jarvis will say -- _fix_pronunciation() only swaps the name for the respelling,
-# then Piper synthesises that respelling, which is precisely what this bench feeds Piper.
-piper = os.path.expanduser(os.environ.get("ROBOT_PIPER_BIN",   "~/piper/piper/piper"))
-voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
-tmp   = tempfile.gettempdir()
-
-def say(text):
-    wav = os.path.join(tmp, f"pron-{os.getpid()}-{int(time.time()*1000)}.wav")
-    try:
-        syn = subprocess.run([piper, "-m", voice, "--output_file", wav], input=text.encode("utf-8"),
-                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
-    except FileNotFoundError:
-        print(f"   !! piper not found at {piper} -- set ROBOT_PIPER_BIN (run ./scripts/install_stack_pi5.sh)")
-        return
-    if syn.returncode != 0:
-        print(f"   !! piper failed: {syn.stderr.decode('utf-8','replace').strip()[-120:]}")
-        return
-    pb = subprocess.run(["aplay", wav], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
-    if pb.returncode != 0:
-        print(f"   !! aplay failed: {pb.stderr.strip()[-120:]}  (check ~/.asoundrc / `aplay -l`)")
-    try:
-        os.remove(wav)
-    except OSError:
-        pass
-
-print(f">> '{NAME}'  spoken as  '{PRONOUNCE}'   (voice: {voice})")
-say(PRONOUNCE)                    # bare
-time.sleep(0.9)
-say(GREETING.format(PRONOUNCE))   # in the greeting
-print(f"\n>> Sounds right? Put it in the generated enroll_all.sh as this person's SAY-AS (3rd field):")
-print(f'   ./scripts/enroll_person.sh "{NAME}" "<desc>" "{PRONOUNCE}" ~/people_named/{NAME}.jpg')
-print('   Not right? Tweak PRONOUNCE by sound (e.g. "Ruh-maish") and re-run.')
-print('   NOTE: never space out single letters ("R uh m e sh") -- Piper spells them out ("R-A-M-E-S-H").')
-PYEOF
+./scripts/pronounce_my_name.sh Ruh-mesh                 # just listen (bare, then in a greeting)
+./scripts/pronounce_my_name.sh Ruh-mesh --name=Ramesh   # ...and save it as Ramesh's say-as in enroll_all.sh
 ```
+
+With `--name=<Name>` it also rewrites that person's **say-as** (the 3rd field) in `~/LocalAiRobot/enroll_all.sh`,
+failing clearly if the name isn't enrolled there (it lists who is) or the file is missing. Re-run
+`bash enroll_all.sh` on the Pi afterwards to push it into the RAG db. No wheels, no ESC — just a speaker (same
+ALSA default as the robot voice; run `./scripts/setup_audio.sh` first if you hear nothing).
 
 > 💡 Respell by **sound**, joined with hyphens (`Ruh-mesh`, `Shah-nee`). **Never space out single letters**
 > (`R uh m e sh`) — Piper's espeak phonemizer reads lone letters as the alphabet and spells the name out.
