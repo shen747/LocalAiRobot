@@ -214,10 +214,18 @@ def wait_for_trigger(cfg, wake, motion_event=None):
     return result
 
 
-SYSTEM_PROMPT = (
+# The intent/JSON contract is shared by both personas; only the ONE identity sentence at the front differs,
+# so Concierge Mode can describe itself as a stationary greeter (not a car) without touching the crawler
+# prompt. _CRAWLER_INTRO + _ACTION_SCHEMA reproduces the original SYSTEM_PROMPT byte-for-byte.
+_CRAWLER_INTRO = (
     "You are the brain of a remote-control crawler car with Ackermann steering "
     "(one drive motor plus one steering servo -- it CANNOT strafe or spin in place). "
-    "It has a forward camera and can look around. Convert the user's spoken input into "
+    "It has a forward camera and can look around. ")
+_CONCIERGE_INTRO = (
+    "You are the brain of a STATIONARY AI concierge / desk assistant -- it does NOT move, drive, or go "
+    "anywhere (it has no wheels); it greets visitors and chats. It has a forward camera and can look around. ")
+_ACTION_SCHEMA = (
+    "Convert the user's spoken input into "
     "ONE JSON object and nothing else.\n"
     "Keys:\n"
     '- "action": one of DRIVE, EXPLORE, FIND, STOP, SAY, REMEMBER, LOOK.\n'
@@ -247,6 +255,7 @@ SYSTEM_PROMPT = (
     "steer). Choose LOOK when the user asks about what you currently see; DRIVE / EXPLORE / FIND when "
     "they want the car to move or explore; when in doubt, choose SAY and just answer.\n"
 )
+SYSTEM_PROMPT = _CRAWLER_INTRO + _ACTION_SCHEMA   # crawler-mode prompt (identical to the original)
 
 
 def _llm_timeout():
@@ -258,21 +267,42 @@ def _llm_timeout():
 
 def query_ollama(cfg, user_text, context=""):
     name = cfg.get("robot_name") or "Jarvis"
-    # Identity preamble so the robot answers as its configured name. (context, from mem.prompt_context(),
-    # already leads with the stored top-priority identity -- who it is + what it can do.)
-    prompt = (f"You are {name}, a friendly voice-controlled RC crawler robot car. If the user asks who you "
-              f"are, your name, or what you can do, answer as {name}.\n") + SYSTEM_PROMPT
+    # Identity preamble so the robot answers as its configured name -- and, in Concierge Mode, as a STATIONARY
+    # greeter rather than a crawler car (otherwise it introduces itself as a "Crawler Car"). The crawler branch
+    # is byte-identical to before, so crawler mode is unchanged. (context, from mem.prompt_context(), already
+    # leads with the stored top-priority identity -- who it is + what it can do.)
+    if concierge.enabled():
+        preamble = (f"You are {name} the Concierge, a friendly STATIONARY desk assistant. If the user asks who "
+                    f"you are, your name, or what you can do, answer as {name} the Concierge -- a stationary "
+                    f"greeter that recognises visitors and chats; you never move, drive, or go anywhere.\n")
+        prompt = preamble + _CONCIERGE_INTRO + _ACTION_SCHEMA
+    else:
+        preamble = (f"You are {name}, a friendly voice-controlled RC crawler robot car. If the user asks who you "
+                    f"are, your name, or what you can do, answer as {name}.\n")
+        prompt = preamble + SYSTEM_PROMPT
     if context:
         prompt += "Known surroundings and memory: " + context + "\n"
     prompt += "User command: " + user_text
-    # Routed through inference.ollama_generate: one shared model_lock serialises this with the
-    # vision call (so they never hit Ollama concurrently), and keep_alive keeps the model warm.
-    # It unwraps the {"response": ...} envelope and validates a dict; a raise is fail-safe here.
-    return inference.ollama_generate(cfg, {
-        "model": cfg["model"],
-        "prompt": prompt,
-        "format": "json",
-    }, _llm_timeout())
+    # Routed through inference.ollama_generate: one shared model_lock serialises this with the vision call (so
+    # they never hit Ollama concurrently), and keep_alive keeps the model warm. It unwraps the {"response": ...}
+    # envelope and validates a dict; a raise is fail-safe here.
+    #
+    # TEXT backend (product rule: conversation past the greeting goes REMOTE unless the rig is fully local):
+    # inference.text_backend() sends BOTH gemini and mixed to Gemini when a key is present, else local. Under
+    # 'mixed' a remote failure falls back to the LOCAL model for THIS turn (like the vision path); pure gemini
+    # surfaces the error (caller fail-safes).
+    payload = {"model": cfg["model"], "prompt": prompt, "format": "json"}
+    ab = (cfg.get("ai_backend") or "local").strip().lower()
+    if inference.text_backend(cfg) == "gemini":
+        gcfg = {**cfg, "ai_backend": "gemini"}
+        try:
+            return inference.ollama_generate(gcfg, payload, _llm_timeout())
+        except Exception as e:
+            if ab != "mixed":
+                raise
+            log.warning("mixed: remote text unavailable (%s) -> falling back to the LOCAL model", e)
+    lcfg = {**cfg, "ai_backend": "local"}
+    return inference.ollama_generate(lcfg, payload, _llm_timeout())
 
 
 # --- TTS pronunciation fixups -----------------------------------------------------------------------
@@ -985,27 +1015,24 @@ def main():
     if getattr(driver, "hw_failed", False):
         mode += " — DEGRADED (some hardware failed; see the HARDWARE FAILURE lines above)"
     print(f"Robot Brain online (RC crawler + vision + face).  [{mode}]")
+    # Backend banner. Text routing follows inference.text_backend(): gemini AND mixed hand conversation +
+    # vision to Gemini WHEN a key is present; without a key (or backend=local) the rig stays fully local.
     _ab = cfg.get("ai_backend", "local")
-    if _ab == "gemini":
-        if cfg.get("gemini_api_key"):
-            _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
-            _split = f"text={cfg.get('gemini_model')}, vision={_vm}" if _vm != cfg.get("gemini_model") \
-                else f"text + vision on {cfg.get('gemini_model')}"
+    _have_key = bool((cfg.get("gemini_api_key") or "").strip())
+    if _ab in ("gemini", "mixed") and _have_key:
+        _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
+        _split = f"text={cfg.get('gemini_model')}, vision={_vm}" if _vm != cfg.get("gemini_model") \
+            else f"text + vision on {cfg.get('gemini_model')}"
+        if _ab == "mixed":
+            print(f"AI brain: MIXED — conversation + vision REMOTE Gemini ({_split}); auto-falls back to "
+                  f"LOCAL ({cfg.get('model')}) if the network/remote is down (needs network).")
+        else:
             print(f"AI brain: REMOTE Gemini ({_split}) (needs network).")
-        else:
-            print("AI brain: ROBOT_AI_BACKEND=gemini but ROBOT_GEMINI_API_KEY is EMPTY — commands will "
-                  "fail. Set the key (see docs/gemini-setup.md) or switch back to local.", file=sys.stderr)
-            log.error("ROBOT_AI_BACKEND=gemini with no ROBOT_GEMINI_API_KEY — model calls will fail-safe")
-    elif _ab == "mixed":
-        if cfg.get("gemini_api_key"):
-            _vm = cfg.get("gemini_vision_model") or cfg.get("gemini_model")
-            print(f"AI brain: MIXED — text LOCAL Ollama ({cfg.get('model')}), vision REMOTE Gemini ({_vm}); "
-                  "vision auto-falls back to local if the network/remote is down.")
-        else:
-            print(f"AI brain: MIXED but ROBOT_GEMINI_API_KEY is EMPTY — vision stays LOCAL "
-                  f"({cfg.get('vision_model') or cfg.get('model')}). Set the key for remote vision "
-                  "(docs/gemini-setup.md).", file=sys.stderr)
-            log.warning("ROBOT_AI_BACKEND=mixed with no ROBOT_GEMINI_API_KEY — vision runs on the local VLM")
+    elif _ab in ("gemini", "mixed"):   # a remote-capable backend was chosen but no key -> stay fully local
+        print(f"AI brain: ROBOT_AI_BACKEND={_ab} but ROBOT_GEMINI_API_KEY is EMPTY — staying fully LOCAL "
+              f"({cfg.get('model')}). Set the key for remote conversation + vision (docs/gemini-setup.md).",
+              file=sys.stderr)
+        log.warning("ROBOT_AI_BACKEND=%s with no ROBOT_GEMINI_API_KEY — running fully local", _ab)
     else:
         print(f"AI brain: LOCAL Ollama ({cfg.get('model')}) — fully offline.")
     if wake.dry_run:

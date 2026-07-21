@@ -83,12 +83,33 @@ lines = [
     "set -uo pipefail",
     'cd "$(dirname "$0")"   # repo root (scp this file into ~/LocalAiRobot)',
     "",
+    '_LOG="$(mktemp)"   # capture output so we can list photos with NO detectable face at the end',
+    "{",
 ]
 for name in sorted(people, key=str.lower):
     desc, pron = saved.get(name, (PLACEHOLDER, name))   # NEW person: say-as pre-filled with the name
     paths = " ".join(f"{target}/{b}" for b in people[name])
     lines.append(f'./scripts/enroll_person.sh "{name}" "{desc}" "{pron}" {paths}')
-lines += ["", "echo", 'echo ">> Enrolled Concierge faces:"', "./scripts/rag.sh --faces", ""]
+lines += [
+    "",
+    "echo",
+    'echo ">> Enrolled Concierge faces:"',
+    "./scripts/rag.sh --faces",
+    '} 2>&1 | tee "$_LOG"',
+    "",
+    "# Photos with NO detectable face -> tell you exactly which to replace, and the target size.",
+    '[ -f config/robot.env ] && { set -a; . config/robot.env; set +a; }',
+    '_SZ="${ROBOT_FACE_ID_INPUT:-112}"',
+    "_bad=\"$(grep 'no face detected' \"$_LOG\" | grep -oiE '/[^[:space:]]+\\.(jpe?g|png)' | sort -u)\"",
+    'rm -f "$_LOG"',
+    'if [ -n "$_bad" ]; then',
+    "  echo",
+    '  echo "!! Replace the following face photos with a clear, FRONT-FACING face -- a SQUARE crop of at least ${_SZ}x${_SZ} px, the face filling most of the frame (side/tiny/blurry faces are what failed):"',
+    "  printf '   - %s\\n' $_bad",
+    '  echo "   Then re-run:  bash $(basename "$0")   (idempotent -- only the replaced people change)."',
+    "fi",
+    "",
+]
 
 with open(out, "w", encoding="utf-8") as fh:
     fh.write("\n".join(lines))

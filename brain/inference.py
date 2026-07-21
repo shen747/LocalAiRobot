@@ -315,6 +315,20 @@ def _generate_with_retries(cfg, payload, timeout):
     raise TimeoutError(f"llm budget of {timeout}s exhausted after {attempts} attempt(s)")  # defensive
 
 
+def text_backend(cfg):
+    """Which backend serves TEXT (conversation + intent) for this cfg -- 'gemini' (remote) or 'local'.
+    Product rule: everything past the greeting is handed to the remote AI UNLESS the rig is fully local. So
+    BOTH 'gemini' and 'mixed' route text to Gemini WHEN a ROBOT_GEMINI_API_KEY is present; without a key (or
+    backend 'local') text stays on the local model. VISION resolves separately (vision.vision_backend), which
+    is why 'mixed' can send vision remote while, historically, text stayed local -- that split is now gone for
+    text: a key present means conversation goes remote in both remote-capable modes."""
+    ab = (cfg.get("ai_backend") or "local").strip().lower()
+    have_key = bool((cfg.get("gemini_api_key") or "").strip())
+    if ab in ("gemini", "mixed") and have_key:
+        return "gemini"
+    return "local"
+
+
 def ollama_generate(cfg, payload, timeout):
     """Run a generate call and return the model's parsed JSON OBJECT.
 
