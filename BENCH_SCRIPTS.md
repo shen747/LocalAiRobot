@@ -1,11 +1,13 @@
-# Bench calibration scripts — ESC & steering servo
+# Bench calibration scripts — ESC, steering servo & voice
 
-Small **wheels-off** scripts that talk **straight to the PCA9685** (bypassing the brain) so you can sweep
-values and watch the wheels, then read off the exact numbers the robot needs. Use them **once, on the
-bench, before the first drive** — and again any time you swap the ESC, the servo, or the motor.
+Small scripts that bypass the brain and talk **straight to the hardware** (PCA9685 for the ESC/servo, Piper
+for the voice) so you can sweep values / try spellings, judge the result on the spot, then read off the exact
+numbers or respelling the robot needs. Use them **on the bench** — the drive ones before the first drive (and
+after swapping the ESC, servo, or motor); the voice one whenever a name comes out wrong.
 
-They cover **two things only: the ESC (throttle) and the steering servo.** Everything else (sensors, camera,
-audio) has its own tools (`scripts/run_diagnostics.sh`, `scripts/ultrasonic_sensor_probe.sh`).
+They cover the **ESC (throttle)**, the **steering servo**, and **Piper voice pronunciation** (§4). Other
+subsystems (sensors, camera, audio routing) have their own tools (`scripts/run_diagnostics.sh`,
+`scripts/ultrasonic_sensor_probe.sh`).
 
 > 🔴 **WHEELS OFF THE GROUND.** The ESC must be **powered on**; hold neutral and wait for the long *"ready"*
 > beep (that's the ESC **arming**). `Ctrl-C` stops any script. Run over SSH with the repo's venv python.
@@ -171,3 +173,82 @@ PYEOF
 **After calibrating:** put the ESC numbers in your ESC patch and run it
 (`./scripts/patches/common/1_esc_hb_qr_1060.sh`), put the steering angles in `config/robot.env`, then verify
 end-to-end with `./scripts/run_diagnostics.sh --wheels-off`.
+
+---
+
+## 4. Piper voice — dial in a name's pronunciation
+
+Piper mis-says some names (it reads *"Ramesh"* as *"RAM-esh"*, or spells tricky ones out letter-by-letter).
+This bench speaks **one name at a time** through the **exact same Piper binary + voice the robot uses**, trying
+a handful of candidate **respellings** so you can pick the one that sounds right — first the word on its own,
+then inside a greeting so you hear it in context. What you hear here is precisely what Jarvis will say (the
+robot just substitutes your chosen respelling for the name before it hands the text to this same Piper).
+
+Pass the real name first, then the spellings to try (or edit the defaults at the top). No wheels, no ESC —
+just a speaker (uses the same ALSA default as the robot voice, so set audio up first with
+`./scripts/setup_audio.sh` if you hear nothing).
+
+```bash
+brain/.venv/bin/python - "Ramesh" "Ramesh" "Rah-mesh" "Ruh-mesh" "Ruh-maish" <<'PYEOF'
+import os, sys, subprocess, tempfile, time
+
+# ---- what to test (override on the command line: <Name> <spelling1> <spelling2> ...) ----
+argv      = sys.argv[1:]
+NAME      = argv[0] if argv else "Ramesh"
+SPELLINGS = argv[1:] if len(argv) > 1 else ["Ramesh", "Rah-mesh", "Ruh-mesh", "Ruh-maish"]
+GREETING  = "Welcome back, {}!"   # the concierge greeting shape -- hear each spelling IN CONTEXT, not just bare
+PAUSE_S   = 0.9                   # gap between clips so your ear can judge each one
+# ----------------------------------------------------------------------------------------
+
+# SAME Piper binary + voice the robot's speak() uses (main.py cfg piper_bin/piper_voice defaults), so what you
+# hear here is EXACTLY what Jarvis will say -- _fix_pronunciation() only swaps the name for the respelling,
+# then Piper synthesises that respelling, which is precisely what this bench feeds Piper.
+piper = os.path.expanduser(os.environ.get("ROBOT_PIPER_BIN",   "~/piper/piper/piper"))
+voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
+tmp   = tempfile.gettempdir()
+
+def say(text):
+    wav = os.path.join(tmp, f"pron-{os.getpid()}-{int(time.time()*1000)}.wav")
+    try:
+        syn = subprocess.run([piper, "-m", voice, "--output_file", wav], input=text.encode("utf-8"),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+    except FileNotFoundError:
+        print(f"   !! piper not found at {piper} -- set ROBOT_PIPER_BIN (run ./scripts/install_stack_pi5.sh)")
+        return
+    if syn.returncode != 0:
+        print(f"   !! piper failed: {syn.stderr.decode('utf-8','replace').strip()[-120:]}")
+        return
+    pb = subprocess.run(["aplay", wav], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
+    if pb.returncode != 0:
+        print(f"   !! aplay failed: {pb.stderr.strip()[-120:]}  (check ~/.asoundrc / `aplay -l`)")
+    try:
+        os.remove(wav)
+    except OSError:
+        pass
+
+print(f">> Piper pronunciation bench for '{NAME}'   (voice: {voice})")
+print(f">> {len(SPELLINGS)} spelling(s); each is spoken BARE, then inside \"{GREETING.format('...')}\"\n")
+for i, sp in enumerate(SPELLINGS, 1):
+    print(f"[{i}] spelling = {sp!r}")
+    say(sp)
+    time.sleep(PAUSE_S)
+    say(GREETING.format(sp))
+    time.sleep(PAUSE_S)
+print("\n>> Pick the spelling that sounded right, then wire it in ONE of:")
+print(f'   - global (EVERY time the robot says it):  config/robot.env')
+print(f'       ROBOT_TTS_PRONUNCIATIONS="{NAME}=<spelling>"      (semicolon-separate more: "A=aa;B=bee")')
+print(f'   - per person (greeting say-as only):  ./scripts/enroll_person.sh "{NAME}" "<desc>" "<spelling>" <photo>...')
+print('   NOTE: use a JOINED respelling ("Ruh-mesh"), NOT spaced letters ("R uh m e sh") -- Piper reads')
+print('         spaced single letters as the ALPHABET (it spells them out: "R-A-M-E-S-H").')
+PYEOF
+```
+
+### Where the winner goes
+
+| You want the fix… | Put it in… | Key |
+|---|---|---|
+| **everywhere** the robot says the name (replies, greetings, errors) | `config/robot.env` | `ROBOT_TTS_PRONUNCIATIONS="Ramesh=Ruh-mesh"` (`;`-separate more) |
+| **only** in this person's concierge greeting | their enrolment | the *say-as* arg: `./scripts/enroll_person.sh "Ramesh" "<desc>" "Ruh-mesh" <photo>` |
+
+> 💡 Respell by **sound**, joined with hyphens (`Ruh-mesh`, `Shah-nee`). **Never space out single letters**
+> (`R uh m e sh`) — Piper's espeak phonemizer reads lone letters as the alphabet and spells the name out.
