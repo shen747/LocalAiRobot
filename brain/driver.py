@@ -167,8 +167,14 @@ class RobotDriver:
         self.rev_gap_ms = _envi("ROBOT_ESC_REV_GAP_MS", 300)       # (F/B/R only) neutral gap between taps
 
         # --- Obstacle sensing: forward FORWARD-cut gate + side-awareness (semi-hex 3-sensor array) ---
-        self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD)
-        self.side_obstacle_cm = _envf("ROBOT_SIDE_OBSTACLE_CM", 25.0)  # explore steering-avoid
+        self.obstacle_cm = _envf("ROBOT_OBSTACLE_CM", 30.0)            # forward gate (cuts FORWARD on the FRONT beam)
+        self.side_obstacle_cm = _envf("ROBOT_SIDE_OBSTACLE_CM", 25.0)  # explore steering-avoid (bias steering, doesn't stop)
+        # SIDE COLLISION cut: the semi-hex left/right beams are angled forward-OUT, so a diagonal obstacle (a
+        # chair leg off to one side) shows up on a SIDE beam but NOT the front -- and the forward gate is
+        # front-only, so the car's corner clips it. If EITHER side beam is within this (TIGHT -- well below the
+        # 25cm steering-avoid, since the sides normally see passing walls), cut FORWARD too. A failed side read
+        # (-1) counts as CLEAR so a dead/jittering side sensor can't freeze forward motion.
+        self.side_cut_cm = _envf("ROBOT_SIDE_CUT_CM", 12.0)
         # gpiozero's software-timed echo can jitter ONE garbage frame (even a NEGATIVE cm) under the 20Hz
         # loop's CPU load. Require this many CONSECUTIVE close/failed reads before ABORTING a move, so one
         # spurious frame can't kill a drive. Each frame still holds neutral, so it never drives while unsure.
@@ -252,8 +258,8 @@ class RobotDriver:
                  self.neutral, 1500.0 + self.neutral * 500.0)
         log.info("HC-SR04P x3 (%s pins): front TRIG=%d/ECHO=%d  left TRIG=%d/ECHO=%d  right TRIG=%d/ECHO=%d",
                  self._board.pin_scheme, trig, echo, left_trig, left_echo, right_trig, right_echo)
-        log.info("obstacle gates: forward FORWARD-cut <%.0fcm | side steering-avoid <%.0fcm",
-                 self.obstacle_cm, self.side_obstacle_cm)
+        log.info("obstacle gates: FORWARD-cut front <%.0fcm | side collision-cut <%.0fcm | side steering-avoid <%.0fcm",
+                 self.obstacle_cm, self.side_cut_cm, self.side_obstacle_cm)
         # Multi-board pin footgun: if the board uses BOARD (physical-header) numbering but the resolved pins
         # are exactly the Pi BCM defaults, the config almost certainly still has the Pi pins -- warn loudly
         # rather than silently drive the wrong header pins.
@@ -676,22 +682,32 @@ class RobotDriver:
                 out = self.neutral
                 if drive in ("FORWARD", "REVERSE") and time.monotonic() <= deadline:
                     if drive == "FORWARD":
-                        d = self.distance_cm()
-                        # Fail CLOSED: too close OR a failed read (-1.0) HOLDS neutral immediately. But only
-                        # ABORT the move once the bad condition PERSISTS (obstacle_debounce frames) -- gpiozero's
-                        # software timing jitters an odd garbage frame under load, and one such frame must not
-                        # kill a drive. We never drive while unsure (out stays neutral on any bad read). A
-                        # dead/silent sensor that saturates at max range still reads "clear" -- not
-                        # distinguishable in software from a genuinely open path; documented as a limitation.
-                        if d < self.obstacle_cm:
+                        # FRONT: fail CLOSED -- too close OR a failed read (-1.0) blocks. SIDES: the angled
+                        # left/right beams ALSO block, but only when VERY close (side_cut_cm, tighter than the
+                        # steering-avoid) so a diagonal obstacle the front beam misses can't clip the corner; a
+                        # FAILED side read (-1) is treated as CLEAR so a dead side sensor never freezes forward
+                        # motion. Only ABORT once the bad condition PERSISTS (obstacle_debounce frames) --
+                        # gpiozero's software timing jitters an odd garbage frame under load, and one frame must
+                        # not kill a drive. We never drive while unsure (out stays neutral on any bad read). A
+                        # dead/silent sensor saturating at max range still reads "clear" -- documented limitation.
+                        front = self.distance_cm("front")
+                        left, right = self.distance_cm("left"), self.distance_cm("right")
+                        block = None
+                        if front < self.obstacle_cm:                 # front incl. -1 failed read (fail-closed)
+                            block = ("front", front)
+                        elif 0 <= left < self.side_cut_cm:
+                            block = ("left", left)
+                        elif 0 <= right < self.side_cut_cm:
+                            block = ("right", right)
+                        if block is not None:
                             out = self.neutral
                             self._gate_bad += 1
                             if self._gate_bad >= self.obstacle_debounce:
                                 if not self._gate_blocked:
                                     self._gate_blocked = True
-                                    log.info("GATE FORWARD blocked: front=%.1fcm (need >= %.1fcm; <0 = read error) "
-                                             "after %d frames", d, self.obstacle_cm, self._gate_bad)
-                                self._trip_obstacle(d)   # confirmed -> state STOP + fires callback
+                                    log.info("GATE FORWARD blocked: %s=%.1fcm (front>=%.0f, side>=%.0f; <0 = read error) "
+                                             "after %d frames", block[0], block[1], self.obstacle_cm, self.side_cut_cm, self._gate_bad)
+                                self._trip_obstacle(block[1])   # confirmed -> state STOP + fires callback
                         else:
                             self._gate_bad = 0
                             self._gate_blocked = False

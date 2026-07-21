@@ -149,6 +149,10 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
     # wedged corner (or a front sensor STARVED to a false-low read under a power sag) would otherwise grind the
     # whole iteration budget escaping in place. The reverse also lengthens on each repeat (the SAFE lever).
     escape_max_tries = max(1, _envi("ROBOT_EXPLORE_ESCAPE_MAX_TRIES", 3))
+    # Also escape on a VERY-close SIDE beam (semi-hex sides are angled forward-out -> a diagonal obstacle the
+    # front beam misses). Same tight threshold as the driver's side collision-cut; the turn-to-open logic below
+    # naturally steers AWAY from the close side. -1 (failed read) counts as clear (via _clear).
+    side_cut_cm = _envf("ROBOT_SIDE_CUT_CM", 12.0)
     narrate = os.environ.get("ROBOT_EXPLORE_NARRATE", "1") == "1"
 
     face.set_expression("exploring")
@@ -172,23 +176,28 @@ def run_explore(cfg, driver, cam, memory, face, say, snd, aborted=lambda: False)
         #      reversed -- the car has moved, so the "which side is clearer" decision should use where it IS now).
         #   4-5. turn toward whichever side has MORE room and drive that way (still front-gated).
         #   6. `continue` -> the loop re-checks front at the top and repeats from step 1 if it's still boxed.
-        # A failed front read (-1.0) is NOT treated as close.
+        # Boxed = FRONT within escape_cm, OR a SIDE beam within side_cut_cm (a diagonal obstacle the front
+        # misses). A failed FRONT read (-1) is NOT treated as close; a failed SIDE read is clear (via _clear).
         dist = driver.distances()
         front = dist.get("front")
-        if isinstance(front, (int, float)) and 0 <= front <= escape_cm:
+        tl, tr = _clear(dist.get("left")), _clear(dist.get("right"))
+        front_close = isinstance(front, (int, float)) and 0 <= front <= escape_cm
+        side_close = min(tl, tr) <= side_cut_cm
+        if front_close or side_close:
             escape_tries += 1
             if escape_tries > escape_max_tries:
-                # Front is STILL blocked after escape_max_tries in a row -- a wedged corner, or a front sensor
-                # starved to a false-low read (power sag). Bail instead of grinding the rest of the budget.
-                log.warning("EXPLORE iter %d: front=%.0fcm STILL blocked after %d escapes -> stopping (stuck)",
-                            i, front, escape_max_tries)
+                # STILL boxed after escape_max_tries in a row -- a wedged corner, or a sensor starved to a
+                # false-low read (power sag). Bail instead of grinding the rest of the budget.
+                log.warning("EXPLORE iter %d: STILL boxed after %d escapes (front=%.0f L=%.0f R=%.0f) -> stopping (stuck)",
+                            i, escape_max_tries, front if isinstance(front, (int, float)) else -1, tl, tr)
                 face.set_expression("confused")
                 say("I seem to be stuck, so I'll stop exploring here.")
-                reason = "stuck (front blocked after %d escapes)" % escape_max_tries
+                reason = "stuck (boxed after %d escapes)" % escape_max_tries
                 break
             rev_ms = int(escape_ms * (1.0 + 0.5 * (escape_tries - 1)))       # escalate the DURATION each repeat (safe lever)
-            log.info("EXPLORE iter %d: front=%.0fcm <= %.0fcm (boxed in, escape %d/%d) -> reverse %dms (spd=%d), then turn to the open side",
-                     i, front, escape_cm, escape_tries, escape_max_tries, rev_ms, escape_speed)
+            trig = ("front %.0fcm" % front) if front_close else ("side L=%.0f R=%.0f" % (tl, tr))
+            log.info("EXPLORE iter %d: boxed in (%s, escape %d/%d) -> reverse %dms (spd=%d), then turn to the open side",
+                     i, trig, escape_tries, escape_max_tries, rev_ms, escape_speed)
             driver.stop()
             driver.command("REVERSE", "CENTER", escape_speed, rev_ms)        # 1. back straight (blind rear -> crawl)
             _sleep(rev_ms / 1000.0 + 0.1, aborted)
