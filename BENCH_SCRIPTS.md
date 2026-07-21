@@ -179,26 +179,24 @@ end-to-end with `./scripts/run_diagnostics.sh --wheels-off`.
 ## 4. Piper voice — dial in a name's pronunciation
 
 Piper mis-says some names (it reads *"Ramesh"* as *"RAM-esh"*, or spells tricky ones out letter-by-letter).
-This bench speaks **one name at a time** through the **exact same Piper binary + voice the robot uses**, trying
-a handful of candidate **respellings** so you can pick the one that sounds right — first the word on its own,
-then inside a greeting so you hear it in context. What you hear here is precisely what Jarvis will say (the
-robot just substitutes your chosen respelling for the name before it hands the text to this same Piper).
+This bench does **one name at a time**: set `NAME` + a single `PRONOUNCE` respelling at the top, run it to hear
+that spelling — bare, then inside a greeting — then tweak `PRONOUNCE` and re-run until it sounds right. It goes
+through the **exact same Piper binary + voice the robot uses**, so what you hear is precisely what Jarvis will
+say (the robot just substitutes your respelling for the name before handing the text to this same Piper). Once
+it's right, drop it into the generated `enroll_all.sh` as that person's **say-as** (the 3rd field).
 
-Pass the real name first, then the spellings to try (or edit the defaults at the top). No wheels, no ESC —
-just a speaker (uses the same ALSA default as the robot voice, so set audio up first with
+No wheels, no ESC — just a speaker (uses the same ALSA default as the robot voice, so set audio up first with
 `./scripts/setup_audio.sh` if you hear nothing).
 
 ```bash
-brain/.venv/bin/python - "Ramesh" "Ramesh" "Rah-mesh" "Ruh-mesh" "Ruh-maish" <<'PYEOF'
-import os, sys, subprocess, tempfile, time
+brain/.venv/bin/python - <<'PYEOF'
+import os, subprocess, tempfile, time
 
-# ---- what to test (override on the command line: <Name> <spelling1> <spelling2> ...) ----
-argv      = sys.argv[1:]
-NAME      = argv[0] if argv else "Ramesh"
-SPELLINGS = argv[1:] if len(argv) > 1 else ["Ramesh", "Rah-mesh", "Ruh-mesh", "Ruh-maish"]
-GREETING  = "Welcome back, {}!"   # the concierge greeting shape -- hear each spelling IN CONTEXT, not just bare
-PAUSE_S   = 0.9                   # gap between clips so your ear can judge each one
-# ----------------------------------------------------------------------------------------
+# ---- edit these two, run, LISTEN, tweak PRONOUNCE, re-run (one name at a time) ----
+NAME      = "Ramesh"       # the real name (used only in the printout + the enroll line at the end)
+PRONOUNCE = "Ruh-mesh"     # the ONE respelling to hear -- by SOUND, joined with hyphens (NOT spaced letters)
+# ----------------------------------------------------------------------------------------------------
+GREETING  = "Welcome back, {}!"   # also hear it in the concierge greeting shape, not just bare
 
 # SAME Piper binary + voice the robot's speak() uses (main.py cfg piper_bin/piper_voice defaults), so what you
 # hear here is EXACTLY what Jarvis will say -- _fix_pronunciation() only swaps the name for the respelling,
@@ -226,29 +224,18 @@ def say(text):
     except OSError:
         pass
 
-print(f">> Piper pronunciation bench for '{NAME}'   (voice: {voice})")
-print(f">> {len(SPELLINGS)} spelling(s); each is spoken BARE, then inside \"{GREETING.format('...')}\"\n")
-for i, sp in enumerate(SPELLINGS, 1):
-    print(f"[{i}] spelling = {sp!r}")
-    say(sp)
-    time.sleep(PAUSE_S)
-    say(GREETING.format(sp))
-    time.sleep(PAUSE_S)
-print("\n>> Pick the spelling that sounded right, then wire it in ONE of:")
-print(f'   - global (EVERY time the robot says it):  config/robot.env')
-print(f'       ROBOT_TTS_PRONUNCIATIONS="{NAME}=<spelling>"      (semicolon-separate more: "A=aa;B=bee")')
-print(f'   - per person (greeting say-as only):  ./scripts/enroll_person.sh "{NAME}" "<desc>" "<spelling>" <photo>...')
-print('   NOTE: use a JOINED respelling ("Ruh-mesh"), NOT spaced letters ("R uh m e sh") -- Piper reads')
-print('         spaced single letters as the ALPHABET (it spells them out: "R-A-M-E-S-H").')
+print(f">> '{NAME}'  spoken as  '{PRONOUNCE}'   (voice: {voice})")
+say(PRONOUNCE)                    # bare
+time.sleep(0.9)
+say(GREETING.format(PRONOUNCE))   # in the greeting
+print(f"\n>> Sounds right? Put it in the generated enroll_all.sh as this person's SAY-AS (3rd field):")
+print(f'   ./scripts/enroll_person.sh "{NAME}" "<desc>" "{PRONOUNCE}" ~/people_named/{NAME}.jpg')
+print('   Not right? Tweak PRONOUNCE by sound (e.g. "Ruh-maish") and re-run.')
+print('   NOTE: never space out single letters ("R uh m e sh") -- Piper spells them out ("R-A-M-E-S-H").')
 PYEOF
 ```
 
-### Where the winner goes
-
-| You want the fix… | Put it in… | Key |
-|---|---|---|
-| **everywhere** the robot says the name (replies, greetings, errors) | `config/robot.env` | `ROBOT_TTS_PRONUNCIATIONS="Ramesh=Ruh-mesh"` (`;`-separate more) |
-| **only** in this person's concierge greeting | their enrolment | the *say-as* arg: `./scripts/enroll_person.sh "Ramesh" "<desc>" "Ruh-mesh" <photo>` |
-
 > 💡 Respell by **sound**, joined with hyphens (`Ruh-mesh`, `Shah-nee`). **Never space out single letters**
 > (`R uh m e sh`) — Piper's espeak phonemizer reads lone letters as the alphabet and spells the name out.
+> (Want it fixed *everywhere* the robot says the name, not just one greeting? Put it in `config/robot.env`
+> instead: `ROBOT_TTS_PRONUNCIATIONS="Ramesh=Ruh-mesh"`.)
