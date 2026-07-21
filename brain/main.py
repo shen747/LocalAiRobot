@@ -1052,6 +1052,21 @@ def main():
         print(f"Model warmup: {'ready' if ok else 'skipped (will cold-load on first command)'}")
     snd.play("greeting")
 
+    # ESC ARMING PROMPT (headless safety). The WP-1060 arms to the neutral it sees at ITS power-on, so the
+    # brain must already be up + HOLDING NEUTRAL before the ESC is switched on -- otherwise it mis-arms and the
+    # brain's forward/neutral pulses can drive REVERSE (a runaway that has thrown a wheel). Under systemd nobody
+    # is watching the console, so SPEAK the cue: by now driver has held neutral since startup, so this is the
+    # moment to power the ESC. LIVE + motors-on + crawler only (dry-run / motors-off / concierge never drive).
+    # Disable with ROBOT_ESC_ARM_PROMPT=0 once your power sequence is muscle-memory.
+    if (os.environ.get("ROBOT_ESC_ARM_PROMPT", "1") == "1"
+            and not getattr(driver, "dry_run", False) and not getattr(driver, "motors_off", False)
+            and not concierge.enabled()):
+        try:
+            speak(cfg, "Systems online, holding the motor at neutral. "
+                       "Switch the speed controller on now, and wait for its ready beep.")
+        except Exception as e:
+            log.warning("ESC arm prompt speak failed (%s) -- continuing", e)
+
     # First run (or a name change): introduce itself out loud so a new owner learns who it is and what it can
     # do. Only on 'new'/'renamed' -- every later run stays quiet. speak() is best-effort (no speaker = logged).
     if identity_status in ("new", "renamed"):
