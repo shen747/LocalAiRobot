@@ -291,6 +291,7 @@ Everything in this repo, with a one-line "what's this for" — so nothing's a de
 - [docs/diagnostics.md](docs/diagnostics.md) — the `run_diagnostics.sh` live self-test (green/red per peripheral + the pin map) explained.
 - [docs/gemini-setup.md](docs/gemini-setup.md) — optional: run the brain on remote Google Gemini instead of local Ollama.
 - [docs/concierge.md](docs/concierge.md) — optional **Concierge Mode**: a stationary greeter with PIR motion wake + strictly-local face recognition (`ROBOT_CONCIERGE_MODE`).
+- [docs/halloween.md](docs/halloween.md) — 🎃 **Halloween Mode**: a Concierge sub-mode that spooks trick-or-treaters with 50+ phrases + 10 spooky faces + a cackle (`ROBOT_HALLOWEEN_MODE`).
 - [docs/http_setup.md](docs/http_setup.md) — command the robot from your phone over Wi-Fi (the token-secured HTTP endpoint).
 - [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — **field networking & recovery**: phone-hotspot backup, Comitup portal, persistent boot logs, and connecting from your phone with **ConnectBot** (+ Ed25519 SSH keys).
 

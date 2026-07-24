@@ -29,7 +29,7 @@ fi
 cd "$REPO"
 mkdir -p sounds/greeting_sounds sounds/wake_word_ack sounds/ack_sounds \
          sounds/thinking_sounds sounds/thinking_still_sounds sounds/remote_ack_sounds \
-         sounds/sleep_sounds sounds/error_sounds
+         sounds/sleep_sounds sounds/error_sounds sounds/spook_sounds
 
 # say <out.wav> "<words>": speak the words into the WAV with Piper (the robot's own voice). Skips a file
 # that already exists (so re-running never regenerates/clobbers what's there) unless --force.
@@ -119,6 +119,14 @@ say sounds/sleep_sounds/napping.wav      "I'll be napping. A quick hey jarvis wi
 say sounds/sleep_sounds/signing_off.wav  "Signing off for now. Say hey jarvis to start another conversation."
 # error -- obstacle / LLM error
 say sounds/error_sounds/uh_oh.wav        "Uh oh"
+
+# spook -- Halloween Mode: a short cackle/boo/wail played BEFORE the spooky greeting (ROBOT_HALLOWEEN_MODE=1).
+# Piper "vocalises" these; if a clip sounds off, edit the words (or drop your own .wav into sounds/spook_sounds/).
+say sounds/spook_sounds/cackle.wav       "Mwa ha ha ha ha!"
+say sounds/spook_sounds/boo.wav          "Boo!"
+say sounds/spook_sounds/wail.wav         "Ooooooooooo..."
+say sounds/spook_sounds/heh.wav          "Heh, heh, heh, heh..."
+say sounds/spook_sounds/muhaha.wav       "Mu-ha-ha-ha!"
 
 echo ">> done: $made written, $kept kept (already existed; use --force to overwrite)."
 echo "   Test a clip:  aplay sounds/wake_word_ack/yes.wav"

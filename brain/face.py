@@ -54,6 +54,10 @@ _MOODS = {
     # silence -- peaceful CLOSED eyes (sleep=True), a soft smile, and floating "Zzz".
     "inquisitive": dict(bg=(16, 34, 46), eye=(150, 235, 255), look=(0.35, -0.35), mouth="o", wide=True, query=True),
     "sleeping":    dict(bg=(14, 14, 26), eye=(120, 160, 220), look=(0.0, 0.0),    mouth="smile_s", sleep=True),
+    # halloween: the spook face shown on a Halloween-mode motion wake. 10 committed PNG frames in
+    # brain/faces/halloween/ are shown ONE-AT-RANDOM per visitor (see _RANDOM_STILL); this procedural entry is
+    # only the FALLBACK if those PNGs are missing -- a jack-o'-lantern glow (dark bg, orange eyes, jagged mouth).
+    "halloween":   dict(bg=(16, 6, 2),   eye=(255, 140, 20),  look=(0.0, 0.0),    mouth="wavy", wide=True),
 }
 
 # Per-state animation timing, used ONLY when a state has >=2 PNG frames: (fps, loop).
@@ -75,6 +79,9 @@ _DEFAULT_TIMING = (2.0, False)
 # States that ANIMATE PROCEDURALLY even with no PNG frames -- re-rendered with an advancing frame counter
 # so the drawing itself moves (currently just the talking mouth). A >=2-frame PNG set overrides this.
 _PROC_ANIMATED = frozenset({"talking"})
+# States that show ONE RANDOM frame per entry and HOLD it (vs animating through the whole set). Halloween's
+# spook face: a different monster for each trick-or-treater, frozen for that encounter.
+_RANDOM_STILL = frozenset({"halloween"})
 # talking mouth openness cycle (0 = nearly closed, 1 = wide) -> a mouth-like flap when re-rendered per frame.
 _TALK_OPEN = (0.15, 0.55, 1.0, 0.6, 0.25, 0.85, 0.45)
 # P2-11: the tiny bench state label is OFF by default (it shipped to the user-facing concierge face). Read
@@ -489,7 +496,13 @@ class Face:
                 self._wake.clear()
                 continue
             frames = self._frames_for(state)
-            if frames and len(frames) >= 2:
+            if state in _RANDOM_STILL and frames:
+                # Halloween spook: show ONE random frame (a different monster per entry), hold until the next
+                # state change. Re-entered fresh for each visitor (from sleeping/idle) -> re-randomises.
+                self._show(state, random.choice(frames))
+                self._wake.wait()
+                self._wake.clear()
+            elif frames and len(frames) >= 2:
                 self._show(state, frames[idx % len(frames)])
                 fps, loop = self._timing(state)
                 with self._anim_lock:

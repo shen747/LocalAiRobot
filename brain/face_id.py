@@ -132,6 +132,25 @@ class FaceID:
             log.debug("face_id embed failed: %s", e)
             return None
 
+    def detect(self, jpeg_bytes):
+        """True if a HUMAN FACE is PRESENT in the frame -- Haar detection ONLY, recognition NOT required, so an
+        un-enrolled stranger (a trick-or-treater) counts. This is Halloween Mode's 'someone is at the door'
+        signal (vs identify(), which only fires for enrolled people). Cheaper than embed() (no ArcFace pass).
+        100% local (OpenCV Haar); never raises. Returns False if cv2/model aren't set up, or no face."""
+        if not self._load() or not jpeg_bytes:
+            return False
+        cv2, np = self._cv2, self._np
+        try:
+            bgr = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if bgr is None:
+                return False
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            return len(faces) > 0
+        except Exception as e:
+            log.debug("face_id detect failed: %s", e)
+            return False
+
     def _combine(self, person_sims, person_embs, vec):
         """Reduce ONE person's per-photo cosine sims to a single score, per ROBOT_FACE_ID_AGGREGATE.
         With a single enrolled photo every strategy returns that one sim (so single-photo is unchanged)."""

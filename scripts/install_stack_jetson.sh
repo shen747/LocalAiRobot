@@ -170,13 +170,16 @@ bash "${REPO}/scripts/provision_face_id.sh" \
 # Earcons + face templates (synthesized/rendered with the venv, same as the Pi installer; committed WAVs kept).
 mkdir -p "${REPO}/sounds/greeting_sounds" "${REPO}/sounds/wake_word_ack" "${REPO}/sounds/ack_sounds" \
          "${REPO}/sounds/thinking_sounds" "${REPO}/sounds/thinking_still_sounds" \
-         "${REPO}/sounds/remote_ack_sounds" "${REPO}/sounds/sleep_sounds" "${REPO}/sounds/error_sounds"
+         "${REPO}/sounds/remote_ack_sounds" "${REPO}/sounds/sleep_sounds" "${REPO}/sounds/error_sounds" "${REPO}/sounds/spook_sounds"
 if [ -x "${H}/piper/piper/piper" ] && [ -f "${H}/piper/${VOICE}.onnx" ]; then
   echo "   synthesizing any MISSING earcons with Piper (committed ones are kept)..."
   bash "${REPO}/scripts/generate_sounds.sh" || echo "   (earcon generation skipped/failed -- committed WAVs still ship)"
 fi
 echo "   rendering any MISSING face templates..."
 bash "${REPO}/scripts/generate_faces.sh" || echo "   (face template render skipped/failed -- the face still renders procedurally)"
+# Halloween Mode spook faces (brain/faces/halloween/*.png) -- committed art is kept; renders any that are
+# missing. Only used when ROBOT_HALLOWEEN_MODE=1, so a failure here never affects crawler/concierge modes.
+bash "${REPO}/scripts/generate_halloween_faces.sh" || echo "   (halloween face render skipped/failed -- only affects ROBOT_HALLOWEEN_MODE=1)"
 
 # Fill YOUR_USER in config/robot.env with the current Linux user (whisper/piper paths).
 if [ -f "${REPO}/config/robot.env" ]; then

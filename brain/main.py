@@ -29,6 +29,7 @@ import time
 
 import behavior
 import concierge
+import halloween
 import inference
 import remote
 import vision
@@ -646,7 +647,11 @@ def main():
     # Robot identity: persist who it is (name + what it can do) as top-priority RAG memory, and detect a
     # first run / rename so it introduces itself below. Name comes from ROBOT_NAME (default Jarvis).
     robot_name = cfg.get("robot_name") or "Jarvis"
-    if concierge.enabled():
+    if halloween.enabled():
+        # Halloween Mode (a Concierge SUB-mode): a spooky, STATIONARY doorway spirit -- so the whole
+        # conversation stays in character, not just the opening scare.
+        robot_caps = halloween.PERSONA.format(name=robot_name)
+    elif concierge.enabled():
         # Concierge Mode: a STATIONARY desk persona -- it introduces itself as the Concierge and never drives.
         robot_caps = concierge.PERSONA_CAPS.format(name=robot_name)
     else:
@@ -878,9 +883,10 @@ def main():
             reply = resp.get("reply", "")
 
             # --- Concierge Mode: STATIONARY persona -- refuse EVERY movement intent (drive/explore/find)
-            #     with a random in-character line, before any driving dispatch can run. ---
+            #     with a random in-character line, before any driving dispatch can run. Halloween Mode (a
+            #     Concierge sub-mode) refuses with a SPOOKY line instead. ---
             if concierge.enabled() and action in concierge.MOVEMENT_ACTIONS:
-                reply = concierge.refusal()
+                reply = halloween.refusal() if halloween.enabled() else concierge.refusal()
                 print(f"concierge: refusing {action} (stationary) -> SAY")
                 say(reply)
                 return "SAY", reply
@@ -1174,30 +1180,51 @@ def main():
             if trigger in ("CANCELLED", "RETRY"):
                 continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
             if trigger == "MOTION":
-                # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant motion
-                # is seen and HOLD it through the look; a detected face IS the "person present" signal (no cloud
-                # VLM), matched against the enrolled faces (face_id.py).
-                fc.set_expression("happy")     # smile now; held while we capture + match
-                jpeg = None
-                try:
-                    if getattr(cam, "available", False):
-                        jpeg = cam.capture_jpeg()
-                except Exception as e:
-                    log.debug("concierge capture failed: %s", e)
-                name = face_identifier.identify(jpeg)[0] if jpeg else None
-                if not name:
-                    # unknown / no person -> stop smiling and go BACK to the state we were in (awake or asleep),
-                    # NOT a forced sleep. (The smile lasted only as long as the look.)
-                    log.info("concierge: motion but no known face -> back to %r", idle["face"])
-                    fc.set_expression(idle["face"])
-                    continue
-                # recognised: greet by name -- say() transitions the smile -> talking -> idle -- then FALL
-                # THROUGH into the conversation loop for follow-ups (which sleeps after followup_silence_s).
-                # Use the stored PRONUNCIATION (a phonetic respelling) for the SPOKEN greeting when set.
-                pron = mem.pronunciation_for(name)
-                log.info("concierge: recognised %r%s -> greeting", name, f" (say-as '{pron}')" if pron else "")
-                snd.play("wake_ack")
-                say(concierge.greeting(name, pron))
+                if halloween.enabled():
+                    # Halloween Mode (Concierge sub-mode): a PIR wake -> spook WHOEVER is at the door (a
+                    # trick-or-treater, NOT an enrolled face). A DETECTED face is the "person present" signal
+                    # (strictly LOCAL Haar -- no recognition, no cloud). Random spooky face + spook earcon + a
+                    # random spooky phrase, then FALL THROUGH into the SAME conversation loop as concierge.
+                    fc.set_expression(halloween.FACE_STATE)   # a random spooky face, held through the encounter
+                    jpeg = None
+                    try:
+                        if getattr(cam, "available", False):
+                            jpeg = cam.capture_jpeg()
+                    except Exception as e:
+                        log.debug("halloween capture failed: %s", e)
+                    if not (jpeg and face_identifier.detect(jpeg)):
+                        # motion but nobody at the door (a cat, a curtain) -> back to where we were, no scare.
+                        log.info("halloween: motion but no face -> back to %r", idle["face"])
+                        fc.set_expression(idle["face"])
+                        continue
+                    log.info("halloween: person at the door -> spook")
+                    snd.play("spook")                          # the spooky earcon, BEFORE the phrase
+                    say(halloween.spooky_greeting())
+                else:
+                    # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant
+                    # motion is seen and HOLD it through the look; a detected face IS the "person present"
+                    # signal (no cloud VLM), matched against the enrolled faces (face_id.py).
+                    fc.set_expression("happy")     # smile now; held while we capture + match
+                    jpeg = None
+                    try:
+                        if getattr(cam, "available", False):
+                            jpeg = cam.capture_jpeg()
+                    except Exception as e:
+                        log.debug("concierge capture failed: %s", e)
+                    name = face_identifier.identify(jpeg)[0] if jpeg else None
+                    if not name:
+                        # unknown / no person -> stop smiling and go BACK to the state we were in (awake or
+                        # asleep), NOT a forced sleep. (The smile lasted only as long as the look.)
+                        log.info("concierge: motion but no known face -> back to %r", idle["face"])
+                        fc.set_expression(idle["face"])
+                        continue
+                    # recognised: greet by name -- say() transitions smile -> talking -> idle -- then FALL
+                    # THROUGH into the conversation loop for follow-ups (sleeps after followup_silence_s).
+                    # Use the stored PRONUNCIATION (a phonetic respelling) for the SPOKEN greeting when set.
+                    pron = mem.pronunciation_for(name)
+                    log.info("concierge: recognised %r%s -> greeting", name, f" (say-as '{pron}')" if pron else "")
+                    snd.play("wake_ack")
+                    say(concierge.greeting(name, pron))
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record
