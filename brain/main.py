@@ -1181,25 +1181,20 @@ def main():
                 continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
             if trigger == "MOTION":
                 if halloween.enabled():
-                    # Halloween Mode (Concierge sub-mode): a PIR wake -> spook WHOEVER is at the door (a
-                    # trick-or-treater, NOT an enrolled face). A DETECTED face is the "person present" signal
-                    # (strictly LOCAL Haar -- no recognition, no cloud). Random spooky face + spook earcon + a
-                    # random spooky phrase, then FALL THROUGH into the SAME conversation loop as concierge.
-                    fc.set_expression(halloween.FACE_STATE)   # a random spooky face, held through the encounter
-                    jpeg = None
-                    try:
-                        if getattr(cam, "available", False):
-                            jpeg = cam.capture_jpeg()
-                    except Exception as e:
-                        log.debug("halloween capture failed: %s", e)
-                    if not (jpeg and face_identifier.detect(jpeg)):
-                        # motion but nobody at the door (a cat, a curtain) -> back to where we were, no scare.
-                        log.info("halloween: motion but no face -> back to %r", idle["face"])
-                        fc.set_expression(idle["face"])
-                        continue
-                    log.info("halloween: person at the door -> spook")
-                    snd.play("spook")                          # the spooky earcon, BEFORE the phrase
-                    say(halloween.spooky_greeting())
+                    # Halloween Mode (Concierge sub-mode): the PIR MOTION wake IS the "someone's at the door"
+                    # signal, so we spook on motion. We deliberately do NOT require a camera face-detection:
+                    # trick-or-treaters wear MASKS / costumes that defeat face detection, so gating on it means
+                    # a costumed kid never gets spooked (and the spooky face just flickers, then reverts -- the
+                    # exact bug this replaces). Show a random spooky face and KEEP it up through the whole
+                    # greeting (talk_expr/end_expr = the spooky state, so say() doesn't swap in the generic
+                    # 'talking' mouth). Earcon + a random spooky phrase, then FALL THROUGH into the SAME
+                    # conversation loop as concierge.
+                    log.info("halloween: motion -> spook")
+                    fc.set_expression(halloween.FACE_STATE)    # a random spooky face (held through the greeting)
+                    snd.play_blocking("spook")                 # LOUD jump-scare stinger, played in FULL before
+                                                               # the phrase -> the monster lands + lingers a beat
+                    say(halloween.spooky_greeting(),
+                        talk_expr=halloween.FACE_STATE, end_expr=halloween.FACE_STATE)
                 else:
                     # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant
                     # motion is seen and HOLD it through the look; a detected face IS the "person present"

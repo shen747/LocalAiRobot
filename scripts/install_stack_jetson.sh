@@ -175,6 +175,10 @@ if [ -x "${H}/piper/piper/piper" ] && [ -f "${H}/piper/${VOICE}.onnx" ]; then
   echo "   synthesizing any MISSING earcons with Piper (committed ones are kept)..."
   bash "${REPO}/scripts/generate_sounds.sh" || echo "   (earcon generation skipped/failed -- committed WAVs still ship)"
 fi
+# Halloween Mode jump-scare stingers (sounds/spook_sounds/stinger_*.wav) -- LOUD synthetic hits, stdlib-only
+# (no Piper needed). Committed ones are kept; only MISSING ones are synthesized. Only used when
+# ROBOT_HALLOWEEN_MODE=1, so a failure here never affects crawler/concierge modes.
+bash "${REPO}/scripts/generate_spook_stingers.sh" || echo "   (spook stinger synth skipped/failed -- only affects ROBOT_HALLOWEEN_MODE=1)"
 echo "   rendering any MISSING face templates..."
 bash "${REPO}/scripts/generate_faces.sh" || echo "   (face template render skipped/failed -- the face still renders procedurally)"
 # Halloween Mode spook faces (brain/faces/halloween/*.png) -- committed art is kept; renders any that are

@@ -13,6 +13,18 @@ reacts to*.
 > **`brain/faces/halloween/`**. The plan below is the as-designed record; the ONLY config flag that shipped is
 > **`ROBOT_HALLOWEEN_MODE`** — the other flags in §3 were dropped as unnecessary given those decisions, and
 > §11's open questions are all answered above.
+>
+> 🔧 **As-built amendments (post-testing).** On a real porch the face-detect gate (§7) proved wrong twice
+> over: the door camera **captured fine but Haar found no face** — costumes/**masks** defeat face detection,
+> and at doorway distance the face is often too small — so *every* motion logged `motion but no face` and the
+> spooky face only **flickered** before reverting. Two fixes shipped:
+> 1. **Trigger on motion, not a detected face.** The PIR wake *is* the "someone's there" signal; the camera
+>    capture + `face_id.detect()` gate is **removed** from the spook path (`detect()` stays in `face_id.py`,
+>    just unused here). A masked kid now gets spooked; §7 no longer gates the scare.
+> 2. **Louder + longer.** The face is now **held** through the whole greeting (`say(..., talk_expr/end_expr =`
+>    the spooky state`)`), and the earcon is a set of **LOUD synthetic stingers** (`sounds/spook_sounds/`
+>    `stinger_*.wav` from `scripts/generate_spook_stingers.sh`) played **blocking / in full** before the
+>    phrase — replacing the quiet Piper cackle. No new config: both are on by default.
 
 ---
 

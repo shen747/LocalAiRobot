@@ -120,13 +120,11 @@ say sounds/sleep_sounds/signing_off.wav  "Signing off for now. Say hey jarvis to
 # error -- obstacle / LLM error
 say sounds/error_sounds/uh_oh.wav        "Uh oh"
 
-# spook -- Halloween Mode: a short cackle/boo/wail played BEFORE the spooky greeting (ROBOT_HALLOWEEN_MODE=1).
-# Piper "vocalises" these; if a clip sounds off, edit the words (or drop your own .wav into sounds/spook_sounds/).
-say sounds/spook_sounds/cackle.wav       "Mwa ha ha ha ha!"
-say sounds/spook_sounds/boo.wav          "Boo!"
-say sounds/spook_sounds/wail.wav         "Ooooooooooo..."
-say sounds/spook_sounds/heh.wav          "Heh, heh, heh, heh..."
-say sounds/spook_sounds/muhaha.wav       "Mu-ha-ha-ha!"
+# spook -- Halloween Mode (ROBOT_HALLOWEEN_MODE=1): the jump-scare earcon played BEFORE the spooky greeting
+# is NOT a Piper voice line -- it's a set of LOUD, peak-amplitude synthetic stingers (screech/boom/shriek)
+# so the scare is as loud + sudden as the hardware allows. Those are made by a separate stdlib-only script:
+#     ./scripts/generate_spook_stingers.sh
+# (they're committed, so a fresh clone already has them). Nothing to Piper here.
 
 echo ">> done: $made written, $kept kept (already existed; use --force to overwrite)."
 echo "   Test a clip:  aplay sounds/wake_word_ack/yes.wav"

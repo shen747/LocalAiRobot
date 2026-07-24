@@ -1,12 +1,13 @@
 # 🎃 Halloween Mode
 
 A spooky **sub-mode of [Concierge Mode](concierge.md)**. When a trick-or-treater trips the PIR motion
-sensor, Jarvis doesn't give a friendly "Hello!" — it **spooks them**: a random cackle, one of **50+
-kid-friendly spooky phrases**, and a **random spooky face**, then it drops into the normal conversation loop
-so it can banter back in a spooky character. It stays **100 % stationary** (every drive request is refused,
-spookily) and the face check is **strictly on-device** — the same privacy guarantee as Concierge.
+sensor, Jarvis doesn't give a friendly "Hello!" — it **spooks them**: a **LOUD jump-scare stinger**, one of
+**50+ kid-friendly spooky phrases**, and a **random spooky face held on the panel**, then it drops into the
+normal conversation loop so it can banter back in a spooky character. It stays **100 % stationary** (every
+drive request is refused, spookily). The trigger is **motion alone** — no camera, no face recognition — so a
+**masked, costumed stranger** gets spooked just the same, and nothing ever leaves the Pi.
 
-> Perfect on a porch on Halloween night: motion → "Mwa-ha-ha… welcome, brave soul!" → chat → back to sleep.
+> Perfect on a porch on Halloween night: motion → *SCREECH* → "Mwa-ha-ha… welcome, brave soul!" → chat → sleep.
 
 ---
 
@@ -28,24 +29,27 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
 
 - **PIR motion sensor wired** — `ROBOT_PIR_PIN` (default GPIO4/pin 7). See
   [docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md). Without it, only the wake word triggers.
-- **Face libraries installed** — `install_stack_pi5.sh` / `_jetson.sh` set these up (OpenCV + the ArcFace
-  model, as part of Concierge). Halloween only needs to **detect** a face, not recognise it, so **no one has
-  to be enrolled** — but the face libs must be present (they are, after the install).
-- A **speaker** for the phrases + cackle (the robot's normal voice).
+- **A camera is NOT required.** Halloween triggers on PIR **motion** alone — it never looks for a face
+  (costumes/masks defeat face detection anyway), so no camera, no face libraries, and no enrolment are
+  needed. (They're still installed as part of Concierge; Halloween just doesn't use them.)
+- A **speaker** for the stinger + phrases (the robot's normal voice). Turn it **up** — the stingers are
+  synthesized hot on purpose.
 
 ---
 
 ## What happens (the flow)
 
-1. **Motion** on the PIR wakes the robot.
-2. It shows a **random spooky face** and snaps a camera frame.
-3. **Is a person there?** A strictly-local Haar face-detect (`FaceID.detect()`) answers "yes, someone's at
-   the door" — **recognition is not required**, so a costumed stranger counts. (Motion with *no* face — a cat,
-   a curtain — is ignored; it quietly goes back to sleep.)
-4. It plays a **spook earcon** (a cackle/boo/wail) and speaks a **random spooky phrase**.
-5. It **falls into the conversation loop** (identical to Concierge): the kid can talk back, and Jarvis
+1. **Motion** on the PIR wakes the robot — that motion *is* the "someone's at the door" signal, so it
+   spooks straight away. (No camera peek, no face-detect: trick-or-treaters wear **masks/costumes** that
+   defeat face detection, so gating on a detected face would let the best-costumed kids walk right up
+   unscared. Motion alone is the right trigger here.)
+2. A **random spooky face** snaps onto the panel and is **held** — it stays that monster through the whole
+   scare (no flicker back to the idle face).
+3. It plays a **LOUD jump-scare stinger** (a screech/boom/shriek) in **full** — the face + sound sit there a
+   beat — **then** speaks a **random spooky phrase** (the face still held).
+4. It **falls into the conversation loop** (identical to Concierge): the kid can talk back, and Jarvis
    replies in a **spooky persona**. Ask it to drive and it refuses with a spooky line — it never moves.
-6. After `ROBOT_FOLLOWUP_SILENCE_S` of silence, it **drowses back to sleep**, ready for the next visitor.
+5. After `ROBOT_FOLLOWUP_SILENCE_S` of silence, it **drowses back to sleep**, ready for the next visitor.
 
 ---
 
@@ -69,17 +73,22 @@ never blank.
 
 ---
 
-## The spooky sound
+## The spooky sound (LOUD)
 
-A short cackle/boo/wail plays **before** the phrase. Generate the clips (on your PC, needs Piper from
-`host_setup.sh`):
+The jump-scare earcon is **not** a Piper voice line — it's a set of **synthetic, peak-amplitude stingers**
+(`stinger_screech.wav`, `stinger_boom.wav`, `stinger_shriek.wav`) so the scare is **as loud and sudden as
+the hardware allows** (they play through `aplay` at the ALSA mixer's 100 %). One is picked at random and
+played in **full** before the phrase. They're **committed** (a fresh clone has them) and need **no Piper** —
+pure Python stdlib. To (re)generate:
 
 ```bash
-./scripts/generate_sounds.sh          # creates sounds/spook_sounds/*.wav (among all earcons)
+./scripts/generate_spook_stingers.sh          # writes sounds/spook_sounds/stinger_*.wav
+./scripts/generate_spook_stingers.sh --force  # overwrite existing
 ```
 
-One is picked at random. Want a real sound effect instead of Piper's voice? Drop your own `.wav` files into
-`sounds/spook_sounds/`. If the folder is empty the spook still works — it just skips the earcon.
+Prefer your own SFX (a real scream, a horror sting)? Drop your own `.wav` files into `sounds/spook_sounds/`
+— one is picked at random. Keep them **peak-normalized** so they stay loud. If the folder is empty the spook
+still works — it just skips the earcon and goes straight to the phrase.
 
 ---
 
@@ -96,10 +105,12 @@ Names are still pronounced via `ROBOT_TTS_PRONUNCIATIONS` (e.g. "Ramesh"), same 
 
 ## Safety & notes
 
-- **Kid-safe by design** — the phrases are playful (a fright, then a wink), never traumatic.
+- **Kid-safe by design** — the phrases are playful (a fright, then a wink), never traumatic. (The stingers
+  *are* loud, though — that's the whole point of a jump scare. Turn the speaker down if a porch full of
+  little ones is too much.)
 - **Never moves** — it's a stationary Concierge; drive/explore/find are always refused.
-- **On-device** — face detection is OpenCV Haar only. No image ever leaves the Pi; no cloud, no VLM.
-- **Graceful** — no PIR, no speaker, or no face libs? It simply does less (e.g. wake-word only, or no
-  earcon) rather than crashing.
+- **Private** — the trigger is a PIR motion pin, not the camera. No photo is taken; nothing leaves the Pi.
+- **Graceful** — no PIR, or no speaker? It simply does less (e.g. wake-word only, or no earcon) rather than
+  crashing.
 
 Have a spooky night! 🦇
