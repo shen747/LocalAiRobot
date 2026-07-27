@@ -6,6 +6,8 @@
 #   ./scripts/rag.sh --scenes                        # recent scene descriptions (from agentic explore)
 #   ./scripts/rag.sh --faces                         # enrolled Concierge faces + how many photos each (the 'faces' table)
 #   ./scripts/rag.sh --all                           # facts + seen + scenes + faces
+#   ./scripts/rag.sh --search "garage tools"         # RANKED search (FTS5/BM25): the facts + scenes that best match the words
+#   ./scripts/rag.sh --reindex                       # rebuild the FTS search index from the base tables (after raw sqlite edits)
 #   ./scripts/rag.sh --forget Shawn                  # delete a taught person/thing by name
 #   ./scripts/rag.sh --clear-facts                   # wipe all taught facts (they're re-teachable)
 #   ./scripts/rag.sh --clear-scenes                  # wipe stored explore scene descriptions (stale RAG context)
@@ -48,6 +50,61 @@ con.close()
 PY
 }
 
+search() {  # search "<words>" -- BM25-ranked facts + scenes that best match the words (what the robot would retrieve)
+  "$PY" - "$DB" "$REPO" "$1" <<'PY'
+import os, sqlite3, sys
+db, repo, terms = sys.argv[1], sys.argv[2], sys.argv[3]
+if not os.path.exists(db):
+    print(f"(no memory DB yet at {db} -- the robot creates it on first run)"); sys.exit(0)
+sys.path.insert(0, os.path.join(repo, "brain"))
+try:
+    from memory import _fts_query                       # reuse the SAME safe MATCH builder the robot uses
+except Exception as e:
+    print(f"could not import brain/memory.py: {e}", file=sys.stderr); sys.exit(1)
+m = _fts_query(terms)
+print(f"FTS match: {m!r}\n")
+if not m:
+    print("(no content words to search -- try more specific terms)"); sys.exit(0)
+con = sqlite3.connect(db)
+def show(title, sql):
+    print(f"== {title} ==")
+    try:
+        rows = con.execute(sql, (m,)).fetchall()
+    except sqlite3.Error as e:
+        print(f"  (unavailable: {e})\n"); return
+    if not rows:
+        print("  (no matches)\n"); return
+    for r in rows:
+        print("  " + "  ".join("" if v is None else str(v) for v in r))
+    print()
+show("facts (score high = better)",
+     "SELECT round(-rank,3) AS score, f.name, substr(coalesce(f.fact,''),1,18) AS rel, "
+     "substr(coalesce(f.description,''),1,60) AS about FROM facts_fts JOIN facts f ON f.id=facts_fts.rowid "
+     "WHERE facts_fts MATCH ? ORDER BY rank LIMIT 10")
+show("scenes (score high = better)",
+     "SELECT round(-rank,3) AS score, substr(o.notes,1,80) AS scene FROM scenes_fts "
+     "JOIN observations o ON o.id=scenes_fts.rowid WHERE scenes_fts MATCH ? ORDER BY rank LIMIT 10")
+con.close()
+PY
+}
+
+reindex() {  # rebuild the FTS index from the base tables (via the real Memory.reindex_fts())
+  "$PY" - "$DB" "$REPO" <<'PY'
+import os, sys
+db, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(repo, "brain"))
+try:
+    from memory import Memory
+except Exception as e:
+    print(f"could not import brain/memory.py: {e}", file=sys.stderr); sys.exit(1)
+mem = Memory(db_path=db)
+nf, ns = mem.reindex_fts()
+mem.close()
+print(f"reindexed: {nf} fact row(s), {ns} scene row(s)." if (nf or ns) or mem._fts_ok
+      else "FTS5 not available in this SQLite build -- retrieval uses recency only.")
+PY
+}
+
 FACTS="SELECT id, datetime(ts,'unixepoch','localtime') AS taught, name, fact AS relationship, substr(description,1,50) AS description FROM facts ORDER BY ts DESC"
 SEEN="SELECT id, datetime(ts,'unixepoch','localtime') AS seen, target, visible, horizontal, distance, round(confidence,2) AS conf FROM observations WHERE target IS NOT NULL AND target!='' ORDER BY ts DESC LIMIT 50"
 SCENES="SELECT id, datetime(ts,'unixepoch','localtime') AS explored, substr(notes,1,90) AS scene FROM observations WHERE source='scene' AND notes IS NOT NULL AND notes!='' ORDER BY ts DESC LIMIT 30"
@@ -62,6 +119,9 @@ case "${1:---facts}" in
                             echo; echo "== recently seen (observations, last 50) =="; run "$SEEN"
                             echo; echo "== recently explored (scenes, last 30) =="; run "$SCENES"
                             echo; echo "== enrolled Concierge faces (photos per person) =="; run "$FACES" ;;
+  --search|--find)          [ $# -ge 2 ] || { echo "usage: $(basename "$0") --search \"<words>\""; exit 2; }
+                            echo "== ranked memory search for: $2 =="; search "$2" ;;
+  --reindex)                echo "== rebuilding FTS search index =="; reindex ;;
   --forget)                 [ $# -ge 2 ] || { echo "usage: $(basename "$0") --forget <name>"; exit 2; }
                             run "DELETE FROM facts WHERE lower(name)=lower(?)" "$2" ;;
   --clear-facts)            run "DELETE FROM facts" ;;

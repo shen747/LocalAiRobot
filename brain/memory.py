@@ -39,6 +39,31 @@ def _ago(seconds):
     return f"~{s // 3600}h ago"
 
 
+# Common words that carry no retrieval signal -- dropped so the FTS ranking keys on the CONTENT words
+# ("who is *shani*", "what's in the *garage*") instead of "who"/"is"/"the".
+_FTS_STOP = frozenset(
+    "a an and the is are was were be been being of to in on at it its this that these those "
+    "who what which where when why how do does did done can could would should will shall you "
+    "your yours me my mine we our us i he she him her they them his their there here please "
+    "tell show say about with for from into over under near have has had get got".split())
+
+
+def _fts_query(text):
+    """Turn a raw utterance into a safe FTS5 MATCH string, or None if there's nothing worth matching.
+    Alnum tokens only, stopwords + 1-char noise dropped, de-duped, capped at 8, each quoted as a LITERAL
+    term and OR-joined -- so FTS5 operator characters in the user's speech (\" * : - NEAR) can never
+    break the query or change its meaning."""
+    seen, out = set(), []
+    for t in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if len(t) < 2 or t in _FTS_STOP or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+        if len(out) >= 8:
+            break
+    return " OR ".join(f'"{t}"' for t in out) or None
+
+
 class Memory:
     _PRUNE_EVERY = 500   # opportunistic prune cadence, in inserted observation rows
 
@@ -93,7 +118,47 @@ class Memory:
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_visible_ts ON observations(visible, ts)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_source_ts  ON observations(source, ts)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_facts_ts       ON facts(ts)")
+        # ---------- FTS5 relevance index (the actual "retrieval" in RAG) ----------
+        # So retrieval can rank taught facts + explore scenes against the CURRENT question (BM25) instead
+        # of always dumping the newest N. Two content-owning FTS5 tables, kept in sync by triggers (rowid ==
+        # the source row's id) so rag.sh / raw sqlite edits stay consistent too. If this SQLite build lacks
+        # FTS5, we warn once and every retrieval path falls back to pure recency -- identical to before.
+        self._fts_ok = False
+        try:
+            self._db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts "
+                             "USING fts5(name, body, tokenize='porter unicode61')")
+            self._db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS scenes_fts "
+                             "USING fts5(body, tokenize='porter unicode61')")
+            self._db.executescript("""
+                CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                  INSERT INTO facts_fts(rowid, name, body)
+                    VALUES (new.id, coalesce(new.name,''),
+                            coalesce(new.fact,'')||' '||coalesce(new.description,''));
+                END;
+                CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                  DELETE FROM facts_fts WHERE rowid = old.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                  DELETE FROM facts_fts WHERE rowid = old.id;
+                  INSERT INTO facts_fts(rowid, name, body)
+                    VALUES (new.id, coalesce(new.name,''),
+                            coalesce(new.fact,'')||' '||coalesce(new.description,''));
+                END;
+                CREATE TRIGGER IF NOT EXISTS scene_ai AFTER INSERT ON observations
+                  WHEN new.source='scene' BEGIN
+                  INSERT INTO scenes_fts(rowid, body) VALUES (new.id, coalesce(new.notes,''));
+                END;
+                CREATE TRIGGER IF NOT EXISTS scene_ad AFTER DELETE ON observations
+                  WHEN old.source='scene' BEGIN
+                  DELETE FROM scenes_fts WHERE rowid = old.id;
+                END;
+            """)
+            self._fts_ok = True
+        except sqlite3.Error as e:
+            log.warning("memory: FTS5 unavailable (%s) -- retrieval falls back to recency only", e)
         self._db.commit()
+        if self._fts_ok:
+            self._backfill_fts()   # index any rows that predate the FTS tables (an existing DB gaining FTS)
         n = self._db.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
         log.info("memory: %s (%d observations)", self.path, n)
         # Step 12: bounded retention. Runs once here (before any behaviour/control thread exists) and
@@ -102,22 +167,68 @@ class Memory:
         self._prune()
 
     def _prune(self, keep=None):
-        """Keep only the newest ROBOT_MEMORY_RETAIN observations. Log-and-continue on any error.
-        NEVER call while holding self._lock -- it acquires the (non-reentrant) lock itself."""
+        """Keep the newest ROBOT_MEMORY_RETAIN *non-scene* observations, and -- SEPARATELY -- the newest
+        ROBOT_MEMORY_RETAIN_SCENES scene rows. Scenes are the expensive, often remote-gathered explore
+        summaries a later LOCAL run reuses, so routine 'look' churn must NEVER evict them: the old code
+        pruned by one global budget and a busy driver could throw the scenes away. Log-and-continue on any
+        error. NEVER call while holding self._lock -- it acquires the (non-reentrant) lock itself."""
         if keep is None:
             try:
                 keep = int(os.environ.get("ROBOT_MEMORY_RETAIN", "5000") or 5000)
             except ValueError:
                 keep = 5000
         try:
+            keep_scenes = int(os.environ.get("ROBOT_MEMORY_RETAIN_SCENES", "500") or 500)
+        except ValueError:
+            keep_scenes = 500
+        try:
             with self._lock:
                 self._db.execute(
-                    "DELETE FROM observations WHERE id NOT IN "
-                    "(SELECT id FROM observations ORDER BY ts DESC LIMIT ?)", (keep,))
+                    "DELETE FROM observations WHERE (source IS NULL OR source!='scene') AND id NOT IN "
+                    "(SELECT id FROM observations WHERE (source IS NULL OR source!='scene') "
+                    "ORDER BY ts DESC LIMIT ?)", (keep,))
+                self._db.execute(
+                    "DELETE FROM observations WHERE source='scene' AND id NOT IN "
+                    "(SELECT id FROM observations WHERE source='scene' ORDER BY ts DESC LIMIT ?)",
+                    (keep_scenes,))
                 self._db.commit()
                 self._since_prune = 0
         except Exception as e:
             log.warning("memory: prune failed (%s) -- continuing", e)
+
+    def _backfill_fts(self, force=False):
+        """Populate the FTS tables from the base rows. On init this is a no-op once they're populated;
+        with force=True (reindex_fts) it wipes and rebuilds. FTS is an optimisation, never load-bearing --
+        so a failure just logs and leaves retrieval on the recency fallback."""
+        if not getattr(self, "_fts_ok", False):
+            return
+        try:
+            with self._lock:
+                if force:
+                    self._db.execute("DELETE FROM facts_fts")
+                    self._db.execute("DELETE FROM scenes_fts")
+                if force or not self._db.execute("SELECT 1 FROM facts_fts LIMIT 1").fetchone():
+                    self._db.execute(
+                        "INSERT INTO facts_fts(rowid, name, body) SELECT id, coalesce(name,''), "
+                        "coalesce(fact,'')||' '||coalesce(description,'') FROM facts")
+                if force or not self._db.execute("SELECT 1 FROM scenes_fts LIMIT 1").fetchone():
+                    self._db.execute(
+                        "INSERT INTO scenes_fts(rowid, body) SELECT id, coalesce(notes,'') "
+                        "FROM observations WHERE source='scene'")
+                self._db.commit()
+        except sqlite3.Error as e:
+            log.warning("memory: FTS backfill failed (%s) -- continuing", e)
+
+    def reindex_fts(self):
+        """Wipe and rebuild the FTS index from the base tables (used by rag.sh --reindex, e.g. after raw
+        sqlite edits). Returns (n_facts, n_scenes) indexed; (0, 0) if FTS5 isn't available."""
+        self._backfill_fts(force=True)
+        if not self._fts_ok:
+            return (0, 0)
+        with self._lock:
+            nf = self._db.execute("SELECT count(*) FROM facts_fts").fetchone()[0]
+            ns = self._db.execute("SELECT count(*) FROM scenes_fts").fetchone()[0]
+        return (nf, ns)
 
     def record(self, source, target=None, visible=None, horizontal=None, distance=None,
                confidence=None, notes="", distances=None):
@@ -325,13 +436,44 @@ class Memory:
         return f"Your own identity (most important -- this is you): {summary}" if summary \
             else f"Your name is {name}."
 
-    def facts_string(self, max_items=12):
-        """One-line summary of taught people/things (newest first, deduped) for the LLM prompt."""
+    def _fts_ids(self, table, query, limit=50):
+        """Source-row ids best matching `query` in an FTS table, BM25-ranked best-first. [] if FTS5 is
+        unavailable or the query has no content words. `table` is always an internal literal, never user
+        input, so the f-string is safe."""
+        q = _fts_query(query)
+        if not (self._fts_ok and q):
+            return []
+        try:
+            with self._lock:
+                return [r[0] for r in self._db.execute(
+                    f"SELECT rowid FROM {table} WHERE {table} MATCH ? ORDER BY rank LIMIT ?",
+                    (q, limit)).fetchall()]
+        except sqlite3.Error as e:
+            log.debug("memory: FTS query on %s failed (%s) -- recency only", table, e)
+            return []
+
+    def facts_string(self, query=None, max_items=12):
+        """One-line summary of taught people/things for the LLM prompt. With a `query`, the most RELEVANT
+        facts (BM25 against the utterance -- e.g. a name) lead, then the newest fill the rest; without one
+        (or if FTS is unavailable) it's purely newest-first, exactly as before. Deduped by name, capped."""
+        relevant = self._fts_ids("facts_fts", query, limit=max_items * 4)
         with self._lock:
-            rows = self._db.execute(
-                "SELECT name, fact, description FROM facts ORDER BY ts DESC LIMIT 200").fetchall()
+            recent = self._db.execute(
+                "SELECT id, name, fact, description FROM facts ORDER BY ts DESC LIMIT 200").fetchall()
+        detail = {r[0]: (r[1], r[2], r[3]) for r in recent}
+        missing = [i for i in relevant if i not in detail]   # relevant rows older than the newest-200 window
+        if missing:
+            with self._lock:
+                ph = ",".join("?" * len(missing))
+                for r in self._db.execute(
+                        f"SELECT id, name, fact, description FROM facts WHERE id IN ({ph})", missing):
+                    detail[r[0]] = (r[1], r[2], r[3])
         seen, parts = set(), []
-        for name, fact, desc in rows:
+        for fid in relevant + [r[0] for r in recent]:        # relevant first (rank order), then newest
+            row = detail.get(fid)
+            if not row:
+                continue
+            name, fact, desc = row
             key = (name or "").strip().lower()
             if not key or key in seen:
                 continue
@@ -346,16 +488,30 @@ class Memory:
                 break
         return ("Known people/things: " + "; ".join(parts) + ".") if parts else ""
 
-    def recent_scenes(self, n=None):
-        """Newest DISTINCT scene descriptions (source='scene' rows), for the prompt + rag.sh --scenes.
-        This is how a REMOTE explore's rich observations survive into a later offline/local session."""
+    def recent_scenes(self, query=None, n=None):
+        """Scene descriptions (source='scene' rows) for the prompt + rag.sh --scenes. With a `query`, the
+        most RELEVANT scenes lead (BM25 -- so 'what did you see in the garage?' finds the garage scene even
+        if it's old), then the newest fill in; without one it's newest-first, as before. This is how a
+        REMOTE explore's rich observations survive into a later offline/local session. Deduped, capped."""
         n = n or _max_scenes()
+        relevant = self._fts_ids("scenes_fts", query, limit=max(n * 8, 40))
         with self._lock:
-            rows = self._db.execute(
-                "SELECT notes, ts FROM observations WHERE source='scene' AND notes IS NOT NULL "
+            recent = self._db.execute(
+                "SELECT id, notes FROM observations WHERE source='scene' AND notes IS NOT NULL "
                 "AND notes != '' ORDER BY ts DESC LIMIT 200").fetchall()
+        detail = {r[0]: r[1] for r in recent}
+        missing = [i for i in relevant if i not in detail]
+        if missing:
+            with self._lock:
+                ph = ",".join("?" * len(missing))
+                for r in self._db.execute(
+                        f"SELECT id, notes FROM observations WHERE id IN ({ph})", missing):
+                    detail[r[0]] = r[1]
         seen, out = set(), []
-        for notes, _ts in rows:
+        for sid in relevant + [r[0] for r in recent]:        # relevant first (rank order), then newest
+            notes = detail.get(sid)
+            if not notes:
+                continue
             key = (notes or "").strip().lower()[:80]
             if not key or key in seen:
                 continue
@@ -365,14 +521,17 @@ class Memory:
                 break
         return out
 
-    def prompt_context(self, max_items=None):
-        """Combined LLM-prompt context: taught people/things + recently seen objects + recent scene
-        descriptions (so a LOCAL run reuses the rich scenes a REMOTE explore gathered)."""
-        scenes = self.recent_scenes()
+    def prompt_context(self, query=None, max_items=None):
+        """Combined LLM-prompt context: robot identity + taught people/things + recently seen objects +
+        scene descriptions (so a LOCAL run reuses the rich scenes a REMOTE explore gathered). When `query`
+        (the user's utterance) is given, facts + scenes are RANKED for relevance to it (BM25) instead of
+        always dumping the newest -- a tighter, more on-topic context, and fewer tokens for the small local
+        model. Objects stay recency-based (single words, cheap). Falls back to newest-first with no query."""
+        scenes = self.recent_scenes(query=query)
         scene_str = ("Earlier, while exploring, I saw (from MEMORY -- NOT the current camera view): "
                      + " | ".join(s[:160] for s in scenes)) if scenes else ""
         # identity_string() goes FIRST -- it is top-priority memory (who the robot is + what it can do).
-        return " ".join(p for p in (self.identity_string(), self.facts_string(),
+        return " ".join(p for p in (self.identity_string(), self.facts_string(query=query),
                                     self.context_string(max_items), scene_str) if p)
 
     def context_string(self, max_items=None):

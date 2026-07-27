@@ -858,7 +858,7 @@ def main():
             _start_thinking()              # proof-of-life cue while the model runs (backend-aware timing)
             t_think = time.monotonic()
             try:
-                ctx = mem.prompt_context()
+                ctx = mem.prompt_context(query=text)   # rank memory (facts + scenes) for relevance to THIS ask
                 if source == "voice":
                     if person_ctx.get("note"):
                         ctx = (person_ctx["note"] + " " + ctx).strip()
