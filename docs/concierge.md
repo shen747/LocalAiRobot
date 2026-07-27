@@ -105,6 +105,31 @@ Both message sets live in `brain/concierge.py` and are picked with `random.choic
 
 Edit those lists to change the wording.
 
+## How the robot remembers (RAG)
+
+The memory DB (`~/.localairobot/memory.db`, stdlib SQLite — inspect with `./scripts/rag.sh`) holds four
+things: **enrolled faces** (embeddings), **taught facts** (people/things you told it about — "*this is my
+wife Shani*"), **explore scenes** (rich descriptions from agentic exploration), and **recently seen
+objects**. Before every reply, a short summary is prepended to the model's prompt so it isn't starting
+from scratch.
+
+That summary is now **relevance-ranked, not just "the newest"**: the taught facts and explore scenes are
+scored against *what was actually asked* (SQLite **FTS5 / BM25**) — so "*who is Shani?*" leads with Shani,
+and "*what did you see in the garage?*" surfaces the garage scene even if it's old. The best matches lead,
+the newest fill any remaining room, and if nothing matches (or a SQLite build lacks FTS5) it falls back to
+plain newest-first — identical to before. This keeps the prompt **on-topic and tight**, which matters most
+for the small local model's context window.
+
+- **See what it would retrieve:** `./scripts/rag.sh --search "the garage"` (BM25-ranked facts + scenes).
+- **After raw sqlite edits:** `./scripts/rag.sh --reindex` rebuilds the search index (writes via the app
+  keep it in sync automatically).
+- **Explore scenes are protected:** routine "look" churn is pruned to `ROBOT_MEMORY_RETAIN` (5000) while
+  scenes prune on their own budget `ROBOT_MEMORY_RETAIN_SCENES` (500), so a busy session never throws away
+  the costly explore summaries a later offline run reuses.
+
+This applies in **every** mode (crawler too); it's just most visible here, where taught facts drive the
+greetings.
+
 ## Notes & limits
 
 - **Privacy:** enrolled faces are stored **locally** as ArcFace embeddings (not images) in the RAG db
