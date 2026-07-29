@@ -153,22 +153,37 @@ def greeting_unknown():
     return random.choice(UNKNOWN_GREETINGS)
 
 
-def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep):
+def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,
+                     interval_s=0.0, need_hits=1):
     """Keep capturing + identifying until an enrolled face MATCHES or `window_s` seconds elapse -- so a
     single bad frame (pose / motion-blur / lighting) doesn't mean a missed greeting. Runs at LEAST once
     (window_s <= 0 == a single shot, i.e. the old behavior). Pure/stdlib and dependency-injected so it can
     be unit-tested without a camera or the face model. Returns:
-        {"name": str|None, "face_seen": bool, "attempts": int, "best_score": float}
+        {"name": str|None, "face_seen": bool, "attempts": int, "best_score": float,
+         "face_hits": int, "jpeg": bytes|None}
 
       capture()        -> jpeg bytes, or None (camera unavailable / capture failed)
       identify(jpeg)   -> (name|None, score)   -- name set only on a match >= threshold
       detect(jpeg)     -> bool                 -- cheap 'is any face present?' (Haar), recognition NOT needed
 
-    `face_seen` becomes True as soon as a real face is seen at least once: score>0 means identify() already
-    embedded a face; when score==0 (no face, OR nobody enrolled) we fall back to detect() so an
-    un-enrolled visitor still counts as 'present'. clock/sleep are injectable for deterministic tests."""
+    A frame COUNTS AS A FACE when score>0 (identify() already embedded one) or, when score==0 (no face, OR
+    nobody enrolled), when detect() says so -- that way an un-enrolled visitor still counts as 'present'.
+
+    `interval_s` is the pause BETWEEN attempts. It exists because the un-paced loop ran the camera flat out
+    (~20 captures/second): on a chattery PIR that was ~50,000 stills an HOUR, 24/7 -- pure CPU + log burn for
+    no extra recall, since consecutive stills milliseconds apart are the same image.
+
+    `need_hits` is how many frames must show a face before `face_seen` is reported -- the guard against GHOST
+    greetings. Haar false-positives on scenery (a wall texture, a picture frame, a curtain fold), and with a
+    one-hit gate a single fluke in the burst was enough to make the robot greet an empty room. A MATCH is
+    still authoritative and returns immediately: `need_hits` only gates the un-recognised "someone's there"
+    path. `jpeg` is the decisive frame (the match, else the best-scoring / last one) so the caller can keep it
+    for review -- see brain/captures.py. clock/sleep are injectable for deterministic tests."""
     deadline = clock() + max(0.0, float(window_s or 0.0))
-    face_seen, attempts, best = False, 0, 0.0
+    need = max(1, int(need_hits or 1))
+    gap = max(0.0, float(interval_s or 0.0))
+    hits, attempts, best = 0, 0, 0.0
+    best_jpeg = last_jpeg = None
     while True:
         attempts += 1
         jpeg = None
@@ -177,21 +192,32 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
         except Exception:
             jpeg = None
         if jpeg:
+            last_jpeg = jpeg
             try:
                 name, score = identify(jpeg)
             except Exception:
                 name, score = None, 0.0
-            best = max(best, score or 0.0)
+            score = score or 0.0
+            if score > best:
+                best, best_jpeg = score, jpeg
             if name:
-                return {"name": name, "face_seen": True, "attempts": attempts, "best_score": best}
-            if (score or 0.0) > 0.0:
-                face_seen = True
-            elif not face_seen:
-                try:
-                    face_seen = bool(detect(jpeg))
+                return {"name": name, "face_seen": True, "attempts": attempts, "best_score": best,
+                        "face_hits": hits + 1, "jpeg": jpeg}
+            if score > 0.0:
+                hits += 1                        # identify() embedded a face -> no second Haar pass needed
+            elif hits < need:
+                try:                             # only until we have enough hits, so the extra pass isn't free-running
+                    if detect(jpeg):
+                        hits += 1
+                        if best_jpeg is None:
+                            best_jpeg = jpeg     # a detected-but-unscored face is still the frame worth keeping
                 except Exception:
                     pass
         if clock() >= deadline:
-            return {"name": None, "face_seen": face_seen, "attempts": attempts, "best_score": best}
-        if not jpeg:
-            sleep(0.1)   # slow / broken capture -> don't spin the CPU while we wait out the window
+            return {"name": None, "face_seen": hits >= need, "attempts": attempts, "best_score": best,
+                    "face_hits": hits, "jpeg": best_jpeg or last_jpeg}
+        # Pace the loop. A failed capture always backs off at least 100ms (slow / broken camera -> don't spin
+        # the CPU while we wait out the window); a good capture waits `interval_s`.
+        delay = gap if jpeg else max(gap, 0.1)
+        if delay > 0:
+            sleep(delay)

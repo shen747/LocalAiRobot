@@ -126,7 +126,9 @@ class GstCamera:
             buf = BytesIO()
             img.save(buf, format="JPEG", quality=80)
             data = buf.getvalue()
-            log.info("captured frame: %d bytes JPEG", len(data))
+            # DEBUG, not INFO -- see the note in brain/picamera2_backend.py: the Concierge recognition burst
+            # made this single line ~144MB of a four-day log. --verbose brings it back.
+            log.debug("captured frame: %d bytes JPEG", len(data))
             return data
         except Exception as e:
             log.warning("capture failed: %s", e)

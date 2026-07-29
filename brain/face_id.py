@@ -43,6 +43,16 @@ class FaceID:
             log.warning("face_id: unknown ROBOT_FACE_ID_AGGREGATE=%r -- using 'max'", self._aggregate)
             self._aggregate = "max"
         self._topk = max(1, int(_envf("ROBOT_FACE_ID_TOPK", 3)))
+        # Haar detector strictness. These are the knobs that trade GHOST greetings against MISSED ones, so they
+        # are configurable rather than buried: minNeighbors is how many overlapping detections a box needs to
+        # be believed (raise it -- 6..8 -- when scenery like a wall texture or picture frame keeps registering
+        # as a face), and min_face is the smallest box in pixels (raise it to ignore faces too far away to
+        # recognise anyway; the frame is ROBOT_CAMERA_SIZE px square, default 512).
+        self.min_neighbors = max(1, int(_envf("ROBOT_FACE_ID_MIN_NEIGHBORS", 5)))
+        self.min_face = max(16, int(_envf("ROBOT_FACE_ID_MIN_FACE_PX", 60)))
+        # Diagnostics: the largest face box (px) seen by the LAST detect()/embed() call, or 0 for none. Logged
+        # on a no-match so you can tell a real-but-unrecognised visitor from a tiny Haar fluke on scenery.
+        self.last_face_px = 0
         self._sess = None            # onnxruntime session (lazy)
         self._cascade = None         # cv2 Haar detector (lazy)
         self._np = None              # numpy (lazy)
@@ -94,11 +104,21 @@ class FaceID:
         return bool(self._ready)
 
     # -- core --------------------------------------------------------------------------------------------
+    def _boxes(self, bgr):
+        """Haar-detect faces and return the boxes, recording the largest one's size for diagnostics. Shared by
+        detect() and _largest_face() so both use the SAME strictness settings (they used to hard-code them
+        separately, which meant tuning one silently left the other alone)."""
+        cv2 = self._cv2
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=self.min_neighbors,
+                                               minSize=(self.min_face, self.min_face))
+        self.last_face_px = max((max(f[2], f[3]) for f in faces), default=0)
+        return faces
+
     def _largest_face(self, bgr):
         """Return a preprocessed NCHW float32 blob for the LARGEST detected face, or None if no face."""
         cv2, np = self._cv2, self._np
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        faces = self._boxes(bgr)
         if len(faces) == 0:
             return None
         x, y, w, h = max(faces, key=lambda f: f[2] * f[3])   # biggest box = closest/primary person
@@ -144,9 +164,7 @@ class FaceID:
             bgr = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
             if bgr is None:
                 return False
-            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            faces = self._cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-            return len(faces) > 0
+            return len(self._boxes(bgr)) > 0
         except Exception as e:
             log.debug("face_id detect failed: %s", e)
             return False
@@ -202,7 +220,13 @@ class FaceID:
             log.info("face_id: matched %r (%s %.3f >= %.2f over %d photo(s))",
                      best_name, self._aggregate, best, self.threshold, len(sims[best_name]))
             return best_name, best
-        log.info("face_id: no match (best %s %.3f < %.2f)", self._aggregate, max(best, 0.0), self.threshold)
+        # The face box size is in the message on purpose. A no-match with a BIG box is a real person the
+        # enrolments don't cover well (re-enrol them, or lower ROBOT_FACE_ID_THRESHOLD); a no-match with a box
+        # barely over ROBOT_FACE_ID_MIN_FACE_PX is usually Haar firing on scenery, or a visitor too far away to
+        # recognise -- raise ROBOT_FACE_ID_MIN_NEIGHBORS / _MIN_FACE_PX for that. Without the size the two look
+        # identical in the log, and they need opposite fixes.
+        log.info("face_id: no match (best %s %.3f < %.2f; face box %dpx)",
+                 self._aggregate, max(best, 0.0), self.threshold, self.last_face_px)
         return None, max(best, 0.0)
 
     def enroll(self, jpeg_bytes, name):

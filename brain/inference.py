@@ -467,13 +467,36 @@ def warm_up(cfg, timeout):
     Sends a 1-token throwaway prompt (no JSON format) under model_lock + keep_alive. Never raises:
     a failed warmup (e.g. Ollama not up yet, or a laptop with no server) just falls back to the
     old lazy cold-load behaviour. Returns True on success. The remote Gemini backend has no model to
-    cold-load, so it's a no-op success there."""
+    cold-load, so it's a no-op success there.
+
+    RETRIES, because a single attempt loses the race on EVERY boot. Under systemd the brain starts within
+    seconds of ollama.service, and ollama accepts the connection before its llama-server child is ready --
+    so the warmup got a hard `HTTP 500 {"error":"timed out waiting for llama-server to start"}` and gave up,
+    leaving the model cold for the visitor who actually needed it. (Observed on all three boots in a
+    four-day field log.) So: re-attempt with a short backoff, for up to ROBOT_WARMUP_RETRY_S seconds."""
     if cfg.get("ai_backend") == "gemini":
         return True
     try:
-        _post(cfg, {"model": cfg["model"], "prompt": "ok",
-                    "options": {"num_predict": 1}}, timeout)
-        return True
-    except Exception as e:
-        log.warning("model warmup failed (%s) -- first command may cold-load", e)
-        return False
+        budget = max(0.0, float(os.environ.get("ROBOT_WARMUP_RETRY_S", "") or 90))
+    except ValueError:
+        budget = 90.0
+    deadline = time.monotonic() + budget
+    attempt, last = 0, None
+    while True:
+        attempt += 1
+        try:
+            _post(cfg, {"model": cfg["model"], "prompt": "ok",
+                        "options": {"num_predict": 1}}, timeout)
+            if attempt > 1:
+                log.info("model warmup succeeded on attempt %d -- model resident", attempt)
+            return True
+        except Exception as e:
+            last = e
+            if time.monotonic() >= deadline:
+                break
+            log.info("model warmup attempt %d failed (%s) -- the model server is probably still starting; "
+                     "retrying", attempt, e)
+            time.sleep(5.0)
+    log.warning("model warmup failed after %d attempt(s) over %.0fs (%s) -- first command may cold-load",
+                attempt, budget, last)
+    return False

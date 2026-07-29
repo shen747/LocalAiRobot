@@ -117,7 +117,10 @@ class PiCamera2Camera:
         if not data:
             log.warning("capture failed: no frame from the camera")
             return None
-        log.info("captured frame: %d bytes JPEG", len(data))
+        # DEBUG, not INFO: the Concierge recognition window grabs a BURST of stills per motion wake, so at INFO
+        # this one line was ~500,000 entries (~144MB) in a four-day run log -- drowning every event that
+        # mattered. Run with --verbose (ROBOT_LOG_LEVEL=DEBUG) when you want per-frame capture confirmation.
+        log.debug("captured frame: %d bytes JPEG", len(data))
         return data
 
     def close(self):

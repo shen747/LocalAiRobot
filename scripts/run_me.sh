@@ -64,6 +64,11 @@ install_boot() {
   # only in install_stack, which a long-installed robot may predate), via the shared helper that sets an explicit
   # Storage=persistent drop-in + verifies it. Honours ROBOT_PERSIST_JOURNAL=0 to opt out.
   bash "$REPO/scripts/enable_persistent_journal.sh" || true
+  # Detect-capture purge: a boot-service robot in Concierge Mode runs 24/7 and keeps the frame behind every
+  # greeting in ~/detect-captures (brain/captures.py). Schedule the daily cleanup HERE too (not only in
+  # install_stack, which a long-installed robot may predate) so autostart never means unbounded disk growth.
+  # Idempotent + tagged; honours ROBOT_DETECT_CAPTURE_CRON=0. Best-effort -- never blocks enabling autostart.
+  bash "$REPO/scripts/install_detect_capture_cron.sh" || true
   echo "   watch:  journalctl -u robot.service -f       remove:  ./scripts/run_me.sh --disable-boot"
 }
 disable_boot() {

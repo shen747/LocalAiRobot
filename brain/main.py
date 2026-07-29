@@ -28,6 +28,7 @@ import threading
 import time
 
 import behavior
+import captures
 import concierge
 import halloween
 import inference
@@ -631,6 +632,21 @@ def main():
     motion_wake = MotionWake(
         os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None,
         lambda: (motion_event.set(), wake.cancel_listen()))
+    if concierge.enabled():
+        # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
+        # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import
+        # used to eat most of the 5s we had to recognise them -- making the very first visitor of a run the one
+        # most likely to get a silent smile. A thread so a slow load never delays the robot coming up.
+        if os.environ.get("ROBOT_FACE_ID_WARMUP", "1") == "1":
+            threading.Thread(target=face_identifier.ensure_loaded, daemon=True, name="faceid-warmup").start()
+        # Sweep any stale detect-captures from previous runs (age + size cap) so the folder can't creep up
+        # between cron purges. Backgrounded: it's disk I/O over a folder that may hold thousands of files.
+        if captures.enabled():
+            log.info("detect captures: keeping the deciding frame of each greeting in %s "
+                     "(mode=%s, purge after %s day(s)) -- browse it to see what I saw", captures.directory(),
+                     "all looks" if captures.keep_all() else "greetings only",
+                     os.environ.get("ROBOT_DETECT_CAPTURE_KEEP_DAYS", "7") or "7")
+            threading.Thread(target=captures.prune, daemon=True, name="captures-prune").start()
 
     # P2-3: ONE teardown list for BOTH exit paths (the early no-trigger return AND the main finally),
     # so the two can never drift apart again. driver.stop stays FIRST (ESC to neutral before anything
@@ -843,6 +859,33 @@ def main():
             return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_S", "5") or 5))
         except ValueError:
             return 5.0
+
+    def _concierge_recognize_interval_s():
+        """Pause BETWEEN capture attempts inside that window (default 0.25s). Unpaced, the loop ran the camera
+        flat out at ~20 stills/second for the whole window -- ~100 near-identical frames per wake, which on a
+        chattery PIR meant ~50,000 stills an hour, 24/7. A quarter-second still gives ~20 independent looks."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_INTERVAL_S", "0.25") or 0.25))
+        except ValueError:
+            return 0.25
+
+    def _concierge_face_hits():
+        """How many frames in the window must show a face before we accept 'someone IS here' and greet them
+        (default 2). The Haar detector false-positives on scenery, so a one-frame gate let a single fluke
+        produce a GHOST greeting to an empty room. A recognised MATCH still greets on its first frame."""
+        try:
+            return max(1, int(float(os.environ.get("ROBOT_CONCIERGE_FACE_HITS", "2") or 2)))
+        except ValueError:
+            return 2
+
+    def _keep_capture(jpeg, outcome, name=None):
+        """Keep the frame that DECIDED a motion wake in ~/detect-captures, so you can see what Jarvis saw
+        when it greeted (or didn't). Silent looks ('noface') are only kept with ROBOT_DETECT_CAPTURE_MODE=all
+        -- they're the bulk of the frames, and keeping every one is what fills a disk. A cron job purges the
+        folder by age (scripts/purge_detect_captures.sh); brain/captures.py also self-prunes. Never raises."""
+        if outcome == "noface" and not captures.keep_all():
+            return None
+        return captures.save(jpeg, outcome, name)
 
     def _wake_person_check(gen):
         try:
@@ -1213,13 +1256,20 @@ def main():
                     fc.set_expression("happy")     # smile now; HELD through the whole recognition window
                     res = concierge.recognize_within(
                         (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None),
-                        face_identifier.identify, face_identifier.detect, _concierge_recognize_s())
+                        face_identifier.identify, face_identifier.detect, _concierge_recognize_s(),
+                        interval_s=_concierge_recognize_interval_s(),
+                        need_hits=_concierge_face_hits())
                     name = res["name"]
                     if not name and not res["face_seen"]:
                         # motion but nobody actually there -> go BACK to the state we were in (awake or
                         # asleep), NOT a forced sleep. (The smile lasted only as long as the look.)
-                        log.info("concierge: motion but no face in %d try(s) -> back to %r (silent)",
-                                 res["attempts"], idle["face"])
+                        # `face_hits` is in the message on purpose: 0 means the camera genuinely saw no face
+                        # (a real false PIR trigger), while a NON-zero count below the ROBOT_CONCIERGE_FACE_HITS
+                        # gate means we suppressed a probable Haar fluke -- two very different things to chase.
+                        log.info("concierge: motion but no face in %d try(s) (%d face hit(s), need %d) "
+                                 "-> back to %r (silent)",
+                                 res["attempts"], res["face_hits"], _concierge_face_hits(), idle["face"])
+                        _keep_capture(res.get("jpeg"), "noface")
                         fc.set_expression(idle["face"])
                         continue
                     # A person IS here -> greet, then FALL THROUGH into the conversation loop for follow-ups
@@ -1230,12 +1280,15 @@ def main():
                         pron = mem.pronunciation_for(name)
                         log.info("concierge: recognised %r%s in %d try(s) (best %.3f) -> greeting",
                                  name, f" (say-as '{pron}')" if pron else "", res["attempts"], res["best_score"])
+                        _keep_capture(res.get("jpeg"), "known", name)
                         snd.play("wake_ack")
                         say(concierge.greeting(name, pron))
                     else:
                         # present but unrecognised after the window -> a warm, name-less greeting (still chats).
-                        log.info("concierge: person present but unrecognised after %d try(s) (best %.3f) "
-                                 "-> generic greeting", res["attempts"], res["best_score"])
+                        log.info("concierge: person present but unrecognised after %d try(s) (%d face hit(s), "
+                                 "best %.3f vs threshold %.2f) -> generic greeting", res["attempts"],
+                                 res["face_hits"], res["best_score"], face_identifier.threshold)
+                        _keep_capture(res.get("jpeg"), "unknown")
                         snd.play("wake_ack")
                         say(concierge.greeting_unknown())
             if trigger == "WAKE":

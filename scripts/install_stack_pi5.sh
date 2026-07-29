@@ -325,6 +325,11 @@ bash "${REPO}/scripts/setup_audio.sh" || true
 # (single source of truth; also runnable standalone). Fixes the Storage=auto timing trap that silently left a
 # field robot logging to RAM -- so a crash/brown-out is readable next boot with 'journalctl -u robot.service -b -1'.
 ROBOT_PERSIST_JOURNAL="${ROBOT_PERSIST_JOURNAL}" bash "${REPO}/scripts/enable_persistent_journal.sh" || true
+# Detect-captures purge (cron). Concierge Mode keeps the frame that decided each greeting in ~/detect-captures
+# so you can see WHY the robot spoke; a 24/7 greeter would otherwise grow that folder without limit. This
+# schedules the daily cleanup (scripts/purge_detect_captures.sh). Idempotent, tagged, and skippable with
+# ROBOT_DETECT_CAPTURE_CRON=0. Best-effort -- a missing cron daemon never fails the install.
+bash "${REPO}/scripts/install_detect_capture_cron.sh" || true
 if [ "${ROBOT_INSTALL_COMITUP}" = 1 ]; then
   echo ">> Comitup captive-portal fallback (default ON; password-free Wi-Fi onboarding)..."
   if sudo apt install -y comitup; then

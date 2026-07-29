@@ -84,6 +84,22 @@ if [ -f "$H/.bashrc" ] && grep -q "LocalAiRobot/config/robot.env" "$H/.bashrc"; 
   BASHRC_LINE=1; PLAN+=("reset    remove the config/robot.env auto-load line(s) from ~/.bashrc")
 fi
 
+# Detect-captures purge cron entry (scripts/install_detect_capture_cron.sh). Tag-matched, so a hand-written
+# crontab line is left alone. The CAPTURES themselves are listed separately below -- removing the schedule and
+# deleting the photos are different decisions, so they're never bundled into one silent step.
+CAPTURE_CRON_RM=0
+if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "[LocalAiRobot detect-captures purge]"; then
+  CAPTURE_CRON_RM=1; PLAN+=("reset    remove the detect-captures purge entry from your crontab")
+fi
+
+# ~/detect-captures -- the frames Jarvis kept to explain its greetings (brain/captures.py).
+CAPTURE_DIR="${ROBOT_DETECT_CAPTURE_DIR:-$H/detect-captures}"; CAPTURE_DIR="${CAPTURE_DIR/#\~/$H}"
+CAPTURE_RM=0
+if [ -d "$CAPTURE_DIR" ] && [ "$CAPTURE_DIR" != "$H" ]; then
+  CAPTURE_RM=1
+  PLAN+=("reset    remove $CAPTURE_DIR ($(find "$CAPTURE_DIR" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ') detect capture(s))")
+fi
+
 # ~/.asoundrc written by scripts/setup_audio.sh (marker-guarded so a hand-written one is left alone).
 ASOUND_RM=0
 if [ -f "$H/.asoundrc" ] && grep -qF "LocalAiRobot: default audio device" "$H/.asoundrc"; then
@@ -204,6 +220,16 @@ if [ "$BASHRC_LINE" = 1 ]; then
   # (covers the hand-added one-liner from the docs too).
   sed -i -e '/# LocalAiRobot: auto-load robot.env/d' \
          -e '/LocalAiRobot\/config\/robot\.env/d' "$H/.bashrc"
+fi
+
+if [ "$CAPTURE_CRON_RM" = 1 ]; then
+  echo ">> remove the detect-captures purge cron entry"
+  bash "$REPO/scripts/install_detect_capture_cron.sh" --remove || true
+fi
+
+if [ "$CAPTURE_RM" = 1 ]; then
+  echo ">> rm -rf $CAPTURE_DIR   (the detect captures Jarvis kept to explain its greetings)"
+  rm -rf "$CAPTURE_DIR"
 fi
 
 if [ "$ASOUND_RM" = 1 ]; then
