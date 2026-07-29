@@ -836,6 +836,14 @@ def main():
             return True
         return vision.vision_backend(cfg) == "gemini"   # "auto": ON only when VISION is remote (fast; hidden in the record window)
 
+    def _concierge_recognize_s():
+        """Seconds to keep smiling + retrying face recognition on a Concierge motion wake (default 5).
+        0 = a single shot (the old one-frame behavior)."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_S", "5") or 5))
+        except ValueError:
+            return 5.0
+
     def _wake_person_check(gen):
         try:
             res = vision.check_person(cfg, cam.capture_jpeg())
@@ -1197,29 +1205,39 @@ def main():
                         talk_expr=halloween.FACE_STATE, end_expr=halloween.FACE_STATE)
                 else:
                     # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant
-                    # motion is seen and HOLD it through the look; a detected face IS the "person present"
-                    # signal (no cloud VLM), matched against the enrolled faces (face_id.py).
-                    fc.set_expression("happy")     # smile now; held while we capture + match
-                    jpeg = None
-                    try:
-                        if getattr(cam, "available", False):
-                            jpeg = cam.capture_jpeg()
-                    except Exception as e:
-                        log.debug("concierge capture failed: %s", e)
-                    name = face_identifier.identify(jpeg)[0] if jpeg else None
-                    if not name:
-                        # unknown / no person -> stop smiling and go BACK to the state we were in (awake or
+                    # motion is seen and HOLD it -- then keep capturing + matching for a WINDOW (default 5s,
+                    # ROBOT_CONCIERGE_RECOGNIZE_S) so one bad frame (pose/blur/light) isn't a missed greeting
+                    # and the smile doesn't "flash". Three outcomes: recognised -> by name; a face was seen
+                    # but not matched -> a generic greeting (still say hello warmly); no face at all in the
+                    # window -> silent, back to where we were (a cat / curtain / passer-by isn't greeted).
+                    fc.set_expression("happy")     # smile now; HELD through the whole recognition window
+                    res = concierge.recognize_within(
+                        (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None),
+                        face_identifier.identify, face_identifier.detect, _concierge_recognize_s())
+                    name = res["name"]
+                    if not name and not res["face_seen"]:
+                        # motion but nobody actually there -> go BACK to the state we were in (awake or
                         # asleep), NOT a forced sleep. (The smile lasted only as long as the look.)
-                        log.info("concierge: motion but no known face -> back to %r", idle["face"])
+                        log.info("concierge: motion but no face in %d try(s) -> back to %r (silent)",
+                                 res["attempts"], idle["face"])
                         fc.set_expression(idle["face"])
                         continue
-                    # recognised: greet by name -- say() transitions smile -> talking -> idle -- then FALL
-                    # THROUGH into the conversation loop for follow-ups (sleeps after followup_silence_s).
-                    # Use the stored PRONUNCIATION (a phonetic respelling) for the SPOKEN greeting when set.
-                    pron = mem.pronunciation_for(name)
-                    log.info("concierge: recognised %r%s -> greeting", name, f" (say-as '{pron}')" if pron else "")
-                    snd.play("wake_ack")
-                    say(concierge.greeting(name, pron))
+                    # A person IS here -> greet, then FALL THROUGH into the conversation loop for follow-ups
+                    # (say() transitions smile -> talking -> idle; sleeps after followup_silence_s).
+                    if name:
+                        # recognised: greet BY NAME. Use the stored PRONUNCIATION (a phonetic respelling) for
+                        # the SPOKEN greeting when set (e.g. Ramesh -> "Ruh-mesh").
+                        pron = mem.pronunciation_for(name)
+                        log.info("concierge: recognised %r%s in %d try(s) (best %.3f) -> greeting",
+                                 name, f" (say-as '{pron}')" if pron else "", res["attempts"], res["best_score"])
+                        snd.play("wake_ack")
+                        say(concierge.greeting(name, pron))
+                    else:
+                        # present but unrecognised after the window -> a warm, name-less greeting (still chats).
+                        log.info("concierge: person present but unrecognised after %d try(s) (best %.3f) "
+                                 "-> generic greeting", res["attempts"], res["best_score"])
+                        snd.play("wake_ack")
+                        say(concierge.greeting_unknown())
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record

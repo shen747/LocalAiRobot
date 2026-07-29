@@ -8,6 +8,7 @@
 
 import os
 import random
+import time
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -78,6 +79,61 @@ GREETINGS = [
     "Right on time, [Name]! How can I help?",
 ]
 
+# --- Array 3: Generic greetings (NO name) -- spoken when a person is present but NOT recognised, after the
+# recognition window (ROBOT_CONCIERGE_RECOGNIZE_S) elapses. Name-less on purpose, in the Concierge persona. ---
+UNKNOWN_GREETINGS = [
+    "Well, hello there! Welcome.",
+    "Hello! I don't think we've met -- I'm Jarvis, the Concierge.",
+    "Welcome! Lovely to see a new face.",
+    "Hi there! Pull up a chair and stay a while.",
+    "Greetings! Jarvis the Concierge, at your service.",
+    "Hello and welcome! What can I do for you?",
+    "Ah, a visitor! Come on in.",
+    "Hello there! Always nice to meet someone new.",
+    "Welcome! I'm Jarvis -- how can I help today?",
+    "Well hello! You've reached the front desk.",
+    "Hi! I don't believe we've been introduced -- I'm Jarvis.",
+    "Greetings and welcome! Make yourself at home.",
+    "Hello! A pleasure to make your acquaintance.",
+    "Oh, hello! I didn't hear you come in.",
+    "Welcome, friend! What brings you by?",
+    "Hi there! Jarvis the Concierge, ready to assist.",
+    "Hello! It's a fine day to say hello, isn't it?",
+    "Well, look who's here! Welcome.",
+    "Hello and good day! How may I help?",
+    "Hi! Lovely of you to stop by.",
+    "Welcome! You're in good hands at the front desk.",
+    "Greetings! I'm Jarvis, your friendly Concierge.",
+    "Hello there! What can this Concierge do for you?",
+    "Ah, a new visitor -- welcome aboard!",
+    "Hello! Don't be shy, step right up.",
+    "Hi there! I'm Jarvis, and I'm delighted you're here.",
+    "Welcome! I may not know your name yet, but you're most welcome.",
+    "Hello! A warm welcome from the front desk.",
+    "Well hello! How can I brighten your day?",
+    "Greetings, traveler! Welcome to my little corner.",
+    "Hi! Wonderful to see you.",
+    "Hello there -- I'm Jarvis. What can I help you with?",
+    "Welcome in! It's always a treat to meet someone new.",
+    "Hi! You've found the Concierge desk. How can I help?",
+    "Hello! Consider me your helpful robot host.",
+    "Ah, hello! Right this way -- well, if I could move, anyway.",
+    "Welcome! I'm all ears, whenever you're ready.",
+    "Hi there! Jarvis here, happy to help.",
+    "Hello and welcome! Ask me anything.",
+    "Well hello! Lovely timing -- I was just here waiting.",
+    "Greetings! I'm the Concierge -- think of me as your desk assistant.",
+    "Hi! A friendly face is always welcome here.",
+    "Hello! You caught me at a good moment. How can I help?",
+    "Welcome! Let's get you sorted -- what do you need?",
+    "Hi there! I'm Jarvis. Delighted to meet you.",
+    "Hello! Step right up to the front desk.",
+    "Oh, hello! Nice of you to drop in.",
+    "Welcome, welcome! What can I do for you today?",
+    "Hi! I'm Jarvis, your Concierge. How can I be of service?",
+    "Hello there! Whatever you need, just ask.",
+]
+
 
 def refusal():
     """A random movement-refusal line (spoken when asked to move in concierge mode)."""
@@ -89,3 +145,53 @@ def greeting(name, pronunciation=None):
     is spoken INSTEAD of the real name, so a tricky name is said right (e.g. Ramesh -> 'Ruh-mesh')."""
     spoken = (pronunciation or name or "").strip() or "friend"
     return random.choice(GREETINGS).replace("[Name]", spoken)
+
+
+def greeting_unknown():
+    """A random name-less greeting -- spoken to a visitor who IS present but couldn't be recognised within
+    the recognition window (so we still say hello warmly instead of an awkward silent flash)."""
+    return random.choice(UNKNOWN_GREETINGS)
+
+
+def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep):
+    """Keep capturing + identifying until an enrolled face MATCHES or `window_s` seconds elapse -- so a
+    single bad frame (pose / motion-blur / lighting) doesn't mean a missed greeting. Runs at LEAST once
+    (window_s <= 0 == a single shot, i.e. the old behavior). Pure/stdlib and dependency-injected so it can
+    be unit-tested without a camera or the face model. Returns:
+        {"name": str|None, "face_seen": bool, "attempts": int, "best_score": float}
+
+      capture()        -> jpeg bytes, or None (camera unavailable / capture failed)
+      identify(jpeg)   -> (name|None, score)   -- name set only on a match >= threshold
+      detect(jpeg)     -> bool                 -- cheap 'is any face present?' (Haar), recognition NOT needed
+
+    `face_seen` becomes True as soon as a real face is seen at least once: score>0 means identify() already
+    embedded a face; when score==0 (no face, OR nobody enrolled) we fall back to detect() so an
+    un-enrolled visitor still counts as 'present'. clock/sleep are injectable for deterministic tests."""
+    deadline = clock() + max(0.0, float(window_s or 0.0))
+    face_seen, attempts, best = False, 0, 0.0
+    while True:
+        attempts += 1
+        jpeg = None
+        try:
+            jpeg = capture()
+        except Exception:
+            jpeg = None
+        if jpeg:
+            try:
+                name, score = identify(jpeg)
+            except Exception:
+                name, score = None, 0.0
+            best = max(best, score or 0.0)
+            if name:
+                return {"name": name, "face_seen": True, "attempts": attempts, "best_score": best}
+            if (score or 0.0) > 0.0:
+                face_seen = True
+            elif not face_seen:
+                try:
+                    face_seen = bool(detect(jpeg))
+                except Exception:
+                    pass
+        if clock() >= deadline:
+            return {"name": None, "face_seen": face_seen, "attempts": attempts, "best_score": best}
+        if not jpeg:
+            sleep(0.1)   # slow / broken capture -> don't spin the CPU while we wait out the window

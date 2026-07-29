@@ -13,7 +13,7 @@ them.
 | Persona | "Jarvis the crawler car" | "Jarvis the Concierge" (stationary) |
 | Driving | drives / explores / finds | **refused** — every move/explore/find intent gets a random in-character line |
 | Wake | wake word | wake word **+ PIR motion** |
-| On motion wake | — | friendly face → local face match → greet by name **or** silent smile |
+| On motion wake | — | friendly face **held ~5s** while it retries recognition → greet by name, **or** a generic hello if it can't place you (then chat), **or** silent if nobody's actually there |
 | Vision for the greeting | remote or local (config) | **strictly local** (cv2 + ArcFace ONNX) |
 | Chat after greeting | — | hands off to the normal conversation loop (remote AI if enabled) |
 
@@ -23,33 +23,36 @@ Nothing else changes: STT/TTS, the face screen, memory, and the phone endpoint a
 
 ```
         (idle, asleep)
-             │  wake word ─────────────► normal conversation turn (SAY/LOOK/REMEMBER; movement REFUSED)
+             │  wake word ───────► normal conversation turn (SAY/LOOK/REMEMBER; movement REFUSED)
              │
-             │  PIR motion ───────────►  show FRIENDLY face (happy)
-             │                              │
-             │                              ▼
-             │                        capture webcam frame  ── STRICTLY LOCAL ──┐
-             │                              │                                    │
-             │                     cv2 detects a face?  ── no ──► smile, stay silent, back to sleep
-             │                              │ yes (= a person is present)
-             │                              ▼
-             │                     ArcFace embed → cosine-match vs enrolled faces (RAG db)
-             │                              │
-             │                   match? ── no ──► smile, stay silent, back to sleep
-             │                              │ yes → name
-             │                              ▼
-             │                     speak a random greeting ("Welcome back, <Name>!")
-             │                              │
-             │                              ▼
-             └────────────────────  normal conversation loop (remote AI handoff if enabled)
-                                            │  … silence …
-                                            ▼
-                                      back to sleep
+             │  PIR motion ─────►  show FRIENDLY face (happy) -- HELD, never flashes
+             │                        │
+             │                        ▼
+             │     ┌── RECOGNITION WINDOW: ROBOT_CONCIERGE_RECOGNIZE_S (default 5s) ──┐
+             │     │  keep capturing frames + local ArcFace match until a match OR    │
+             │     │  the window elapses (one bad frame is no longer a missed greet)  │
+             │     └──────────────────────────────┬─────────────────────────────────┘
+             │                                     │
+             │          ┌──────────────────────────┼──────────────────────────┐
+             │     recognised                  a face was seen             no face at all
+             │     (by name)                   but never matched           the whole window
+             │          │                           │                           │
+             │          ▼                           ▼                           ▼
+             │   greet BY NAME             generic name-less            smile off, STAY SILENT,
+             │   "Welcome back, X!"        "Hello there! Welcome."      back to sleep (a cat /
+             │          │                           │                    curtain isn't greeted)
+             │          └─────────────┬─────────────┘                           │
+             │                        ▼                                         │
+             └──────────  normal conversation loop  ◄──────────────────────────┘ (silent path skips it)
+                                      │  … silence …
+                                      ▼
+                                back to sleep
 ```
 
 Implementation: `brain/pir.py` (motion → `wake.cancel_listen()` → `wait_for_trigger` returns `MOTION`),
-`brain/face_id.py` (detect + embed + match), `brain/concierge.py` (persona + the two message arrays), and the
-`MOTION` branch + movement gate in `brain/main.py`.
+`brain/face_id.py` (detect + embed + match), `brain/concierge.py` (persona + greeting arrays +
+`recognize_within()`, the retry loop), and the `MOTION` branch (recognition window) + movement gate in
+`brain/main.py`.
 
 ## Hardware
 
@@ -89,6 +92,7 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 |---|---|---|
 | `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable the whole mode (top of `config/robot.env`). |
 | `ROBOT_PIR_PIN` | *(empty)* | PIR OUT pin (BCM). Empty = wake-word-only. |
+| `ROBOT_CONCIERGE_RECOGNIZE_S` | `5` | On a motion wake, how long to **hold the smile and keep retrying** recognition before greeting. Recognised → by name; face seen but unmatched → generic greeting (then chat); no face at all → silent. `0` = single shot (old one-frame behavior). Raise it if people move fast past the camera. |
 | `ROBOT_FACE_ID_MODEL` | `~/.localairobot/models/arcface.onnx` *(auto-downloaded)* | ArcFace recognition ONNX. Missing → face match off (smiles at everyone). |
 | `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine match threshold. **Higher = stricter** (fewer false greetings, more misses). |
 | `ROBOT_FACE_ID_INPUT` | `112` | Face model input size (px). |
@@ -98,10 +102,12 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 
 ## Dynamic responses
 
-Both message sets live in `brain/concierge.py` and are picked with `random.choice`:
+The message sets live in `brain/concierge.py` and are picked with `random.choice`:
 
 - **`MOVEMENT_REFUSALS`** (15) — spoken whenever you ask the Concierge to move/drive/explore/find.
-- **`GREETINGS`** (26) — spoken on a face match; `[Name]` is replaced with the matched name.
+- **`GREETINGS`** (26) — spoken on a face **match**; `[Name]` is replaced with the matched name.
+- **`UNKNOWN_GREETINGS`** (50) — name-less greetings spoken to a visitor who's **present but not recognised**
+  after the recognition window, so an unenrolled guest still gets a warm hello (and can then chat).
 
 Edit those lists to change the wording.
 
@@ -140,6 +146,10 @@ greetings.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
   tuned for a handful of known desk visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
+- **Recognition window:** a motion wake retries recognition for `ROBOT_CONCIERGE_RECOGNIZE_S` (default 5s)
+  instead of judging one frame — the fix for *sporadic* greetings that used to "flash" the smile and give
+  up. Each wake logs the attempt count and the **best score** seen, so you can tell how close a miss was and
+  tune `ROBOT_FACE_ID_THRESHOLD` accordingly (set the window to `0` to return to a single frame).
 - **Multiple photos per person:** give `enroll_person.sh` several photos (files) and/or `--camera N` webcam
   shots in one call — each becomes an embedding row under their name. Re-running REPLACES that person (so the
   args are their complete enrolment; no duplicates). On a match, all of a person's photos are combined per
