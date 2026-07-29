@@ -1,4 +1,4 @@
-# brain/concierge.py -- "Concierge Mode": a STATIONARY desk persona for Jarvis.
+# brain/concierge.py -- "Concierge Mode": a STATIONARY persona for Jarvis.
 #
 # When ROBOT_CONCIERGE_MODE=1 the robot stops being a crawler car: it never drives (every movement intent is
 # politely refused), it identifies as "Jarvis the Concierge", and it can be woken by a PIR motion sensor as
@@ -21,7 +21,7 @@ def enabled():
 # The persona injected as the robot's identity (replaces the crawler-car self-description) when concierge is
 # ON. {name} is ROBOT_NAME. This is what the LLM sees as "who I am", so SAY replies stay in character.
 PERSONA_CAPS = (
-    "I am {name} the Concierge, a friendly STATIONARY desk assistant. I do NOT move or drive and I have no "
+    "I am {name} the Concierge, a friendly STATIONARY assistant. I do NOT move or drive and I have no "
     "wheels -- if asked to move, I explain I'm the Concierge, not the crawler car. I greet people I "
     "recognise by name, chat, answer questions, and look at and describe what my camera sees. My mobile "
     "counterpart is Jarvis the crawler car (ask my creator Ramesh to bring him out)."
@@ -35,7 +35,7 @@ MOVEMENT_REFUSALS = [
     "Oh, you must be confusing me with my buddy Jarvis the crawler car! I'm Jarvis the Concierge, so my wheels are firmly planted. I'm happy to chat, though! If you want to see my mobile counterpart, ask my creator, Ramesh.",
     "I think you're looking for my brother, Jarvis the crawler! I am the Concierge model—stationary, but always ready for a good conversation. Ramesh can introduce you to him if you'd like!",
     "My moving days are behind me—or rather, they belong to the other Jarvis! I'm the Concierge version, here to assist you right where I am. You can always ask my creator Ramesh to fire up the crawler car.",
-    "I'm strictly a desk-duty robot! You're thinking of Jarvis the crawler car. I can't move around, but I can certainly answer your questions. Speak to Ramesh if you want to see the crawler in action.",
+    "I'm strictly a stay-put robot! You're thinking of Jarvis the crawler car. I can't move around, but I can certainly answer your questions. Speak to Ramesh if you want to see the crawler in action.",
     "No wheels on this chassis! I'm Jarvis the Concierge. For any off-roading, you'll need Jarvis the crawler. Just ask Ramesh to bring him out!",
     "I'm firmly stationed here to help you as Jarvis the Concierge. If you need a robot on the go, that's my buddy the crawler car. Ramesh can help you with that!",
     "Moving isn't in my job description right now—I'm the Concierge model! My crawler twin handles the driving. Check with Ramesh if you want to see him.",
@@ -44,9 +44,9 @@ MOVEMENT_REFUSALS = [
     "As much as I'd love to go for a spin, I'm the stationary Concierge Jarvis. My crawler buddy gets all the mileage! Ramesh can introduce you to him.",
     "I'm parked here permanently to assist you! I am Jarvis the Concierge. If you need the crawler car, my creator Ramesh is the person to ask.",
     "No motors for me, just conversation! I'm the Concierge Jarvis. My buddy the crawler car handles the driving—Ramesh can show you.",
-    "I'm designed to be a great listener right here at the desk. The moving around is left to Jarvis the crawler car! Let Ramesh know if you want to see him.",
+    "I'm designed to be a great listener right here where I'm posted. The moving around is left to Jarvis the crawler car! Let Ramesh know if you want to see him.",
     "My chassis is locked into Concierge Mode, so I won't be driving anywhere today. If you want to see some robotic acrobatics, ask Ramesh for the crawler car!",
-    "I'm on front desk duty today! Jarvis the crawler car is the one with the wheels. My creator Ramesh can help you track him down.",
+    "I'm on greeting duty today! Jarvis the crawler car is the one with the wheels. My creator Ramesh can help you track him down.",
 ]
 
 # --- Array 2: Personalized Greetings ([Name] -> the matched person's name) ---
@@ -65,7 +65,7 @@ GREETINGS = [
     "Good day, [Name]! Ready for a chat?",
     "Hello, [Name]. I've been expecting you!",
     "Hey [Name]! What can Jarvis do for you today?",
-    "Welcome to the desk, [Name]!",
+    "Lovely to have you here, [Name]!",
     "Good to cross paths with you today, [Name].",
     "Ah, if it isn't [Name]! How are things?",
     "Hello, [Name]! My systems are ready to assist you.",
@@ -91,7 +91,7 @@ UNKNOWN_GREETINGS = [
     "Ah, a visitor! Come on in.",
     "Hello there! Always nice to meet someone new.",
     "Welcome! I'm Jarvis -- how can I help today?",
-    "Well hello! You've reached the front desk.",
+    "Well hello! You've reached the Concierge.",
     "Hi! I don't believe we've been introduced -- I'm Jarvis.",
     "Greetings and welcome! Make yourself at home.",
     "Hello! A pleasure to make your acquaintance.",
@@ -102,32 +102,32 @@ UNKNOWN_GREETINGS = [
     "Well, look who's here! Welcome.",
     "Hello and good day! How may I help?",
     "Hi! Lovely of you to stop by.",
-    "Welcome! You're in good hands at the front desk.",
+    "Welcome! You're in good hands here.",
     "Greetings! I'm Jarvis, your friendly Concierge.",
     "Hello there! What can this Concierge do for you?",
     "Ah, a new visitor -- welcome aboard!",
     "Hello! Don't be shy, step right up.",
     "Hi there! I'm Jarvis, and I'm delighted you're here.",
     "Welcome! I may not know your name yet, but you're most welcome.",
-    "Hello! A warm welcome from the front desk.",
+    "Hello! A warm welcome to you.",
     "Well hello! How can I brighten your day?",
     "Greetings, traveler! Welcome to my little corner.",
     "Hi! Wonderful to see you.",
     "Hello there -- I'm Jarvis. What can I help you with?",
     "Welcome in! It's always a treat to meet someone new.",
-    "Hi! You've found the Concierge desk. How can I help?",
+    "Hi! You've found the Concierge. How can I help?",
     "Hello! Consider me your helpful robot host.",
     "Ah, hello! Right this way -- well, if I could move, anyway.",
     "Welcome! I'm all ears, whenever you're ready.",
     "Hi there! Jarvis here, happy to help.",
     "Hello and welcome! Ask me anything.",
     "Well hello! Lovely timing -- I was just here waiting.",
-    "Greetings! I'm the Concierge -- think of me as your desk assistant.",
+    "Greetings! I'm the Concierge -- think of me as your friendly assistant.",
     "Hi! A friendly face is always welcome here.",
     "Hello! You caught me at a good moment. How can I help?",
     "Welcome! Let's get you sorted -- what do you need?",
     "Hi there! I'm Jarvis. Delighted to meet you.",
-    "Hello! Step right up to the front desk.",
+    "Hello! Step right up.",
     "Oh, hello! Nice of you to drop in.",
     "Welcome, welcome! What can I do for you today?",
     "Hi! I'm Jarvis, your Concierge. How can I be of service?",

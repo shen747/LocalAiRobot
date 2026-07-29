@@ -228,7 +228,7 @@ runs on-device.
 
 ## Concierge Mode (optional) — a stationary greeter
 
-Flip `ROBOT_CONCIERGE_MODE=1` and Jarvis becomes a **stationary desk concierge** instead of a crawler: it
+Flip `ROBOT_CONCIERGE_MODE=1` and Jarvis becomes a **stationary concierge** instead of a crawler: it
 **never drives** (every move request gets a polite in-character refusal), introduces itself as *"Jarvis the
 Concierge"*, and — on top of the wake word — wakes on a **PIR motion sensor**. When someone walks up it shows
 a friendly face and runs a **strictly-local** pipeline (OpenCV face-detect → ArcFace ONNX embed → match
@@ -249,7 +249,7 @@ the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
 5. **Enable Concierge Mode** — `sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env`
 6. **Copy your photos to the Pi** *(on your laptop)* — name them `<Name>.jpg` (add `<Name>_02.jpg` for more angles), then `scp ~/people_named/* pi@raspberrypi.local:~/people_named/`.
 7. **Enrol** — one person: `./scripts/enroll_person.sh "Ramesh" "my creator" ~/people_named/Ramesh.jpg`. A crowd: run `./scripts/create_enrollments.sh` **on your PC** to generate `enroll_all.sh`, fill in the descriptions, scp it over, and `bash enroll_all.sh`.
-8. **Run it** — foreground now: `./scripts/run_me.sh`. Always-on (headless desk greeter): `./scripts/run_me.sh --install-boot` **then** `sudo systemctl start robot.service`.
+8. **Run it** — foreground now: `./scripts/run_me.sh`. Always-on (headless greeter): `./scripts/run_me.sh --install-boot` **then** `sudo systemctl start robot.service`.
 
 Walk up and it greets enrolled faces by name; strangers get a silent smile. Remove someone: `./scripts/rag.sh --forget "Name"`.
 

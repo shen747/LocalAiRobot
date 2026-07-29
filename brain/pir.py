@@ -1,7 +1,7 @@
 # brain/pir.py -- PIR motion sensor as an extra WAKE trigger for Concierge Mode.
 #
 # A passive-infrared sensor (e.g. Adafruit PIR, 3.3V digital out -> Pi-safe) fires when a person walks up to
-# the desk. We treat that exactly like the wake word: on motion we set a shared Event AND call
+# the robot. We treat that exactly like the wake word: on motion we set a shared Event AND call
 # wake.cancel_listen(), which breaks the in-progress openWakeWord listen out with 'CANCELLED' -- so
 # wait_for_trigger() returns immediately and the main loop runs the concierge greeting pipeline. The wake
 # word keeps working in parallel; motion is purely additional.

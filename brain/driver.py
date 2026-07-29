@@ -189,7 +189,7 @@ class RobotDriver:
         # actively reads all 3 beams, which adds a little load -- fine for a diagnosis run, not for "forever").
         self.sensor_verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
         self.sensor_log_period = _envf("ROBOT_SENSOR_LOG_PERIOD_S", 2.0)
-        # Concierge Mode is a STATIONARY desk assistant that NEVER drives (main.py refuses movement). So it
+        # Concierge Mode is a STATIONARY assistant that NEVER drives (main.py refuses movement). So it
         # uses no ESC/PWM (an absent motor board is EXPECTED, not a failure) and doesn't care about the
         # ultrasonics -- the PIR is the sensor of interest there (pir.py logs its triggers under --verbose).
         # _watch_sensors gates the --verbose ULTRASONIC watch (live read-out + keep-them-on) so Concierge
@@ -308,7 +308,7 @@ class RobotDriver:
             elif self.concierge:
                 # Concierge Mode never drives, so DON'T probe the PCA9685/ESC at all -- an absent motor board
                 # is EXPECTED here, not a HARDWARE FAILURE. Fake the PWM silently (no degraded banner).
-                log.info("Concierge Mode: stationary desk assistant -- ESC/PWM not used (motor board not probed).")
+                log.info("Concierge Mode: stationary assistant -- ESC/PWM not used (motor board not probed).")
                 self.kit = FakeServoKit(channels=channels)
             else:
                 try:

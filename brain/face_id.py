@@ -10,7 +10,7 @@
 #
 # Enrol faces with:  ./scripts/enroll_person.sh "Ramesh" "my creator" "Ruh-mesh" photo.jpg  (files and/or --camera).
 # Accuracy note: Haar gives a bounding box, not 5-point landmarks, so faces aren't affine-aligned before
-# embedding -- fine for greeting a handful of known desk visitors; raise/lower ROBOT_FACE_ID_THRESHOLD to
+# embedding -- fine for greeting a handful of known visitors; raise/lower ROBOT_FACE_ID_THRESHOLD to
 # taste. All heavy imports are LAZY so importing this module is safe on any machine.
 
 import logging

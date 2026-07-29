@@ -1,6 +1,6 @@
 # Concierge Mode
 
-A **stationary desk persona** for Jarvis. Flip `ROBOT_CONCIERGE_MODE=1` (top of `config/robot.env`) and the
+A **stationary persona** for Jarvis. Flip `ROBOT_CONCIERGE_MODE=1` (top of `config/robot.env`) and the
 robot stops being a crawler car: it **never drives**, introduces itself as *"Jarvis the Concierge"*, and can
 be woken by a **PIR motion sensor** as well as the wake word. When someone walks up, it recognises them with
 a **strictly-local** face pipeline and greets them by name — or smiles and stays quiet if it doesn't know
@@ -144,7 +144,7 @@ greetings.
   *"remember this is…"* flow additionally keep a **reference JPEG** under `~/.localairobot/photos/` and a text
   fact in table `facts` — clear those with `./scripts/rag.sh --forget "Name"` and by deleting the JPEG.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
-  tuned for a handful of known desk visitors, not a crowd. Enrol several shots and tune
+  tuned for a handful of known visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
 - **Recognition window:** a motion wake retries recognition for `ROBOT_CONCIERGE_RECOGNIZE_S` (default 5s)
   instead of judging one frame — the fix for *sporadic* greetings that used to "flash" the smile and give

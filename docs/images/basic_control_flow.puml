@@ -85,7 +85,7 @@ concierge --> face : greet by name
 concierge --> decision : chat only
 
 note bottom of concierge
-  Concierge mode (ROBOT_CONCIERGE_MODE): stationary desk persona.
+  Concierge mode (ROBOT_CONCIERGE_MODE): stationary persona.
   Drive / Explore / Find are politely refused.
 end note
 

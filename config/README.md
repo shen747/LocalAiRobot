@@ -37,7 +37,7 @@ Read by `scripts/install_stack_pi5.sh` / `_jetson.sh` **at install time** to tun
 
 ## Concierge Mode (stationary greeter — PIR + local face recognition)
 
-A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary desk assistant that **never drives**, is woken by a **PIR motion sensor** as well as the wake word, and greets people it recognises **by name** via a **strictly-local** pipeline (OpenCV detect → ArcFace ONNX embed → match against the RAG db) — or smiles silently at strangers. Set it back to `0` for the normal crawler car. Full flow + wiring: [docs/concierge.md](../docs/concierge.md).
+A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary assistant that **never drives**, is woken by a **PIR motion sensor** as well as the wake word, and greets people it recognises **by name** via a **strictly-local** pipeline (OpenCV detect → ArcFace ONNX embed → match against the RAG db) — or smiles silently at strangers. Set it back to `0` for the normal crawler car. Full flow + wiring: [docs/concierge.md](../docs/concierge.md).
 
 | Key | Default | What it does |
 |---|---|---|

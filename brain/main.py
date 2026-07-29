@@ -223,7 +223,7 @@ _CRAWLER_INTRO = (
     "(one drive motor plus one steering servo -- it CANNOT strafe or spin in place). "
     "It has a forward camera and can look around. ")
 _CONCIERGE_INTRO = (
-    "You are the brain of a STATIONARY AI concierge / desk assistant -- it does NOT move, drive, or go "
+    "You are the brain of a STATIONARY AI concierge / assistant -- it does NOT move, drive, or go "
     "anywhere (it has no wheels); it greets visitors and chats. It has a forward camera and can look around. ")
 _ACTION_SCHEMA = (
     "Convert the user's spoken input into "
@@ -273,7 +273,7 @@ def query_ollama(cfg, user_text, context=""):
     # is byte-identical to before, so crawler mode is unchanged. (context, from mem.prompt_context(), already
     # leads with the stored top-priority identity -- who it is + what it can do.)
     if concierge.enabled():
-        preamble = (f"You are {name} the Concierge, a friendly STATIONARY desk assistant. If the user asks who "
+        preamble = (f"You are {name} the Concierge, a friendly STATIONARY assistant. If the user asks who "
                     f"you are, your name, or what you can do, answer as {name} the Concierge -- a stationary "
                     f"greeter that recognises visitors and chats; you never move, drive, or go anywhere.\n")
         prompt = preamble + _CONCIERGE_INTRO + _ACTION_SCHEMA
@@ -652,7 +652,7 @@ def main():
         # conversation stays in character, not just the opening scare.
         robot_caps = halloween.PERSONA.format(name=robot_name)
     elif concierge.enabled():
-        # Concierge Mode: a STATIONARY desk persona -- it introduces itself as the Concierge and never drives.
+        # Concierge Mode: a STATIONARY persona -- it introduces itself as the Concierge and never drives.
         robot_caps = concierge.PERSONA_CAPS.format(name=robot_name)
     else:
         robot_caps = (f"I am {robot_name}, a friendly voice-controlled RC crawler robot car. I can drive around "
