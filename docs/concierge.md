@@ -21,45 +21,92 @@ Nothing else changes: STT/TTS, the face screen, memory, and the phone endpoint a
 
 ## The state machine
 
+The motion path runs in **two stages**: a cheap look that answers *"is anyone there?"*, and — only if that
+says yes — the expensive one that answers *"who is it?"*. The rate limit is applied **after** a look, chosen
+from what the camera actually found. See [Why two stages](#why-two-stages) for the reasoning.
+
 ```
         (idle, asleep)
              │  wake word ───────► normal conversation turn (SAY/LOOK/REMEMBER; movement REFUSED)
              │
-             │  PIR motion ──► TRIGGER FILTERS (brain/pir.py): drop spikes that fall
-             │                 within ROBOT_PIR_HOLD_S, then rate-limit to one wake
-             │                 per ROBOT_PIR_COOLDOWN_S. A PIR next to a warm Pi 5
-             │                 chatters; without these it wakes the camera all night.
+             │  PIR motion ──► EDGE FILTERS (brain/pir.py): drop spikes that fall within
+             │                 ROBOT_PIR_HOLD_S, debounce one pulse train to one wake
+             │                 (ROBOT_PIR_COOLDOWN_S, ~2s), and honour any OUTCOME
+             │                 cooldown a previous look armed.
              │                        │  (survives the filters)
              │                        ▼
              │                 show FRIENDLY face (happy) -- HELD, never flashes
+             │                 (ROBOT_CONCIERGE_SMILE_ON_MOTION=0 defers it to Stage A)
              │                        │
              │                        ▼
-             │     ┌── RECOGNITION WINDOW: ROBOT_CONCIERGE_RECOGNIZE_S (default 5s) ──┐
-             │     │  capture a frame every ROBOT_CONCIERGE_RECOGNIZE_INTERVAL_S +    │
-             │     │  local ArcFace match, until a match OR the window elapses        │
-             │     │  (one bad frame is no longer a missed greeting)                  │
-             │     └──────────────────────────────┬─────────────────────────────────┘
-             │                                     │
-             │          ┌──────────────────────────┼──────────────────────────┐
-             │     recognised                  a face seen in              no face (or fewer
-             │     (by name)                   >= FACE_HITS frames         than FACE_HITS)
-             │          │                           │                           │
-             │          ▼                           ▼                           ▼
-             │   greet BY NAME             generic name-less            smile off, STAY SILENT,
-             │   "Welcome back, X!"        "Hello there! Welcome."      back to sleep (a cat /
-             │          │                           │                    curtain isn't greeted)
-             │          └─────────────┬─────────────┘                           │
-             │                        ▼                                         │
-             └──────────  normal conversation loop  ◄──────────────────────────┘ (silent path skips it)
-                                      │  … silence …
+             │     ┌── STAGE A · presence probe: ROBOT_CONCIERGE_PROBE_TRIES frames ──┐
+             │     │  detector ONLY, no recognition. Returns early on the first hit,  │
+             │     │  so a real visitor costs ONE frame. ~99% of a chattering PIR's   │
+             │     │  wakes die right here for ~120ms instead of a 15-frame burst.    │
+             │     └───────────────┬──────────────────────────┬────────────────────┘
+             │                nobody there                someone there
+             │                     │                          │
+             │                     ▼                          ▼
+             │        arm SILENT cooldown          ┌── STAGE B · recognition window ──┐
+             │        (…SILENT_COOLDOWN_S)         │  a frame every RECOGNIZE_INTERVAL │
+             │        smile off, STAY SILENT       │  _S + local ArcFace match, until  │
+             │        (DEBUG log only)             │  a match OR RECOGNIZE_S elapses   │
+             │                     │               └────────────────┬─────────────────┘
+             │                     │                                │
+             │                     │     ┌──────────────────────────┼──────────────────────────┐
+             │                     │  recognised                a face seen in            lost them again
+             │                     │  (by name, and clear of     >= FACE_HITS frames       (walked past)
+             │                     │   the runner-up by                │                        │
+             │                     │   …MIN_MARGIN)                    │                        │
+             │                     │        │                          ▼                        ▼
+             │                     │        ▼                  generic name-less        arm SILENT cooldown
+             │                     │  greet BY NAME            "Hello there!"           smile off, SILENT
+             │                     │  "Welcome back, X!"               │                        │
+             │                     │        └───────────┬──────────────┘                        │
+             │                     │                    ▼                                       │
+             │                     │        arm GREET cooldown (…GREET_COOLDOWN_S)              │
+             │                     │        so the visitor you are already                      │
+             │                     │        talking to can't re-trigger a greeting              │
+             │                     │                    │                                       │
+             └─────────────────────┴─ normal conversation loop ◄───────────────────────────────┘
+                                      │  … silence …                    (silent paths skip it)
                                       ▼
-                                back to sleep
+                                back to sleep  (a SHORT goodbye -- see Notes & limits)
 ```
 
-Implementation: `brain/pir.py` (trigger filters, then motion → `wake.cancel_listen()` → `wait_for_trigger`
-returns `MOTION`), `brain/face_id.py` (detect + embed + match), `brain/concierge.py` (persona + greeting arrays
-+ `recognize_within()`, the paced retry loop), `brain/captures.py` (keeping the deciding frame), and the
-`MOTION` branch (recognition window) + movement gate in `brain/main.py`.
+Implementation: `brain/pir.py` (edge filters + `arm_cooldown()`, then motion → `wake.cancel_listen()` →
+`wait_for_trigger` returns `MOTION`), `brain/face_id.py` (detect + **align** + embed + match),
+`brain/concierge.py` (persona + greeting arrays + `presence_probe()` and `recognize_within()`),
+`brain/captures.py` (keeping the deciding frame), and the `MOTION` branch + movement gate in `brain/main.py`.
+
+### Why two stages
+
+Both halves of this design come straight out of a 19-hour field log, and both fix bugs that looked like
+something else:
+
+**The PIR "not waking" 90% of the time was actually too much throttle, not too few triggers.** The sensor
+offered an edge every ~7 seconds round the clock — 3,786 accepted wakes, 1,232 of them between midnight and
+6am in an empty house. The old design answered *every* accepted wake with a full ~15-frame recognition
+burst, which was only affordable behind a 15-second blind cooldown on the sensor. That cooldown was applied
+to the **edge**, before anything had looked at anything: 205 wakes/hour × 15s = **85% of every hour deaf to
+a new arrival**. Walking up to Jarvis meant a random 0–15s wait before the camera even opened, by which time
+you had turned away and the window saw nothing. Splitting the look in two makes the common case ~15× cheaper,
+which pays for a ~2s debounce — so a real arrival is seen within two seconds, while idle detector work
+*drops* from ~6,150/hour to ~500/hour.
+
+**Recognition was returning noise because the crop was never aligned.** ArcFace/w600k is trained on 112×112
+crops affine-warped so five landmarks land on fixed pixels. The old Haar cascade gives a box and no
+landmarks, so the crop couldn't be aligned and the model saw out-of-distribution input: 6 matches out of 257
+face frames (**2.3%**), every score squashed into 0.13–0.21, and the "closest" name spread evenly across all
+35 enrolled people. One person stood in front of the camera for 14 consecutive frames and scored 0.142.
+YuNet returns the landmarks, `face_id._align()` warps them onto the canonical template, and measured on this
+repo's own enrolment photos that moves same-vs-different separation **0.334 → 0.491**, by-name recognition
+**75% → 88%**, and impostors above threshold **0.76% → 0.12%**.
+
+> **⚠️ Alignment requires re-enrolment.** Stored embeddings are produced by this same code path, so any made
+> before alignment are themselves unaligned — and aligning only the live side compares apples to noise,
+> which is *worse* than not aligning at all. After installing YuNet for the first time, run
+> `bash enroll_all.sh` on the Pi and confirm with `./scripts/rag.sh --faces`.
 
 ## Hardware
 
@@ -107,19 +154,30 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 | `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable the whole mode (top of `config/robot.env`). |
 | `ROBOT_PIR_PIN` | *(empty)* | PIR OUT pin (BCM). Empty = wake-word-only. |
 | `ROBOT_PIR_HOLD_S` | `0.25` | **Noise filter.** Re-read the pin this long after a trigger; if it has already fallen it was an electrical spike, not a person. `0` = trust every edge. |
-| `ROBOT_PIR_COOLDOWN_S` | `15` | **Rate limit.** After an accepted wake, ignore triggers for this long. A real visitor lingers (nothing is missed), but a chattering sensor can't monopolise the robot. `0` = no cooldown. |
+| `ROBOT_PIR_COOLDOWN_S` | `2` | **Edge debounce** (was 15). One sensor pulse train = one wake. **No longer the rate limiter** — the two outcome cooldowns below are, and they run *after* the camera has looked. `0` = react to every edge. |
+| `ROBOT_CONCIERGE_SILENT_COOLDOWN_S` | `8` | **Outcome cooldown after "nobody there".** The real idle rate limiter — applied *with* evidence, so it throttles a lying sensor without throttling real visitors. `0` = off. |
+| `ROBOT_CONCIERGE_GREET_COOLDOWN_S` | `60` | **Outcome cooldown after a greeting** (or a Halloween spook). Stops the visitor you're already talking to from re-triggering their own greeting — the field log shows the same person greeted twice, 30s apart. `0` = off. |
+| `ROBOT_CONCIERGE_PROBE_TRIES` | `2` | **Stage A.** Cheap one-frame "is anyone there?" looks before committing to the full window. Returns early on the first hit, so a real visitor costs one frame. `0` = skip Stage A (old behaviour). |
+| `ROBOT_CONCIERGE_PROBE_INTERVAL_S` | `0.15` | Pause between those Stage-A looks — short, to catch someone mid-stride, not to wait for them to arrive. |
+| `ROBOT_CONCIERGE_SMILE_ON_MOTION` | `1` | Smile the instant motion fires, before anyone is confirmed. `0` = defer ~0.3s until Stage A has seen somebody — worth it if a chattering PIR makes the face flash all night. |
+| `ROBOT_CONCIERGE_SUMMARY_S` | `3600` | One summary line per period: PIR wakes, how many died in the probe, how many greeted. Silent looks are DEBUG now, so this is your main diagnostic. `0` = off. |
 | `ROBOT_PIR_CHATTER_N` / `_WINDOW_S` | `20` / `600` | **Health warning only.** More than N wakes in the window → one loud `PIR CHATTER` warning naming the likely causes. Never suppresses a wake. `0` = never warn. |
-| `ROBOT_CONCIERGE_RECOGNIZE_S` | `5` | On a motion wake, how long to **hold the smile and keep retrying** recognition before greeting. Recognised → by name; face seen but unmatched → generic greeting (then chat); no face at all → silent. `0` = single shot (old one-frame behavior). Raise it if people move fast past the camera. |
-| `ROBOT_CONCIERGE_RECOGNIZE_INTERVAL_S` | `0.25` | Pause **between** capture attempts in that window. Unpaced the loop ran the camera flat out (~20 stills/s, ~100 near-identical frames per wake); 0.25 s gives ~20 independent looks for a fifth of the CPU and log volume. `0` = flat out. |
-| `ROBOT_CONCIERGE_FACE_HITS` | `2` | **Ghost-greeting guard.** How many frames must show a face before the *generic* greeting fires. Haar false-positives on scenery, and a 1-frame gate let a single fluke greet an empty room. A recognised **match** still greets on its first frame. `1` = old behaviour. |
+| `ROBOT_CONCIERGE_RECOGNIZE_S` | `7` | **Stage B.** Once someone is confirmed, how long to **hold the smile and keep retrying** recognition. Recognised → by name; face seen but unmatched → generic greeting (then chat); lost them → silent. `0` = single shot. |
+| `ROBOT_CONCIERGE_RECOGNIZE_INTERVAL_S` | `0.2` | Pause **between** capture attempts in that window. ~35 independent looks per visitor; affordable now each frame runs the detector once rather than twice. `0` = flat out. |
+| `ROBOT_CONCIERGE_FACE_HITS` | `2` | **Ghost-greeting guard.** How many frames must show a face before the *generic* greeting fires — a 1-frame gate let a single detector fluke greet an empty room. A recognised **match** still greets on its first frame. `1` = old behaviour. |
 | `ROBOT_FACE_ID_MODEL` | `~/.localairobot/models/arcface.onnx` *(auto-downloaded)* | ArcFace recognition ONNX. Missing → face match off (smiles at everyone). |
+| `ROBOT_FACE_ID_DETECTOR_BACKEND` | `auto` | **The most important accuracy key here.** `auto` = YuNet if present else Haar; `yunet` / `haar` to force. YuNet supplies the 5 landmarks that let the crop be **aligned** before ArcFace — without it scores collapse into noise (2.3% recognition in the field). |
+| `ROBOT_FACE_ID_YUNET_MODEL` | `~/.localairobot/models/face_detection_yunet.onnx` *(auto-downloaded)* | The YuNet detector (~230 KB). **Installing it for the first time requires re-enrolling everyone.** |
+| `ROBOT_FACE_ID_YUNET_SCORE` | `0.6` | YuNet confidence 0–1. Raise (0.7–0.9) if scenery registers as a face; lower (0.4–0.5) to notice people in poor light or steep profile. |
+| `ROBOT_FACE_ID_MIN_MARGIN` | `0.08` | **Wrong-name guard.** How far clear of the runner-up the winner must be to say a **name**. A photo finish gets the friendly name-less greeting instead — being called someone else's name is worse than being greeted without one. `0` = threshold only. |
 | `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine match threshold. **Higher = stricter** (fewer false greetings, more misses). |
 | `ROBOT_FACE_ID_INPUT` | `112` | Face model input size (px). |
-| `ROBOT_FACE_ID_DETECTOR` | *(bundled)* | Optional Haar cascade XML; empty = OpenCV's default frontal-face cascade. |
+| `ROBOT_FACE_ID_DETECTOR` | *(bundled)* | Optional Haar cascade XML, used **only on the Haar fallback path**; empty = OpenCV's default frontal-face cascade. |
 | `ROBOT_FACE_ID_AGGREGATE` | `max` | How to combine a person's **multiple enrolled photos** when matching (only matters for 2+ images). `max` = best-matching photo wins (best recall). `topk` = mean of their top `ROBOT_FACE_ID_TOPK` photos. `mean` = average of all. `centroid` = match vs their averaged prototype. |
 | `ROBOT_FACE_ID_TOPK` | `3` | For `ROBOT_FACE_ID_AGGREGATE=topk`: how many best-matching photos to average. |
-| `ROBOT_FACE_ID_MIN_NEIGHBORS` | `5` | Haar strictness: overlapping detections needed to believe a box. **Raise (6–8)** when scenery keeps registering as a face; lower (3–4) if real visitors go undetected in poor light. |
-| `ROBOT_FACE_ID_MIN_FACE_PX` | `60` | Smallest accepted face box, in a `ROBOT_CAMERA_SIZE`-px-square frame (default 512). Raise to ignore distant faces and reject small spurious boxes. |
+| `ROBOT_FACE_ID_MIN_NEIGHBORS` | `5` | **Haar-only** strictness (YuNet uses `_YUNET_SCORE`): overlapping detections needed to believe a box. **Raise (6–8)** when scenery keeps registering as a face; lower (3–4) if real visitors go undetected in poor light. |
+| `ROBOT_FACE_ID_MIN_FACE_PX` | `60` | Smallest face box accepted from a **live** frame, in a `ROBOT_CAMERA_SIZE`-px-square frame (default 512). Raise to ignore distant faces and reject small spurious boxes. |
+| `ROBOT_FACE_ID_MIN_FACE_PX_ENROLL` | `40` | The same floor for **enrolment photos**, deliberately lower — a human chose that photo deliberately, once, offline. Two of this repo's 73 enrolment photos have ~53 px faces and were being dropped silently. |
 | `ROBOT_FACE_ID_WARMUP` | `1` | Load the face model at **startup** (background) instead of lazily inside the first visitor's recognition window. |
 
 ## Detect captures — seeing what Jarvis saw
@@ -173,23 +231,49 @@ journalctl -u robot.service | grep -E 'concierge:|face_id:' | tail -30
 - `face_id: no match (best max 0.15 < 0.38; face box 96px)` — a face **was** found but scored far below the
   threshold. A big box with a low score means your enrolment doesn't cover that pose/lighting: re-enrol with
   several shots (`./scripts/enroll_person.sh "Name" "desc" "say-as" a.jpg b.jpg --camera 3`). A box barely over
-  `ROBOT_FACE_ID_MIN_FACE_PX` with a low score is usually Haar firing on scenery — raise
-  `ROBOT_FACE_ID_MIN_NEIGHBORS`.
-- Matches typically land around **0.40–0.52** with a good enrolment; scores stuck at 0.1–0.25 mean the crop is
-  bad, not that the threshold is wrong. Lower `ROBOT_FACE_ID_THRESHOLD` only once the box sizes look sane.
+  `ROBOT_FACE_ID_MIN_FACE_PX` with a low score is usually the detector firing on scenery.
+- **Every score bunched into 0.13–0.21 with margins near zero, and the "closest" name changing every frame?**
+  That is not a threshold problem and no amount of tuning will fix it — it is the **unaligned-crop** signature.
+  Check the startup line: `grep 'face_id:' ` should say `detector=yunet, 5-point ALIGNED`. If it says
+  `UNALIGNED crops` there is a loud warning right beneath it; run `./scripts/provision_face_id.sh` to install
+  YuNet, **then `bash enroll_all.sh`** to rebuild the embeddings aligned.
+- Aligned matches typically land around **0.45–0.60**. Lower `ROBOT_FACE_ID_THRESHOLD` only once the box sizes
+  look sane *and* alignment is confirmed on.
 
-**It greeted nobody ("ghost greeting").** That is a Haar false positive on scenery. The
+**It greets me but never by name.** Look at the reason in the log:
+`X cleared the threshold (0.41 >= 0.38) but only by +0.02 over Y (need +0.08) -- too close to call` means the
+wrong-name guard fired: two enrolled people are confusable at that pose. Enrol more/better shots of both, or
+lower `ROBOT_FACE_ID_MIN_MARGIN` if you would rather risk the occasional wrong name.
+
+**It greeted nobody ("ghost greeting").** A detector false positive on scenery. The
 `ROBOT_CONCIERGE_FACE_HITS=2` gate stops single flukes; if a *fixed* object keeps registering (a picture frame,
-a patterned wall), raise `ROBOT_FACE_ID_MIN_NEIGHBORS` to 6–8, raise `ROBOT_CONCIERGE_FACE_HITS` to 3, and look
-at the saved `*-unknown.jpg` capture to see what it thought was a face.
+a patterned wall), raise `ROBOT_FACE_ID_YUNET_SCORE` to 0.7–0.9 (or `ROBOT_FACE_ID_MIN_NEIGHBORS` to 6–8 on the
+Haar path), raise `ROBOT_CONCIERGE_FACE_HITS` to 3, and look at the saved `*-unknown.jpg` capture to see what it
+thought was a face.
 
 **`PIR CHATTER:` in the log / it wakes constantly with nobody there.** The sensor is false-triggering — a field
-run logged **~508 wakes an hour, all night, with an empty house**, each one waking the camera. Usual causes, in
-order of likelihood: VCC on a **noisy 5 V rail** (give it a separate supply, or a 100 µF cap across VCC/GND);
-the sensor aimed at the Pi's own **fan exhaust**, a heat source or a sunlit window; the **sensitivity pot**
-turned right up. Probe it in isolation with `./scripts/pir_sensor_probe.sh`, and meanwhile raise
-`ROBOT_PIR_COOLDOWN_S` / `ROBOT_PIR_HOLD_S` (or clear `ROBOT_PIR_PIN` for a wake-word-only concierge). Each run
-also logs a PIR summary on shutdown — a large `suppressed` count next to a small `woke` count is the signature.
+run logged **205 accepted wakes an hour round the clock, 1,232 of them between midnight and 6 am in an empty
+house**. The software now absorbs this (the Stage-A probe kills such a wake in ~120 ms, and the silent outcome
+cooldown paces them), so it is no longer urgent — but it is still a broken sensor. Usual causes, in order of
+likelihood: the **sensitivity pot** turned right up; the **retrigger jumper** (HC-SR501 `H`/`L`) in the wrong
+position, which makes the module free-run; the sensor aimed at the Pi's own **fan exhaust**, a heat source or a
+sunlit window; VCC on a **noisy 5 V rail** (separate supply, or a 100 µF cap across VCC/GND). Probe it in
+isolation with `./scripts/pir_sensor_probe.sh`.
+
+> Note: `rejected_spike = 0` in the shutdown summary means the edges are **not** electrical noise — the sensor
+> is genuinely asserting its output pulse, so look at the pot/jumper/aim before the wiring.
+
+Read the shutdown summary and the hourly line together:
+
+```
+PIR GPIO 4: woke 431x, suppressed 402 (outcome cooldown) + 96 (debounce) + 0 (noise spikes)
+concierge: last 60 min -- PIR 431 wake(s) (+402 held by cooldown, +96 debounce, +0 noise)
+           | 428 silent (probe), 3 looked at, 1 lost in the window, 2 greeting(s) (1 by name)
+```
+
+`silent (probe)` ≫ `looked at` means the **sensor** is lying (hardware, above). `looked at` ≫ `greeting(s)`
+means the **recogniser** is the problem (alignment / enrolment, above). That split is the whole point of the
+line — previously both looked identical in the log and they need opposite fixes.
 
 **The log is enormous.** Per-frame camera capture lines are `DEBUG` now (they were `INFO`, and a recognition
 burst turned that one line into ~144 MB of a four-day log). If you run with `--verbose` / `ROBOT_LOG_LEVEL=DEBUG`

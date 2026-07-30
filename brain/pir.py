@@ -16,11 +16,28 @@
 # stills, so the robot spent 24/7 photographing a dark hallway. Three cheap defences live here:
 #   1. HOLD    -- re-read the pin a moment after the edge; a spike that has already fallen was electrical
 #                 noise, not a person (a real visitor is still there 250ms later).
-#   2. COOLDOWN-- ignore edges for a few seconds after an accepted one. A person lingers, so nothing is
-#                 missed; a chattering sensor stops being able to monopolise the robot.
+#   2. DEBOUNCE-- ignore edges for a couple of seconds after an accepted one, so ONE sensor pulse train is
+#                 ONE wake. This is deliberately SHORT (see below) -- it is not the rate limiter.
 #   3. CHATTER -- count accepted triggers per window and WARN, loudly and once, when the rate can only mean a
 #                 misbehaving sensor. Silent degradation is what let the storm above run for a whole night.
 # All three are tunable (and disableable: set the seconds to 0) via config/robot.env.
+#
+# WHY THE DEBOUNCE IS SHORT NOW (and what replaced the old 15s cooldown). The rate limit used to live HERE,
+# on the EDGE: 15 seconds of enforced blindness after every accepted trigger, applied before anything had
+# looked at anything. On a sensor that offers an edge every ~7s that is a catastrophe -- a 19-hour field log
+# showed 205 accepted wakes an hour, 24/7, which means 205 x 15s = 85% of every hour the robot was
+# STRUCTURALLY DEAF to a new arrival. A real visitor walking up waited a random 0-15s before the camera even
+# opened, by which time they had turned away, the recognition window saw nothing, and Jarvis stayed silent.
+# That was the "the PIR doesn't wake it 90% of the time" bug: not too FEW triggers, too much blind throttle.
+#
+# The fix is to throttle on the OUTCOME instead of the edge. main.py takes a cheap one-frame look ("is anyone
+# actually there?") and then calls arm_cooldown() with a duration that MATCHES WHAT IT FOUND:
+#   nobody there  -> a short silent cooldown  (ROBOT_CONCIERGE_SILENT_COOLDOWN_S) -- the real idle limiter,
+#                    now applied WITH evidence instead of instead of it.
+#   greeted them  -> a long one              (ROBOT_CONCIERGE_GREET_COOLDOWN_S)  -- don't re-greet a visitor
+#                    who is still standing there.
+# So this file keeps a debounce only long enough that one pulse train can't fire twice; the interesting
+# decision belongs to the caller, which is the only thing that knows what the camera saw.
 
 import logging
 import os
@@ -52,11 +69,16 @@ class MotionWake:
         # is suppressed (driver.py), so the PIR is what you watch instead -- like scripts/pir_sensor_probe.sh.
         self._verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
         self._hold_s = max(0.0, _envf("ROBOT_PIR_HOLD_S", 0.25))
-        self._cooldown_s = max(0.0, _envf("ROBOT_PIR_COOLDOWN_S", 15))
+        self._cooldown_s = max(0.0, _envf("ROBOT_PIR_COOLDOWN_S", 2))
         self._chatter_n = int(_envf("ROBOT_PIR_CHATTER_N", 20))
         self._chatter_window_s = max(0.0, _envf("ROBOT_PIR_CHATTER_WINDOW_S", 600))
         self._lock = threading.Lock()
         self._last_accepted = 0.0        # monotonic; 0 = none yet
+        # Outcome cooldown: an absolute monotonic deadline armed by the CALLER via arm_cooldown() once it
+        # knows what the camera saw. Separate from _last_accepted so the two throttles can't clobber each
+        # other -- the debounce paces the sensor, this paces the ROBOT's reaction to it.
+        self._suppress_until = 0.0
+        self._suppress_reason = ""
         self._window_start = 0.0
         self._window_count = 0
         self._chatter_warned = False
@@ -64,6 +86,7 @@ class MotionWake:
         self.accepted = 0
         self.rejected_spike = 0
         self.rejected_cooldown = 0
+        self.rejected_outcome = 0
         if not pin:
             return
         try:
@@ -71,7 +94,8 @@ class MotionWake:
             self._sensor = MotionSensor(int(pin))
             self._sensor.when_motion = self._fire   # gpiozero fires this on its own thread
             self.available = True
-            log.info("PIR motion wake: armed on BCM GPIO %s (Concierge Mode) -- hold %.2fs, cooldown %.0fs",
+            log.info("PIR motion wake: armed on BCM GPIO %s (Concierge Mode) -- hold %.2fs, debounce %.1fs "
+                     "(outcome cooldowns are set by the concierge look, not here)",
                      pin, self._hold_s, self._cooldown_s)
         except Exception as e:
             log.warning("PIR motion sensor init failed on pin %s (%s) -- motion wake disabled "
@@ -114,6 +138,22 @@ class MotionWake:
                 "ROBOT_PIR_PIN for wake-word-only) meanwhile.",
                 self._window_count, elapsed_txt, self._pin)
 
+    def arm_cooldown(self, seconds, reason=""):
+        """Suppress motion wakes for the next `seconds` -- called by main.py AFTER a look, with a duration
+        chosen from what the camera actually found (nobody there = short, greeted them = long). This is the
+        real rate limiter; the edge debounce above is only a pulse-train filter. `seconds` <= 0 clears any
+        pending suppression (so setting the env keys to 0 restores "look at every accepted edge").
+
+        Deliberately ABSOLUTE (a deadline, not a duration counted from the last edge): the look itself takes
+        time, and the cooldown should start when we FINISHED deciding, not when the edge arrived."""
+        try:
+            secs = max(0.0, float(seconds or 0.0))
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            self._suppress_until = (time.monotonic() + secs) if secs > 0 else 0.0
+            self._suppress_reason = reason or ""
+
     def _fire(self):
         """gpiozero's rising-edge callback (its own thread). Filters the edge, then wakes the brain."""
         if self._is_spike():                       # sleeps up to hold_s -- fine, this is gpiozero's thread
@@ -124,10 +164,18 @@ class MotionWake:
             return
         now = time.monotonic()
         with self._lock:
+            # Outcome cooldown FIRST: it is the deliberate one (the last look decided how long to wait),
+            # so it should be what the counters and the verbose log attribute the rejection to.
+            if self._suppress_until and now < self._suppress_until:
+                self.rejected_outcome += 1
+                if self._verbose:
+                    log.info("PIR: motion on GPIO %s ignored -- %s cooldown, %.1fs left",
+                             self._pin, self._suppress_reason or "outcome", self._suppress_until - now)
+                return
             if self._last_accepted and (now - self._last_accepted) < self._cooldown_s:
                 self.rejected_cooldown += 1
                 if self._verbose:
-                    log.info("PIR: motion on GPIO %s ignored -- still inside the %.0fs cooldown (%.1fs ago)",
+                    log.info("PIR: motion on GPIO %s ignored -- still inside the %.1fs debounce (%.1fs ago)",
                              self._pin, self._cooldown_s, now - self._last_accepted)
                 return
             self._last_accepted = now
@@ -142,11 +190,14 @@ class MotionWake:
 
     def stats_line(self):
         """One-line summary of how the sensor behaved this run (logged on shutdown), or '' if it never armed.
-        A big `noise`/`cooldown` count next to a small `woke` count is the signature of a chattery PIR."""
+        A big `debounce`/`outcome` count next to a small `woke` count is the signature of a chattery PIR --
+        and the SPLIT is the diagnosis: `outcome` means we looked and found nobody (the sensor is lying),
+        while `debounce` is just the same pulse train arriving twice."""
         if not self.available:
             return ""
-        return (f"PIR GPIO {self._pin}: woke {self.accepted}x, suppressed {self.rejected_cooldown} "
-                f"(cooldown) + {self.rejected_spike} (noise spikes)")
+        return (f"PIR GPIO {self._pin}: woke {self.accepted}x, suppressed {self.rejected_outcome} "
+                f"(outcome cooldown) + {self.rejected_cooldown} (debounce) + {self.rejected_spike} "
+                f"(noise spikes)")
 
     def close(self):
         try:

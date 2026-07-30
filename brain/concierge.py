@@ -153,6 +153,48 @@ def greeting_unknown():
     return random.choice(UNKNOWN_GREETINGS)
 
 
+def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep):
+    """STAGE A -- the cheap "is anyone actually there?" look taken the moment motion fires, BEFORE the
+    expensive recognition window. Returns {"present": bool, "attempts": int, "jpeg": bytes|None}.
+
+    Why this exists. A PIR that chatters offers an edge every few seconds, 24/7. The old design answered
+    every one of them with the FULL recognition burst -- ~15 frames, each a JPEG decode plus a detector pass
+    plus an ArcFace embed -- so an empty hallway cost ~6,150 detector passes an hour and the only way to
+    afford that was a 15-second blind cooldown on the sensor. That cooldown is what made the robot deaf to
+    real visitors 85% of the time.
+
+    One frame answers "empty room?" just as well as fifteen, for a fifteenth of the cost. Paying that instead
+    is what lets the sensor debounce drop to ~2s, so a real arrival is looked at within two seconds rather
+    than up to fifteen. The full window (recognize_within) then runs ONLY for frames that had somebody in
+    them -- a few dozen a day instead of five thousand.
+
+    `attempts` > 1 takes a couple of looks `interval_s` apart before giving up, for a visitor caught
+    mid-stride; it returns EARLY on the first hit, so the extra look costs nothing when someone is there.
+    Pure/stdlib and dependency-injected (same contract as recognize_within) so it needs no camera to test."""
+    tries = max(1, int(attempts or 1))
+    gap = max(0.0, float(interval_s or 0.0))
+    last = None
+    for i in range(tries):
+        jpeg = None
+        try:
+            jpeg = capture()
+        except Exception:
+            jpeg = None
+        if jpeg:
+            last = jpeg
+            try:
+                if detect(jpeg):
+                    return {"present": True, "attempts": i + 1, "jpeg": jpeg}
+            except Exception:
+                pass
+        if i + 1 < tries:
+            # A failed capture always backs off at least 100ms, so a broken camera can't spin the CPU.
+            delay = gap if jpeg else max(gap, 0.1)
+            if delay > 0:
+                sleep(delay)
+    return {"present": False, "attempts": tries, "jpeg": last}
+
+
 def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,
                      interval_s=0.0, need_hits=1):
     """Keep capturing + identifying until an enrolled face MATCHES or `window_s` seconds elapse -- so a
@@ -163,11 +205,21 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
          "face_hits": int, "jpeg": bytes|None}
 
       capture()        -> jpeg bytes, or None (camera unavailable / capture failed)
-      identify(jpeg)   -> (name|None, score)   -- name set only on a match >= threshold
-      detect(jpeg)     -> bool                 -- cheap 'is any face present?' (Haar), recognition NOT needed
+      identify(jpeg)   -> (name|None, score) OR (name|None, score, face_seen)
+                          name is set only on a match >= threshold; the optional third element says whether
+                          a FACE WAS DETECTED at all, independently of whether it matched anyone.
+      detect(jpeg)     -> bool                 -- cheap 'is any face present?', recognition NOT needed
 
-    A frame COUNTS AS A FACE when score>0 (identify() already embedded one) or, when score==0 (no face, OR
-    nobody enrolled), when detect() says so -- that way an un-enrolled visitor still counts as 'present'.
+    A frame COUNTS AS A FACE when identify() reports one (score>0, or its explicit face_seen flag). Only when
+    identify() is silent on both -- score==0 AND no third element -- do we fall back to detect().
+
+    That fallback used to run on EVERY unmatched frame, and it was pure waste: identify() -> embed() already
+    ran the detector on that exact image, so when it found nothing, a second decode + detect() pass on the
+    same bytes could only ever return False too. On 98.8% of frames in a 19-hour field log that was a
+    redundant JPEG decode + detector pass -- ~6,150 of them an hour, on the hot path. The third return
+    element lets identify() just SAY "I saw a face but couldn't name them", which is the one case the
+    fallback ever legitimately caught (a face present when NOBODY is enrolled, so there is nothing to score
+    against). detect() stays in the signature for that case and for callers that inject their own.
 
     `interval_s` is the pause BETWEEN attempts. It exists because the un-paced loop ran the camera flat out
     (~20 captures/second): on a chattery PIR that was ~50,000 stills an HOUR, 24/7 -- pure CPU + log burn for
@@ -193,8 +245,13 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
             jpeg = None
         if jpeg:
             last_jpeg = jpeg
+            saw_face = None                      # None = identify() didn't say; True/False = it did
             try:
-                name, score = identify(jpeg)
+                out = identify(jpeg)
+                if isinstance(out, tuple) and len(out) >= 3:
+                    name, score, saw_face = out[0], out[1], bool(out[2])
+                else:
+                    name, score = out
             except Exception:
                 name, score = None, 0.0
             score = score or 0.0
@@ -203,14 +260,18 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
             if name:
                 return {"name": name, "face_seen": True, "attempts": attempts, "best_score": best,
                         "face_hits": hits + 1, "jpeg": jpeg}
-            if score > 0.0:
-                hits += 1                        # identify() embedded a face -> no second Haar pass needed
-            elif hits < need:
-                try:                             # only until we have enough hits, so the extra pass isn't free-running
+            if score > 0.0 or saw_face:
+                hits += 1                        # identify() saw a face -> no second detector pass needed
+                if best_jpeg is None:
+                    best_jpeg = jpeg             # a detected-but-unscored face is still worth keeping
+            elif saw_face is None and hits < need:
+                # identify() gave no verdict on presence (a caller that returns the old 2-tuple, or nobody
+                # enrolled) -> fall back to the standalone detector. Bounded by `need` so it can't free-run.
+                try:
                     if detect(jpeg):
                         hits += 1
                         if best_jpeg is None:
-                            best_jpeg = jpeg     # a detected-but-unscored face is still the frame worth keeping
+                            best_jpeg = jpeg
                 except Exception:
                     pass
         if clock() >= deadline:

@@ -209,10 +209,23 @@ def wait_for_trigger(cfg, wake, motion_event=None):
     motion sensor is an ADDITIONAL trigger: its callback sets motion_event and cancels the in-progress listen,
     so a 'CANCELLED' return WITH motion_event set is reported as 'MOTION'. In --dry, ENTER starts a turn and
     'r' simulates a wake. The trigger ONLY starts capture -- the EXPLORE/FIND autonomy gate is separate."""
-    result = wake.wait(audio_lock)
-    if result == "CANCELLED" and motion_event is not None and motion_event.is_set():
+    # Check the flag BEFORE listening. Motion is normally noticed as a cancelled listen, but cancel_listen()
+    # only works on a listen that is ALREADY RUNNING: WakeWord._listen() clears the cancel flag on entry, so
+    # an edge that arrived while the robot was busy (mid-greeting, recording, transcribing, playing the
+    # goodbye) had its cancel thrown away and the visitor was dropped on the floor. The Event survives that
+    # race, so honouring it here is what makes "someone walked up while you were talking" work at all.
+    if motion_event is not None and motion_event.is_set():
         motion_event.clear()
         return "MOTION"
+    result = wake.wait(audio_lock)
+    if motion_event is not None and motion_event.is_set():
+        # Always CLEAR it, whatever the listener returned. A flag left set is how a stale motion used to turn
+        # the next unrelated cancel (the voice-abort listener) into a phantom MOTION. It is only reported as
+        # motion when the listen was CANCELLED -- any other return is a real trigger of its own (the operator
+        # spoke, or we're quitting) and outranks a wave at the sensor.
+        motion_event.clear()
+        if result == "CANCELLED":
+            return "MOTION"
     return result
 
 
@@ -878,6 +891,74 @@ def main():
         except ValueError:
             return 2
 
+    def _concierge_probe_tries():
+        """STAGE A: how many cheap one-frame presence looks to take before declaring the room empty
+        (default 2, ~0.15s apart -- it returns early the moment one hits, so a real visitor costs one).
+        0 = skip Stage A entirely and always run the full recognition window (the old behaviour)."""
+        try:
+            return max(0, int(float(os.environ.get("ROBOT_CONCIERGE_PROBE_TRIES", "2") or 0)))
+        except ValueError:
+            return 2
+
+    def _concierge_probe_interval_s():
+        """Pause between those Stage-A looks (default 0.15s). Short on purpose: it is meant to catch a
+        visitor mid-stride, not to wait for one to arrive -- that is Stage B's job."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_INTERVAL_S", "0.15") or 0.15))
+        except ValueError:
+            return 0.15
+
+    def _concierge_cooldown_s(key, default):
+        """One of the OUTCOME cooldowns (silent / greeted) armed on the PIR after a look -- see brain/pir.py.
+        0 disables that one, restoring 'react to every accepted edge'."""
+        try:
+            return max(0.0, float(os.environ.get(key, "") or default))
+        except ValueError:
+            return float(default)
+
+    # Concierge telemetry. Silent looks are now a DEBUG line (they were 3,741 INFO lines a day, which buried
+    # every line that mattered), so the ONE thing that has to survive at INFO is the shape of the hour:
+    # how many edges the PIR offered, how many died in the cheap probe, and how many became a greeting. That
+    # single line is what makes the next tuning round possible -- without it you are back to guessing whether
+    # the sensor or the recogniser is at fault.
+    concierge_stats = {"probe_silent": 0, "probe_hit": 0, "window_lost": 0, "greeted": 0, "by_name": 0}
+
+    def _concierge_summary_loop(period_s):
+        base = {"woke": 0, "outcome": 0, "debounce": 0, "spike": 0}
+        while True:
+            time.sleep(period_s)
+            try:
+                seen = dict(concierge_stats)
+                for k in concierge_stats:
+                    concierge_stats[k] = 0
+                woke = motion_wake.accepted - base["woke"]
+                out = motion_wake.rejected_outcome - base["outcome"]
+                deb = motion_wake.rejected_cooldown - base["debounce"]
+                spk = motion_wake.rejected_spike - base["spike"]
+                base.update({"woke": motion_wake.accepted, "outcome": motion_wake.rejected_outcome,
+                             "debounce": motion_wake.rejected_cooldown, "spike": motion_wake.rejected_spike})
+                if not (woke or out or deb or spk or any(seen.values())):
+                    continue          # a genuinely quiet hour stays quiet in the log
+                log.info("concierge: last %.0f min -- PIR %d wake(s) (+%d held by cooldown, +%d debounce, "
+                         "+%d noise) | %d silent (probe), %d looked at, %d lost in the window, "
+                         "%d greeting(s) (%d by name)",
+                         period_s / 60.0, woke, out, deb, spk, seen["probe_silent"], seen["probe_hit"],
+                         seen["window_lost"], seen["greeted"], seen["by_name"])
+            except Exception as e:
+                log.debug("concierge summary error: %s", e)
+
+    # Started HERE, not up with the other concierge warmups, because it closes over the helpers defined in
+    # this scope -- referencing them any earlier in main() is an unbound local. 0 = off; needs a live PIR
+    # (with no motion sensor there is nothing for it to summarise).
+    if concierge.enabled() and motion_wake.available:
+        try:
+            _summary_s = max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SUMMARY_S", "3600") or 0))
+        except ValueError:
+            _summary_s = 3600.0
+        if _summary_s > 0:
+            threading.Thread(target=_concierge_summary_loop, args=(_summary_s,), daemon=True,
+                             name="concierge-summary").start()
+
     def _keep_capture(jpeg, outcome, name=None):
         """Keep the frame that DECIDED a motion wake in ~/detect-captures, so you can see what Jarvis saw
         when it greeted (or didn't). Silent looks ('noface') are only kept with ROBOT_DETECT_CAPTURE_MODE=all
@@ -1249,31 +1330,79 @@ def main():
                     # 'talking' mouth). Earcon + a random spooky phrase, then FALL THROUGH into the SAME
                     # conversation loop as concierge.
                     log.info("halloween: motion -> spook")
+                    # Halloween has no face gate to arm a cooldown from, so arm the GREET one here: it used to
+                    # ride on the PIR's old blanket 15s cooldown, and that is now a ~2s debounce. Without this
+                    # a trick-or-treater standing at the door would be re-spooked every couple of seconds.
+                    motion_wake.arm_cooldown(
+                        _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "spooked")
+                    concierge_stats["greeted"] += 1
                     fc.set_expression(halloween.FACE_STATE)    # a random spooky face (held through the greeting)
                     snd.play_blocking("spook")                 # LOUD jump-scare stinger, played in FULL before
                                                                # the phrase -> the monster lands + lingers a beat
                     say(halloween.spooky_greeting(),
                         talk_expr=halloween.FACE_STATE, end_expr=halloween.FACE_STATE)
                 else:
-                    # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline. Smile the instant
-                    # motion is seen and HOLD it -- then keep capturing + matching for a WINDOW (default 5s,
-                    # ROBOT_CONCIERGE_RECOGNIZE_S) so one bad frame (pose/blur/light) isn't a missed greeting
-                    # and the smile doesn't "flash". Three outcomes: recognised -> by name; a face was seen
-                    # but not matched -> a generic greeting (still say hello warmly); no face at all in the
-                    # window -> silent, back to where we were (a cat / curtain / passer-by isn't greeted).
-                    fc.set_expression("happy")     # smile now; HELD through the whole recognition window
+                    # Concierge motion wake -> STRICTLY LOCAL vision + RAG face pipeline, in TWO stages.
+                    #
+                    # STAGE A (cheap): one or two frames, detector only, "is anyone actually there?". The PIR
+                    # is a liar -- a field log showed 3,741 of 3,786 motion wakes (98.8%) had nobody in front
+                    # of the camera. Answering those with the full 15-frame recognition burst is what forced
+                    # the old 15-second blind cooldown on the sensor, and THAT is what made Jarvis deaf to
+                    # real visitors 85% of the time. One frame settles an empty room just as well.
+                    #
+                    # STAGE B (the recognition window) then runs only when Stage A saw somebody: keep
+                    # capturing + matching for ROBOT_CONCIERGE_RECOGNIZE_S so one bad frame (pose/blur/light)
+                    # isn't a missed greeting and the smile doesn't "flash". Three outcomes: recognised ->
+                    # by name; a face was seen but not matched -> a generic greeting (still say hello
+                    # warmly); lost them again -> silent (a cat / curtain / passer-by isn't greeted).
+                    #
+                    # Either way the throttle is applied AFTER we know what we saw (motion_wake.arm_cooldown),
+                    # never before -- that inversion is the whole fix.
+                    grab = (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None)
+                    # Smile the INSTANT motion fires (default), held through the whole look -- a greeter that
+                    # waits to be sure before acknowledging you feels broken. The trade-off is new: the PIR is
+                    # now answered ~2.4x more often than under the old blind cooldown, so on a chattering
+                    # sensor an empty room gets a brief happy flash every few seconds all night. Set
+                    # ROBOT_CONCIERGE_SMILE_ON_MOTION=0 to hold the smile until Stage A has actually seen
+                    # somebody -- ~0.3s later, and then only for real visitors.
+                    smile_now = os.environ.get("ROBOT_CONCIERGE_SMILE_ON_MOTION", "1") != "0"
+                    if smile_now:
+                        fc.set_expression("happy")
+                    probe_tries = _concierge_probe_tries()
+                    if probe_tries:
+                        probe = concierge.presence_probe(
+                            grab, face_identifier.detect, attempts=probe_tries,
+                            interval_s=_concierge_probe_interval_s())
+                        if not probe["present"]:
+                            # Nobody there. This is the overwhelmingly common case (98.8% of wakes in the
+                            # field log), so it logs at DEBUG -- at INFO it produced 3,741 lines a day and
+                            # buried every line that mattered. The hourly summary below counts it instead.
+                            motion_wake.arm_cooldown(
+                                _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
+                            concierge_stats["probe_silent"] += 1
+                            log.debug("concierge: motion but nobody there (%d probe frame(s)) -> back to %r",
+                                      probe["attempts"], idle["face"])
+                            _keep_capture(probe.get("jpeg"), "noface")
+                            fc.set_expression(idle["face"])
+                            continue
+                        concierge_stats["probe_hit"] += 1
+                    if not smile_now:
+                        fc.set_expression("happy")   # deferred smile: somebody IS there, so greet the face now
                     res = concierge.recognize_within(
-                        (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None),
-                        face_identifier.identify, face_identifier.detect, _concierge_recognize_s(),
+                        grab, face_identifier.identify, face_identifier.detect, _concierge_recognize_s(),
                         interval_s=_concierge_recognize_interval_s(),
                         need_hits=_concierge_face_hits())
                     name = res["name"]
                     if not name and not res["face_seen"]:
-                        # motion but nobody actually there -> go BACK to the state we were in (awake or
+                        # Stage A saw somebody but the window couldn't confirm them -- they walked past, or
+                        # Stage A's box was a false positive. Go BACK to the state we were in (awake or
                         # asleep), NOT a forced sleep. (The smile lasted only as long as the look.)
                         # `face_hits` is in the message on purpose: 0 means the camera genuinely saw no face
                         # (a real false PIR trigger), while a NON-zero count below the ROBOT_CONCIERGE_FACE_HITS
-                        # gate means we suppressed a probable Haar fluke -- two very different things to chase.
+                        # gate means we suppressed a probable detector fluke -- two very different things to chase.
+                        motion_wake.arm_cooldown(
+                            _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
+                        concierge_stats["window_lost"] += 1
                         log.info("concierge: motion but no face in %d try(s) (%d face hit(s), need %d) "
                                  "-> back to %r (silent)",
                                  res["attempts"], res["face_hits"], _concierge_face_hits(), idle["face"])
@@ -1282,9 +1411,16 @@ def main():
                         continue
                     # A person IS here -> greet, then FALL THROUGH into the conversation loop for follow-ups
                     # (say() transitions smile -> talking -> idle; sleeps after followup_silence_s).
+                    # Hold the PIR off for the whole greeting + chat: the visitor is standing right in front
+                    # of the sensor, so without this every wave of their arm re-triggers the greeting they
+                    # are already in the middle of (the log shows the same person greeted twice, 30s apart).
+                    motion_wake.arm_cooldown(
+                        _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "greeted")
+                    concierge_stats["greeted"] += 1
                     if name:
                         # recognised: greet BY NAME. Use the stored PRONUNCIATION (a phonetic respelling) for
                         # the SPOKEN greeting when set (e.g. Ramesh -> "Ruh-mesh").
+                        concierge_stats["by_name"] += 1
                         pron = mem.pronunciation_for(name)
                         log.info("concierge: recognised %r%s in %d try(s) (best %.3f) -> greeting",
                                  name, f" (say-as '{pron}')" if pron else "", res["attempts"], res["best_score"])

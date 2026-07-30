@@ -102,21 +102,27 @@ say sounds/thinking_still_sounds/wont_be_long.wav     "Won't be long"
 say sounds/remote_ack_sounds/remote_got_it.wav   "Got a remote command, on it now"
 say sounds/remote_ack_sounds/remote_incoming.wav "Incoming request, working on that"
 say sounds/remote_ack_sounds/remote_received.wav "Received a remote command, one moment"
-# sleep -- spoken when a CONVERSATION ends on silence: the robot says goodbye + how to wake it, then goes
-# back to wake-word-only. Full friendly sentences (unlike the short acks); each MUST mention "hey jarvis".
-# Picked at random -- >=12 for variety.
-say sounds/sleep_sounds/busy.wav         "Alright, it seems you're busy now. Say hey jarvis whenever you need me again."
-say sounds/sleep_sounds/done_chatting.wav "Looks like we're done chatting for now. I'll be right here. Just say hey jarvis to wake me."
-say sounds/sleep_sounds/back_to_sleep.wav "Okay, I'll head back to sleep. Say hey jarvis whenever you want to talk again."
-say sounds/sleep_sounds/gone_quiet.wav   "It's gone quiet, so I'm dozing off. Wake me any time with hey jarvis."
-say sounds/sleep_sounds/catch_you.wav    "Catch you later! Say hey jarvis when you need me."
-say sounds/sleep_sounds/standby.wav      "Going back to standby. Just say hey jarvis to bring me back."
-say sounds/sleep_sounds/rest_now.wav     "I'll rest for now. Say hey jarvis and I'm all ears again."
-say sounds/sleep_sounds/talk_soon.wav    "Talk soon! Wake me up with hey jarvis whenever you like."
-say sounds/sleep_sounds/powering_down.wav "Alright, powering down my ears. Say hey jarvis to wake me up."
-say sounds/sleep_sounds/take_your_time.wav "No worries, take your time. Say hey jarvis when you're ready to chat."
-say sounds/sleep_sounds/napping.wav      "I'll be napping. A quick hey jarvis will wake me right up."
-say sounds/sleep_sounds/signing_off.wav  "Signing off for now. Say hey jarvis to start another conversation."
+# sleep -- spoken when a CONVERSATION ends on silence, then it goes back to wake-word-only.
+# KEEP THESE SHORT, and do NOT put "say hey jarvis" in them. Every one of the previous twelve ended with
+# some version of "just say hey jarvis to wake me", which meant the robot recited its own instruction
+# manual every single time a chat trailed off -- to the same handful of people, several times a day, who
+# learned it the first week. A goodbye should sound like a person leaving a room, not a kiosk.
+# It is also on the BLOCKING path (main.py play_blocking) -- it holds the audio lock until the clip ends,
+# so a five-second sign-off is five more seconds the robot can't hear the next visitor.
+# Picked at random -- >=12 for variety. (If you ever DO want the reminder back, add one line that mentions
+# it; at 1-in-12 it gets said occasionally instead of every time.)
+say sounds/sleep_sounds/chat_later.wav   "Okay, chat later."
+say sounds/sleep_sounds/see_ya.wav       "Okay, see ya."
+say sounds/sleep_sounds/catch_you.wav    "Catch you later."
+say sounds/sleep_sounds/talk_soon.wav    "Talk soon."
+say sounds/sleep_sounds/later_then.wav   "Later, then."
+say sounds/sleep_sounds/right_here.wav   "I'll be right here."
+say sounds/sleep_sounds/napping.wav      "I'll be napping."
+say sounds/sleep_sounds/standby.wav      "Back to standby."
+say sounds/sleep_sounds/no_worries.wav   "No worries, take your time."
+say sounds/sleep_sounds/anytime.wav      "Anytime you need me."
+say sounds/sleep_sounds/all_good.wav     "All good. Bye for now."
+say sounds/sleep_sounds/sounds_good.wav  "Sounds good."
 # error -- obstacle / LLM error
 say sounds/error_sounds/uh_oh.wav        "Uh oh"
 
