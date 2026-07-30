@@ -473,14 +473,22 @@ def warm_up(cfg, timeout):
     seconds of ollama.service, and ollama accepts the connection before its llama-server child is ready --
     so the warmup got a hard `HTTP 500 {"error":"timed out waiting for llama-server to start"}` and gave up,
     leaving the model cold for the visitor who actually needed it. (Observed on all three boots in a
-    four-day field log.) So: re-attempt with a short backoff, for up to ROBOT_WARMUP_RETRY_S seconds."""
+    four-day field log.) So: re-attempt with a short backoff, for up to ROBOT_WARMUP_RETRY_S seconds.
+
+    The retry BUDGET is only spent when the local model is the PRIMARY text backend. Under 'mixed' with a key,
+    conversation goes to Gemini and local is just a per-turn fallback (see main.handle_command) -- waiting a
+    minute at boot for a model we may never call would delay the robot coming up for nothing, so that case
+    gets ONE best-effort attempt: still warm when ollama is ready, never a startup stall when it isn't."""
     if cfg.get("ai_backend") == "gemini":
-        return True
+        return True                       # no local model in play at all
     try:
         budget = max(0.0, float(os.environ.get("ROBOT_WARMUP_RETRY_S", "") or 90))
     except ValueError:
         budget = 90.0
-    deadline = time.monotonic() + budget
+    if text_backend(cfg) == "gemini":     # 'mixed' + a key: local is only the fallback -> don't stall on it
+        budget = 0.0
+    started = time.monotonic()
+    deadline = started + budget
     attempt, last = 0, None
     while True:
         attempt += 1
@@ -497,6 +505,8 @@ def warm_up(cfg, timeout):
             log.info("model warmup attempt %d failed (%s) -- the model server is probably still starting; "
                      "retrying", attempt, e)
             time.sleep(5.0)
+    # Report the ELAPSED time actually spent, not the configured budget -- "1 attempt over 0s" (the remote-text
+    # case, which deliberately doesn't retry) vs "21 attempts over 90s" tells you which path you were on.
     log.warning("model warmup failed after %d attempt(s) over %.0fs (%s) -- first command may cold-load",
-                attempt, budget, last)
+                attempt, time.monotonic() - started, last)
     return False

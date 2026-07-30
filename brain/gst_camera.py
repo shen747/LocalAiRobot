@@ -72,14 +72,46 @@ class GstCamera:
                                    f"(backend={self.backend}, source={src or 'CSI sensor 0'})")
             self._cap = cap
             self.available = True
-            log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG)",
-                     self.backend, self.size)
+            log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG)%s",
+                     self.backend, self.size, self._apply_autofocus())
         except Exception as e:
             # No camera / no cv2 / bad pipeline: degrade to 'no frame' rather than crash the brain.
             log.warning("camera unavailable (%s) -- vision will report no frame (USB: `v4l2-ctl "
                         "--list-devices`; CSI: test `gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! "
                         "fakesink`)", e)
             self.available = False
+
+    def _apply_autofocus(self):
+        """Apply ROBOT_CAMERA_AUTOFOCUS to a UVC webcam and return a short suffix for the startup line.
+
+        WHY THIS EXISTS: a UVC webcam's autofocus lives in the CAMERA's OWN FIRMWARE, and this backend used to
+        never touch it -- so `ROBOT_CAMERA_AUTOFOCUS` silently did NOTHING on a USB webcam (it was only ever
+        wired up in the Picamera2/CSI backend). That left focus in whatever state the firmware defaulted to,
+        usually CONTINUOUS AF, which can hunt mid-burst and hand the face matcher soft frames -- with nothing
+        in the log to say so. Now the key means the same thing on both backends, and the startup line reports
+        what the camera ACTUALLY came back with (cv2's AUTOFOCUS property is optional in UVC, so a set() can
+        legitimately fail -- we say so rather than pretend).
+
+        Only meaningful for v4l2; the Argus/CSI pipeline has no such control, so it's skipped there."""
+        if self.backend != "v4l2" or self._cap is None:
+            return ""
+        want_af = os.environ.get("ROBOT_CAMERA_AUTOFOCUS", "1") == "1"
+        cv2 = self._cv2
+        try:
+            ok = bool(self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if want_af else 0))
+            state = self._cap.get(cv2.CAP_PROP_AUTOFOCUS)
+        except Exception as e:
+            log.info("camera: could not set autofocus on this webcam (%s) -- leaving the firmware default", e)
+            return ", autofocus=firmware default"
+        if not ok:
+            # Very common: plenty of UVC cameras expose no software focus control at all. Not a failure --
+            # the firmware still does whatever it does; we just can't steer it. Say which, so 'soft frames'
+            # can be investigated with v4l2-ctl instead of being blamed on this code.
+            log.info("camera: this webcam does not accept a software autofocus setting -- leaving the firmware "
+                     "default. Inspect/force it with:  v4l2-ctl -d %s --list-ctrls  (look for "
+                     "focus_automatic_continuous / focus_absolute)", os.environ.get("ROBOT_CAMERA_SOURCE", "0"))
+            return ", autofocus=firmware default"
+        return f", autofocus={'ON' if want_af else 'OFF'} (camera reports {state:g})"
 
     def _gst(self, sensor_id=0):
         return (f"nvarguscamerasrc sensor-id={sensor_id} ! "

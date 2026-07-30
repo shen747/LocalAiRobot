@@ -68,7 +68,14 @@ returns `MOTION`), `brain/face_id.py` (detect + embed + match), `brain/concierge
   (pin 2), GND → GND (pin 6)** (`ROBOT_PIR_PIN=4`). Full
   pinout + tuning: **[docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md)**; test it with
   `./scripts/pir_sensor_probe.sh`. Set `ROBOT_PIR_PIN=` empty for a wake-word-only concierge.
-- **USB webcam** for the face pipeline (`ROBOT_CAMERA_BACKEND=v4l2`; see the USB-webcam patch).
+- **A camera** for the face pipeline — **whichever one your build already has**. The reference CSI camera
+  (Arducam IMX519 via picamera2) works as-is: `install_stack_pi5.sh` sets its overlay + autofocus for you, so
+  there is **nothing extra to run**. Only run `pi5/3_camera_usb_webcam.sh` if your camera really is a USB
+  webcam — on a CSI build it switches `ROBOT_CAMERA_BACKEND` to `v4l2` and *breaks* the working camera.
+  Check which backend you're on: the startup log says `camera: Picamera2 started` (CSI) or `v4l2`/OpenCV (USB).
+- **No motor board / ESC / ultrasonics needed.** Concierge never drives, so `brain/driver.py` doesn't even
+  probe the PCA9685 (an absent motor board is expected here, not a hardware failure) — skip the `1_esc_*` and
+  `2_sensor_*` patches entirely. The `I2C->PCA9685 …` lines you see at startup are the *simulated* PWM kit.
 
 ## Setup
 

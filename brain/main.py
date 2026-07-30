@@ -882,10 +882,18 @@ def main():
         """Keep the frame that DECIDED a motion wake in ~/detect-captures, so you can see what Jarvis saw
         when it greeted (or didn't). Silent looks ('noface') are only kept with ROBOT_DETECT_CAPTURE_MODE=all
         -- they're the bulk of the frames, and keeping every one is what fills a disk. A cron job purges the
-        folder by age (scripts/purge_detect_captures.sh); brain/captures.py also self-prunes. Never raises."""
+        folder by age (scripts/purge_detect_captures.sh); brain/captures.py also self-prunes.
+
+        Logs the saved PATH at INFO, and returns it so the caller can name it in its own decision line. That
+        link is the point: reviewing a folder of 'unknown' captures is only useful if each image can be tied
+        back to the scores that produced it -- otherwise you have pictures with no verdicts and verdicts with
+        no pictures. Never raises."""
         if outcome == "noface" and not captures.keep_all():
             return None
-        return captures.save(jpeg, outcome, name)
+        path = captures.save(jpeg, outcome, name)
+        if path:
+            log.info("concierge: kept the deciding frame -> %s", path)
+        return path
 
     def _wake_person_check(gen):
         try:

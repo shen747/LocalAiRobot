@@ -53,6 +53,9 @@ class FaceID:
         # Diagnostics: the largest face box (px) seen by the LAST detect()/embed() call, or 0 for none. Logged
         # on a no-match so you can tell a real-but-unrecognised visitor from a tiny Haar fluke on scenery.
         self.last_face_px = 0
+        # Top-3 [(name, score)] from the LAST identify(), best first. The runner-up's score is what turns a
+        # bare "matched 0.398" into something you can act on -- see the ranking note in identify().
+        self.last_ranked = []
         self._sess = None            # onnxruntime session (lazy)
         self._cascade = None         # cv2 Haar detector (lazy)
         self._np = None              # numpy (lazy)
@@ -211,22 +214,32 @@ class FaceID:
                 embs.setdefault(name, []).append(other)
         if not sims:
             return None, 0.0
-        best_name, best = None, -1.0
-        for name, person_sims in sims.items():
-            score = self._combine(person_sims, embs.get(name), vec)
-            if score > best:
-                best_name, best = name, score
+        # RANK everyone, don't just track the winner. The runner-up's score is the number that says whether a
+        # match was DECISIVE or a coin flip: 'matched Ramesh 0.398' told us nothing about whether Shanika
+        # scored 0.11 (safe) or 0.39 (one bad frame from greeting the wrong person by name). Without the
+        # margin there is no way to tune ROBOT_FACE_ID_THRESHOLD from a run log, or to notice that two
+        # enrolled people have become confusable. Cheap: the per-person scores are already computed.
+        ranked = sorted(((self._combine(person_sims, embs.get(name), vec), name)
+                         for name, person_sims in sims.items()), reverse=True)
+        self.last_ranked = [(n, s) for s, n in ranked[:3]]   # diagnostics for callers
+        best, best_name = ranked[0]
+        runner = f", runner-up {ranked[1][1]!r} {ranked[1][0]:.3f} (margin {best - ranked[1][0]:+.3f})" \
+                 if len(ranked) > 1 else " (only one person enrolled)"
         if best_name is not None and best >= self.threshold:
-            log.info("face_id: matched %r (%s %.3f >= %.2f over %d photo(s))",
-                     best_name, self._aggregate, best, self.threshold, len(sims[best_name]))
+            log.info("face_id: matched %r (%s %.3f >= %.2f over %d photo(s); face box %dpx)%s",
+                     best_name, self._aggregate, best, self.threshold, len(sims[best_name]),
+                     self.last_face_px, runner)
             return best_name, best
         # The face box size is in the message on purpose. A no-match with a BIG box is a real person the
         # enrolments don't cover well (re-enrol them, or lower ROBOT_FACE_ID_THRESHOLD); a no-match with a box
         # barely over ROBOT_FACE_ID_MIN_FACE_PX is usually Haar firing on scenery, or a visitor too far away to
         # recognise -- raise ROBOT_FACE_ID_MIN_NEIGHBORS / _MIN_FACE_PX for that. Without the size the two look
         # identical in the log, and they need opposite fixes.
-        log.info("face_id: no match (best %s %.3f < %.2f; face box %dpx)",
-                 self._aggregate, max(best, 0.0), self.threshold, self.last_face_px)
+        # Name the CLOSEST person even though we're rejecting them: "closest Ramesh 0.31" means he was nearly
+        # recognised (widen his enrolment, or lower the threshold), while a spread of low scores means the crop
+        # isn't a real face at all. The old line said only "best 0.31" -- the same number for both cases.
+        log.info("face_id: no match (closest %r %s %.3f < %.2f; face box %dpx)%s",
+                 best_name, self._aggregate, max(best, 0.0), self.threshold, self.last_face_px, runner)
         return None, max(best, 0.0)
 
     def enroll(self, jpeg_bytes, name):
