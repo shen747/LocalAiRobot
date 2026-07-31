@@ -341,7 +341,8 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # ./scripts/patches/pi5/3_camera_usb_webcam.sh 0
 # ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot   # frees /dev/video0 from the CSI overlay
 
-# 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge)
+# 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
+#    Run it as YOURSELF -- no sudo (see the note under this block).
 ./scripts/purge_garbage.sh --dry-run    # see what would go, delete nothing
 ./scripts/purge_garbage.sh              # captures + logs + caches (KEEPS the face database)
 
@@ -413,6 +414,22 @@ bash enroll_all.sh && ./scripts/rag.sh --faces
 embeddings before storing the new ones — so a plain `bash enroll_all.sh` already rebuilds every embedding it
 covers. You only need the wipe if someone was enrolled ad-hoc with `enroll_person.sh --camera` and is
 therefore *not* in `enroll_all.sh`; their stale row would otherwise survive and pollute the runner-up margin.
+
+> 🔴 **Never `sudo ./scripts/purge_garbage.sh`.** It calls `sudo` itself for the two steps that need it (the
+> systemd journal and apt). Run the *whole* thing as root and `sudo` resets `HOME` to `/root`, so every path
+> retargets — it would look for captures in `/root/detect-captures` and the database in
+> `/root/.localairobot/`, find neither, and cheerfully report success having purged nothing. The script
+> refuses to run as root for exactly that reason.
+>
+> `sudo: ./scripts/purge_garbage.sh: command not found` means one of two things: you used `sudo` (drop it),
+> or the file lost its executable bit. Git only carries file modes if they were staged with
+> `git add --chmod=+x` — on Windows `core.filemode` is `false`, so a plain `chmod +x` never reaches the
+> commit. Either fix works:
+>
+> ```bash
+> bash ./scripts/purge_garbage.sh --dry-run   # works regardless of the +x bit
+> chmod +x scripts/*.sh                       # or fix the bit locally
+> ```
 
 ## 9. Enrolling faces
 

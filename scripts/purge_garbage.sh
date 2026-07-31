@@ -34,6 +34,14 @@
 #   ./scripts/purge_garbage.sh --dry-run       # show what WOULD go, touch nothing
 #   ./scripts/purge_garbage.sh --captures      # just one category (--logs / --cache / --db also work)
 #   ./scripts/purge_garbage.sh --all --yes     # unattended (skips the typed confirmation)
+#
+# RUN IT AS YOURSELF -- *** NOT *** WITH sudo. It calls sudo itself for the two steps that need it (the
+# systemd journal and apt). Under sudo, HOME becomes /root and every path retargets to root's home, so it
+# would find no captures and no database and report success having purged nothing. It refuses to run as
+# root for exactly that reason.
+#   "sudo: ./scripts/purge_garbage.sh: command not found" means one of two things -- you used sudo (drop
+#   it), or the file lost its +x bit (git on Windows doesn't carry file modes unless they're staged with
+#   `git add --chmod=+x`). Either fix works:   bash ./scripts/purge_garbage.sh   |   chmod +x scripts/*.sh
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # Load config so this behaves the same from cron/SSH as it does for the brain -- but an INLINE env var must
@@ -56,7 +64,10 @@ for arg in "$@"; do
     --cache)      WANT_CACHE=1;    PICKED=1 ;;
     --db)         WANT_DB=1;       PICKED=1 ;;
     --all|-a)     WANT_CAPTURES=1; WANT_LOGS=1; WANT_CACHE=1; WANT_DB=1; PICKED=1 ;;
-    -h|--help)    sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Print the whole header block, however long it grows: everything from line 2 up to the line before
+    # `set -uo pipefail`. A hard-coded range silently truncates --help the moment the header is edited.
+    -h|--help)    sed -n "2,$(($(grep -n '^set -uo pipefail' "$0" | head -1 | cut -d: -f1) - 1))p" "$0" \
+                    | sed 's/^# \{0,1\}//'; exit 0 ;;
     "")           ;;
     *) echo "unknown option: $arg  (try --help)" >&2; exit 2 ;;
   esac
@@ -89,6 +100,30 @@ run() {
   if [ "$DRY" = 1 ]; then printf '   %s[dry-run]%s would %s\n' "$YEL" "$RST" "$desc"; return 0; fi
   "$@"
 }
+
+# DON'T RUN THIS UNDER sudo. It is written to run as YOU, and calls sudo itself for the two things that
+# need it (journalctl, apt). Run the whole thing as root and sudo resets HOME to /root, so every path below
+# silently retargets: ~/detect-captures -> /root/detect-captures, ~/.localairobot/memory.db -> /root/...
+# None of those exist, so the script cheerfully reports "nothing to purge" while the real captures and the
+# real database sit untouched -- a purge that looks like it worked and did nothing is worse than an error.
+# (And with --db it would hunt for a database in the wrong home entirely.)
+if [ "$(id -u)" = 0 ]; then
+  AS_USER="${SUDO_USER:-your normal user}"
+  note "${RED}Do not run this with sudo.${RST}"
+  note "Running as root sets HOME=/root, so this would look for captures in /root/detect-captures and the"
+  note "database in /root/.localairobot/ -- find nothing, and report success having purged nothing."
+  note ""
+  note "Run it as yourself; it calls sudo on its own for the journal + apt steps:"
+  if [ -n "${SUDO_USER:-}" ]; then
+    note "    ${B}exit${RST}   (or open a normal shell as $AS_USER), then:"
+  fi
+  note "    ${B}cd $REPO && ./scripts/purge_garbage.sh $*${RST}"
+  note ""
+  note "If the file isn't executable yet (git may not have carried the +x bit), either of these works:"
+  note "    ${B}bash ./scripts/purge_garbage.sh $*${RST}"
+  note "    ${B}chmod +x scripts/*.sh${RST}"
+  exit 1
+fi
 
 # Is this actually the robot? This script runs `sudo apt-get clean`, vacuums the systemd journal and deletes
 # *.log out of the repo -- all correct on the Pi, all unwelcome on the PC you develop on, where those same
