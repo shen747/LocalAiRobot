@@ -341,6 +341,11 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # ./scripts/patches/pi5/3_camera_usb_webcam.sh 0
 # ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot   # frees /dev/video0 from the CSI overlay
 
+# 4B. Wake sensor -- SKIP unless you swapped it; the defaults are already tuned for a PIR.
+#     Config only, no code changes, identical wiring (VCC->5V, GND->GND, OUT->GPIO 4).
+# ./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- the default
+# ./scripts/patches/common/6_motion_ld2410c.sh       # HLK-LD2410C 24GHz mmWave presence radar instead
+
 # 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
 #    Run it as YOURSELF -- no sudo (see the note under this block).
 ./scripts/purge_garbage.sh --dry-run    # see what would go, delete nothing
@@ -372,6 +377,46 @@ face_id: ready (model=arcface.onnx, detector=yunet, 5-point ALIGNED, threshold=0
 > crops, so unaligned input makes every score collapse into 0.13–0.21 and the "closest" name a lottery (a
 > field run recognised **2.3%** of frames that contained a face). Fix with `./scripts/provision_face_id.sh`,
 > then **re-run step 6** so the stored embeddings are aligned too.
+
+### Swapping the wake sensor (PIR ↔ mmWave radar)
+
+Both sensors hand the Pi the same thing — a digital HIGH/LOW on one wire — which is all
+`gpiozero.MotionSensor` in [`brain/pir.py`](brain/pir.py) ever reads. So the swap is **three wires and one
+patch, no code changes**:
+
+| | Pi 5 |
+|---|---|
+| VCC | 5 V (pin 2) — *PIR needs 5 V, not 3.3 V, or it won't trigger* |
+| GND | GND (pin 6) |
+| OUT | GPIO 4 (pin 7) — the same pin either way |
+
+```bash
+./scripts/patches/common/6_motion_ld2410c.sh       # switch to the radar
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # ...and back again
+./scripts/patches/common/6_motion_ld2410c.sh 17    # pass a BCM pin to move it off GPIO 4
+```
+
+All the patch changes is **how much defence the wake needs**. `ROBOT_PIR_HOLD_S`,
+`ROBOT_CONCIERGE_SILENT_COOLDOWN_S` and `ROBOT_CONCIERGE_PROBE_TRIES` exist *solely* to survive a PIR that
+lies — and it does: a field log had 3,741 of 3,786 wakes with nobody in front of the camera. Radar doesn't
+false-trigger on fan exhaust or sunlight, so the patch drops all three: **~0.89 s to greet you with a ~43%
+chance of waiting out a cooldown first → ~0.7 s essentially every time.** Verify with:
+
+```bash
+journalctl -u robot.service | grep 'from PIR'
+```
+
+> ⚠️ **Meter OUT before you connect it.** The LD2410C datasheet specifies 3.3 V IO (Pi-safe), but clones
+> vary and 5 V on a GPIO destroys the pin.
+
+Two behaviours to expect from radar, neither of which is a fault:
+
+- **It sees through plasterboard.** You will get wakes from the next room until you range-gate it over its
+  UART (TX/RX, 256000 baud 8N1). Budget an evening; this is the #1 complaint with these modules.
+- **It reports presence, not movement.** OUT stays HIGH the whole time someone is in view, so you get one
+  clean wake per arrival — and it finally notices someone who walks up and *stops moving*, which PIRs can't.
+  The flip side: in a room you occupy all day it sits HIGH for hours and produces no new edges at all. Ideal
+  by a door, wrong for a desk.
 
 **Proving the PIR is optional now.** A chattering sensor no longer breaks anything: the cheap Stage-A probe
 kills a false wake in ~120 ms and the silent outcome cooldown paces the rest, so this is tidy-up, not a

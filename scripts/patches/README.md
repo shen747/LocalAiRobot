@@ -73,6 +73,26 @@ Checks deps (reuses onnxruntime; face detection needs `cv2` from the USB-webcam 
 recognition model. Then enrol people with `./scripts/enroll_person.sh "Name" "desc" "say-as" photo.jpg` (or `--camera`) and set `ROBOT_CONCIERGE_MODE=1`.
 Full flow: [docs/concierge.md](../../docs/concierge.md).
 
+## 6 — Concierge wake sensor (which thing tells Jarvis someone arrived) · `common/`
+```bash
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- THE DEFAULT
+./scripts/patches/common/6_motion_ld2410c.sh       # HLK-LD2410C 24GHz mmWave PRESENCE radar instead
+```
+**Config only — no code changes, and the wiring is identical** (VCC→5V, GND→GND, OUT→GPIO 4). Both sensors
+present a plain digital HIGH/LOW on OUT, which is all `gpiozero.MotionSensor` in `brain/pir.py` ever reads,
+so `ROBOT_PIR_PIN` and the whole two-stage wake carry over untouched. Pass a BCM pin to either script to move
+it (`... 17`); omit it and your current pin is kept.
+
+What differs is only how much *defence* the wake needs. A PIR next to a warm Pi lies constantly (a field log:
+3,741 of 3,786 wakes had nobody there), so the defaults pay a hold filter, a 4 s silent cooldown and a second
+probe frame to survive it. mmWave doesn't false-trigger on fan exhaust or sunlight, so the radar patch drops
+all three — roughly 0.89 s to greet you (with a ~43% chance of waiting out a cooldown first) → ~0.7 s
+essentially every time.
+
+Two things to know before switching: 24 GHz **passes through plasterboard**, so expect to range-gate it over
+its UART; and it reports *presence*, not *movement*, so it sits permanently HIGH in a room you occupy all day
+and stops producing wake edges — great for a door, wrong for a desk. Both scripts spell this out when run.
+
 ---
 
 **Idempotent:** each key is rewritten in place (ESC patches add a `# [<esc>]` provenance tag). **Steering
