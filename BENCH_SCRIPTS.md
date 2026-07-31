@@ -419,7 +419,7 @@ therefore *not* in `enroll_all.sh`; their stale row would otherwise survive and 
 > systemd journal and apt). Run the *whole* thing as root and `sudo` resets `HOME` to `/root`, so every path
 > retargets — it would look for captures in `/root/detect-captures` and the database in
 > `/root/.localairobot/`, find neither, and cheerfully report success having purged nothing. The script
-> refuses to run as root for exactly that reason.
+> refuses when it detects it was started via `sudo` from a normal account (a genuine root login is fine).
 >
 > `sudo: ./scripts/purge_garbage.sh: command not found` means one of two things: you used `sudo` (drop it),
 > or the file lost its executable bit. Git only carries file modes if they were staged with

@@ -16,7 +16,8 @@
 #   captures   ~/detect-captures/*.jpg           every kept motion frame          SAFE
 #   logs       journalctl for robot.service,     so the next log starts at line 1 SAFE
 #              ~/.localairobot/robot.log, repo *.log
-#   cache      apt archives, pip cache, __pycache__, thumbnails, old journals     SAFE
+#   cache      apt archives, pip cache, thumbnails, old journals, and the         SAFE
+#              __pycache__ of YOUR code (brain/.venv is deliberately left alone)
 #   db         ~/.localairobot/memory.db         faces + memories + who it is     ***DESTRUCTIVE***
 #
 # THE DATABASE IS THE ONE THAT BITES. memory.db holds every enrolled FACE (with the pronunciation and the
@@ -107,19 +108,23 @@ run() {
 # None of those exist, so the script cheerfully reports "nothing to purge" while the real captures and the
 # real database sit untouched -- a purge that looks like it worked and did nothing is worse than an error.
 # (And with --db it would hunt for a database in the wrong home entirely.)
-if [ "$(id -u)" = 0 ]; then
-  AS_USER="${SUDO_USER:-your normal user}"
-  note "${RED}Do not run this with sudo.${RST}"
-  note "Running as root sets HOME=/root, so this would look for captures in /root/detect-captures and the"
-  note "database in /root/.localairobot/ -- find nothing, and report success having purged nothing."
+# Refuse only the ACTUAL mistake -- root via sudo from a normal account -- rather than root as such. A robot
+# genuinely running its brain as root has HOME=/root legitimately, and there is nothing wrong with purging
+# it; blocking that would be a bug of its own. SUDO_USER is what distinguishes the two.
+if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  SUDO_HOME="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+  SUDO_HOME="${SUDO_HOME:-/home/$SUDO_USER}"
+  note "${RED}Don't run this with sudo.${RST}  It calls sudo itself for the journal + apt steps."
   note ""
-  note "Run it as yourself; it calls sudo on its own for the journal + apt steps:"
-  if [ -n "${SUDO_USER:-}" ]; then
-    note "    ${B}exit${RST}   (or open a normal shell as $AS_USER), then:"
-  fi
+  note "sudo reset HOME to ${B}/root${RST}, so every path below would retarget away from ${B}$SUDO_USER${RST}:"
+  note "    captures : /root/detect-captures        ${YEL}(yours: $SUDO_HOME/detect-captures)${RST}"
+  note "    database : /root/.localairobot/memory.db  ${YEL}(yours: $SUDO_HOME/.localairobot/memory.db)${RST}"
+  note "Neither exists, so it would purge NOTHING and still report success."
+  note ""
+  note "Run it as yourself instead:"
   note "    ${B}cd $REPO && ./scripts/purge_garbage.sh $*${RST}"
   note ""
-  note "If the file isn't executable yet (git may not have carried the +x bit), either of these works:"
+  note "Getting 'command not found' without sudo? The +x bit didn't survive the commit -- either works:"
   note "    ${B}bash ./scripts/purge_garbage.sh $*${RST}"
   note "    ${B}chmod +x scripts/*.sh${RST}"
   exit 1
@@ -235,10 +240,22 @@ if [ "$WANT_CACHE" = 1 ]; then
   # Stale .pyc from an OLD checkout is a real failure mode, not just disk: a pull that DELETES a module
   # leaves its .pyc behind, and on some layouts Python will still import it -- so the robot runs code that
   # no longer exists in git. Clearing them makes "what's running" match "what's checked out".
-  pyc=$(find "$REPO" -name '__pycache__' -type d 2>/dev/null | wc -l | tr -d ' ')
+  #
+  # SKIP THE VENV. brain/.venv/lib/.../site-packages is full of __pycache__ too -- on a real robot that is
+  # ~478 of the 480 directories here -- but it is NOT a git checkout, so none of it can be stale in the sense
+  # above. Deleting it fixes nothing and makes the next start recompile every dependency. Only OUR code
+  # (brain/, scripts/, tools/) can go out of sync with git, so only our code gets swept.
+  # ONE prune expression, used for both the count and the delete, so the two can never disagree about what
+  # is in scope. The trailing -prune on the match itself stops find descending into a directory it is about
+  # to remove (which is what produces spurious "No such file or directory" noise).
+  pyc_find() {                      # $@ = the action (-print, or -exec rm -rf {} +)
+    find "$REPO" \( -path "$REPO/brain/.venv" -o -name node_modules \) -prune -o \
+         -name '__pycache__' -type d -prune "$@" 2>/dev/null
+  }
+  pyc=$(pyc_find -print | wc -l | tr -d ' ')
   if [ "$pyc" -gt 0 ]; then
-    run "delete $pyc __pycache__ dir(s) under the repo" \
-        find "$REPO" -name '__pycache__' -type d -prune -exec rm -rf {} +
+    run "delete $pyc __pycache__ dir(s) of OUR code (brain/.venv left alone)" \
+        pyc_find -exec rm -rf {} +
     [ "$DRY" = 1 ] || did "removed $pyc __pycache__ dir(s) -- no stale bytecode from the old checkout"
   fi
   if command -v journalctl >/dev/null 2>&1 && [ "$WANT_LOGS" = 0 ]; then
