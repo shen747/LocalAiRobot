@@ -17,6 +17,7 @@
 import logging
 import os
 import threading
+import time
 from io import BytesIO
 
 from PIL import Image                   # this module is imported LAZILY (only on a live camera build), where
@@ -30,6 +31,13 @@ def _envi(key, default):
         return int(os.environ.get(key, default) or default)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _envf(key, default):
+    try:
+        return float(os.environ.get(key, default) or default)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 _CSI_W = _envi("ROBOT_CSI_WIDTH", 1280)
@@ -53,6 +61,22 @@ class GstCamera:
             self._cap_timeout = float(os.environ.get("ROBOT_CAMERA_CAPTURE_TIMEOUT_S", "12") or 12)
         except (TypeError, ValueError):
             self._cap_timeout = 12.0
+        # How many frames to READ AND THROW AWAY before keeping one. Two numbers, because the reason for
+        # discarding changes completely once the stream is already running:
+        #   COLD (first capture, or the first after a gap) -- the V4L2 driver hands back whatever is sitting
+        #     in its buffer queue, which can be seconds old, and auto-exposure/white-balance have not settled.
+        #     Discarding several frames is the only way to be sure the frame is BOTH current and correctly
+        #     exposed. Worth ~5 frames.
+        #   WARM (another capture moments later, i.e. inside a Concierge recognition burst) -- the stream has
+        #     been running continuously, AE/AWB settled on the previous capture, and the queue is one frame
+        #     deep. Discarding 5 again buys nothing and costs a frame interval each: measured on the field
+        #     robot, capture was the dominant per-frame cost at ~400ms, so a 35-frame recognition window was
+        #     spending most of its time throwing away good frames.
+        # Set _WARM equal to _DISCARD to restore the old uniform behaviour exactly.
+        self._discard_cold = _envi("ROBOT_CAMERA_DISCARD_FRAMES", 5)
+        self._discard_warm = _envi("ROBOT_CAMERA_DISCARD_FRAMES_WARM", 1)
+        self._warm_window_s = _envf("ROBOT_CAMERA_WARM_WINDOW_S", 2.0)
+        self._last_capture_at = 0.0
         try:
             import cv2
             self._cv2 = cv2
@@ -70,6 +94,14 @@ class GstCamera:
             if not cap.isOpened():
                 raise RuntimeError("cv2.VideoCapture could not open the camera "
                                    f"(backend={self.backend}, source={src or 'CSI sensor 0'})")
+            # Keep the driver's buffer queue SHALLOW. With the default (often 4+) a read returns whatever was
+            # queued while nobody was looking, so the "current" frame can be a second or more stale -- which is
+            # exactly what forces a big discard count. Not all backends honour it (it's advisory), so the
+            # discard logic below still stands on its own; this just makes the warm path safe to shorten.
+            try:
+                cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
             self._cap = cap
             self.available = True
             log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG)%s",
@@ -131,10 +163,13 @@ class GstCamera:
                 log.warning("capture still in-flight from a prior timeout -- skipping this frame")
                 return None
             cap = self._cap                      # local ref: worker never touches a nulled attribute
+            # Cold vs warm (see __init__): a burst frame only needs the queue drained, not AE/AWB re-settled.
+            warm = (time.monotonic() - self._last_capture_at) <= self._warm_window_s
+            reads = max(1, self._discard_warm if warm else self._discard_cold)
             def _grab():
                 try:
                     frame = None
-                    for _ in range(5):           # discard a few frames so AE/AWB settle, keep the last good
+                    for _ in range(reads):       # discard all but the last: newest frame, settled exposure
                         ok, f = cap.read()
                         if ok and f is not None:
                             frame = f
@@ -149,6 +184,9 @@ class GstCamera:
             log.warning("capture timed out after %.0fs -- returning no frame", self._cap_timeout)
             return None
         frame = result["frame"]
+        # Stamp AFTER the read, not before: what makes the next capture "warm" is how recently the stream
+        # last delivered, and a slow read is exactly the case where that distinction matters.
+        self._last_capture_at = time.monotonic()
         if frame is None:
             log.warning("capture failed: no frame from the camera")
             return None

@@ -1358,6 +1358,11 @@ def main():
                     #
                     # Either way the throttle is applied AFTER we know what we saw (motion_wake.arm_cooldown),
                     # never before -- that inversion is the whole fix.
+                    # Wake latency: how long between the visitor tripping the PIR and us deciding. This is the
+                    # number to tune against -- "it feels slow" is unactionable, "1.4s, of which 0.9s was the
+                    # probe" tells you exactly which knob to turn. 0 when the PIR isn't the trigger source.
+                    _woke_at = getattr(motion_wake, "last_wake_at", 0.0) or 0.0
+                    _since_wake = (lambda: (time.monotonic() - _woke_at) if _woke_at else 0.0)
                     grab = (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None)
                     # Smile the INSTANT motion fires (default), held through the whole look -- a greeter that
                     # waits to be sure before acknowledging you feels broken. The trade-off is new: the PIR is
@@ -1380,8 +1385,9 @@ def main():
                             motion_wake.arm_cooldown(
                                 _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
                             concierge_stats["probe_silent"] += 1
-                            log.debug("concierge: motion but nobody there (%d probe frame(s)) -> back to %r",
-                                      probe["attempts"], idle["face"])
+                            log.debug("concierge: motion but nobody there (%d probe frame(s), %.2fs since "
+                                      "the PIR fired) -> back to %r",
+                                      probe["attempts"], _since_wake(), idle["face"])
                             _keep_capture(probe.get("jpeg"), "noface")
                             fc.set_expression(idle["face"])
                             continue
@@ -1422,16 +1428,19 @@ def main():
                         # the SPOKEN greeting when set (e.g. Ramesh -> "Ruh-mesh").
                         concierge_stats["by_name"] += 1
                         pron = mem.pronunciation_for(name)
-                        log.info("concierge: recognised %r%s in %d try(s) (best %.3f) -> greeting",
-                                 name, f" (say-as '{pron}')" if pron else "", res["attempts"], res["best_score"])
+                        log.info("concierge: recognised %r%s in %d try(s) (best %.3f) -> greeting "
+                                 "[%.2fs from PIR to decision]",
+                                 name, f" (say-as '{pron}')" if pron else "", res["attempts"],
+                                 res["best_score"], _since_wake())
                         _keep_capture(res.get("jpeg"), "known", name)
                         snd.play("wake_ack")
                         say(concierge.greeting(name, pron))
                     else:
                         # present but unrecognised after the window -> a warm, name-less greeting (still chats).
                         log.info("concierge: person present but unrecognised after %d try(s) (%d face hit(s), "
-                                 "best %.3f vs threshold %.2f) -> generic greeting", res["attempts"],
-                                 res["face_hits"], res["best_score"], face_identifier.threshold)
+                                 "best %.3f vs threshold %.2f) -> generic greeting "
+                                 "[%.2fs from PIR to decision]", res["attempts"],
+                                 res["face_hits"], res["best_score"], face_identifier.threshold, _since_wake())
                         _keep_capture(res.get("jpeg"), "unknown")
                         snd.play("wake_ack")
                         say(concierge.greeting_unknown())

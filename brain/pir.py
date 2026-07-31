@@ -79,6 +79,10 @@ class MotionWake:
         # other -- the debounce paces the sensor, this paces the ROBOT's reaction to it.
         self._suppress_until = 0.0
         self._suppress_reason = ""
+        # Monotonic timestamp of the last ACCEPTED edge -- the moment the visitor actually tripped the sensor.
+        # main.py subtracts it from "we decided" to log a real wake latency, so "it feels slow" becomes a
+        # number instead of an impression. Stamped BEFORE the callback so it covers the whole wake path.
+        self.last_wake_at = 0.0
         self._window_start = 0.0
         self._window_count = 0
         self._chatter_warned = False
@@ -156,6 +160,7 @@ class MotionWake:
 
     def _fire(self):
         """gpiozero's rising-edge callback (its own thread). Filters the edge, then wakes the brain."""
+        edge_at = time.monotonic()                 # BEFORE the hold sleep: that sleep is part of the latency
         if self._is_spike():                       # sleeps up to hold_s -- fine, this is gpiozero's thread
             self.rejected_spike += 1
             if self._verbose:
@@ -179,6 +184,7 @@ class MotionWake:
                              self._pin, self._cooldown_s, now - self._last_accepted)
                 return
             self._last_accepted = now
+            self.last_wake_at = edge_at
             self.accepted += 1
             self._note_chatter(now)
         if self._verbose:
