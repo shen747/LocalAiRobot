@@ -38,24 +38,28 @@
 # Expected: PIR-to-greeting drops from ~0.89s (with a ~43% chance of waiting out a cooldown first) to
 # ~0.7s essentially every time. The log line to check is: journalctl -u robot.service | grep 'from PIR'
 #
-# ...AND ONE KNOB GOES THE OTHER WAY, WHICH IS THE OPPOSITE OF WHAT YOU'D EXPECT:
-#     ROBOT_CONCIERGE_PROBE_TRIES        2 -> 4   MORE camera looks, not fewer
-#     ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.15 -> 0.4  spread over ~1.6s instead of ~0.3s
-# The first version of this patch cut the probe to a SINGLE frame, on the reasoning that a sensor which
-# doesn't lie is worth believing immediately. That was wrong, and the field log showed it: the radar fired,
-# the camera took one look 1.2s later, saw nobody usable, and went back to sleep.
+# ...AND STAGE A IS SWITCHED OFF ENTIRELY, WHICH NEEDS EXPLAINING:
+#     ROBOT_CONCIERGE_PROBE_TRIES   2 -> 0   no cheap pre-check at all; go straight to the full window
+#     ROBOT_CONCIERGE_RECOGNIZE_S   7 -> 10  and give the visitor 10s to walk into the camera's view
 #
-# The reason is RANGE MISMATCH. This radar detects a person out to 5-6m. The camera can only resolve a face
-# big enough to recognise (ROBOT_FACE_ID_MIN_FACE_PX, default 60px in a 512px frame) at roughly 2m. So the
-# sensor correctly fires while the visitor is still four metres away and walking in -- and a single frame
-# taken 1.2 seconds later catches them before they have arrived. The PIR never had this problem because its
-# useful range happened to match the camera's.
+# STAGE A IS A LIE DETECTOR, AND THIS SENSOR DOESN'T LIE. The probe exists to kill a chattering PIR's 465
+# false wakes an hour for ~120ms each, so the expensive recognition window only ever runs for a real person.
+# On this radar the measured rate is ~6 wakes an hour and every one of them is a real person. There is
+# nothing left to filter -- so all Stage A does is spend 1.6 seconds deciding whether to bother looking
+# properly, and throw the visitor away if they weren't in frame during those 1.6 seconds.
 #
-# So the probe now spans the time it takes someone to walk the last few metres. It still returns EARLY the
-# moment it sees anyone, so a visitor already standing in front of the camera costs exactly one frame -- and
-# an empty room costs 4 frames only ~6 times an hour on this sensor, versus 465 on the PIR. Cheap either way.
-# The durable fix is to range-gate the radar over its UART so it stops firing at people the camera can't yet
-# see; these numbers are what makes it work well in the meantime.
+# And they very often aren't, because of a RANGE/FIELD-OF-VIEW MISMATCH. The radar detects a person out to
+# 5-6m and through a doorway; the camera sees a narrow cone in front of the unit. A probe run on the wall
+# measured it: of 103 frames taken while someone was moving around the hallway, only 15 had a face in them
+# at all -- but every single one of those was 69-221px, i.e. comfortably ABOVE the 60px floor and easily
+# recognisable. The camera is aimed correctly and exposed correctly. The person is simply not in its cone
+# most of the time, so sampling 4 frames from a 1.6s window mostly samples empty hallway.
+#
+# With PROBE_TRIES=0 the recognition window runs directly: ~50 looks over 10s (RECOGNIZE_INTERVAL_S 0.2),
+# returning the instant it gets ROBOT_CONCIERGE_FACE_HITS frames with a face. That is 50 chances to catch a
+# 3-5 frame burst instead of 4, and it costs ~300 frames/hour at 6 wakes/hour -- LESS than the 1,860/hour the
+# PIR was spending on Stage A alone. The durable refinement is to range-gate the radar over its UART so it
+# stops firing at people who are still four metres away; this makes it work well in the meantime.
 #
 # BEHAVIOUR CHANGE WORTH KNOWING. A PIR reports MOVEMENT; this reports PRESENCE. OUT goes HIGH when someone
 # arrives and STAYS HIGH while they stand there, even perfectly still. gpiozero fires on the rising edge, so
@@ -92,8 +96,8 @@ set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_e
 echo ">> Retuning the Concierge wake for an LD2410C mmWave presence sensor:"
 set_kv ROBOT_PIR_HOLD_S 0
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 1
-set_kv ROBOT_CONCIERGE_PROBE_TRIES 4
-set_kv ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.4
+set_kv ROBOT_CONCIERGE_PROBE_TRIES 0
+set_kv ROBOT_CONCIERGE_RECOGNIZE_S 10
 if [ -n "$PIN" ]; then
   set_kv ROBOT_PIR_PIN "$PIN"
 else
