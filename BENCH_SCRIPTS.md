@@ -396,11 +396,16 @@ patch, no code changes**:
 ./scripts/patches/common/6_motion_ld2410c.sh 17    # pass a BCM pin to move it off GPIO 4
 ```
 
-All the patch changes is **how much defence the wake needs**. `ROBOT_PIR_HOLD_S`,
-`ROBOT_CONCIERGE_SILENT_COOLDOWN_S` and `ROBOT_CONCIERGE_PROBE_TRIES` exist *solely* to survive a PIR that
-lies — and it does: a field log had 3,741 of 3,786 wakes with nobody in front of the camera. Radar doesn't
-false-trigger on fan exhaust or sunlight, so the patch drops all three: **~0.89 s to greet you with a ~43%
-chance of waiting out a cooldown first → ~0.7 s essentially every time.** Verify with:
+All the patch changes is **how much defence the wake needs**. `ROBOT_PIR_HOLD_S` and
+`ROBOT_CONCIERGE_SILENT_COOLDOWN_S` exist *solely* to survive a PIR that lies — and it does: a field log had
+3,741 of 3,786 wakes with nobody in front of the camera. Measured on the same wall, the radar took that from
+**465 false wakes/hour to ~6**, so the patch drops both: **~0.89 s to greet you with a ~43% chance of waiting
+out a cooldown first → ~0.7 s essentially every time.**
+
+It *widens* the camera probe (2 → 4 looks over ~1.6 s), which sounds backwards until you see why: the radar
+detects people at 5–6 m but the camera only resolves a usable face at ~2 m, so the sensor fires while the
+visitor is still walking in and a single frame 1.2 s later catches an empty hallway. The probe returns early
+the instant it sees someone, so a visitor already in front of the camera still costs one frame. Verify with:
 
 ```bash
 journalctl -u robot.service | grep 'from PIR'

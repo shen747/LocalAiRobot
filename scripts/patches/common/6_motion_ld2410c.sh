@@ -35,11 +35,27 @@
 #                                              camera flat out) and cost ~43% of wall clock deaf. With a
 #                                              sensor that only fires for real people there is almost
 #                                              nothing to cool down from.
-#     ROBOT_CONCIERGE_PROBE_TRIES  2 -> 1      the second cheap frame exists to catch a visitor mid-stride
-#                                              when the trigger might have been a phantom. A presence
-#                                              sensor saying "someone is here" is worth believing once.
 # Expected: PIR-to-greeting drops from ~0.89s (with a ~43% chance of waiting out a cooldown first) to
 # ~0.7s essentially every time. The log line to check is: journalctl -u robot.service | grep 'from PIR'
+#
+# ...AND ONE KNOB GOES THE OTHER WAY, WHICH IS THE OPPOSITE OF WHAT YOU'D EXPECT:
+#     ROBOT_CONCIERGE_PROBE_TRIES        2 -> 4   MORE camera looks, not fewer
+#     ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.15 -> 0.4  spread over ~1.6s instead of ~0.3s
+# The first version of this patch cut the probe to a SINGLE frame, on the reasoning that a sensor which
+# doesn't lie is worth believing immediately. That was wrong, and the field log showed it: the radar fired,
+# the camera took one look 1.2s later, saw nobody usable, and went back to sleep.
+#
+# The reason is RANGE MISMATCH. This radar detects a person out to 5-6m. The camera can only resolve a face
+# big enough to recognise (ROBOT_FACE_ID_MIN_FACE_PX, default 60px in a 512px frame) at roughly 2m. So the
+# sensor correctly fires while the visitor is still four metres away and walking in -- and a single frame
+# taken 1.2 seconds later catches them before they have arrived. The PIR never had this problem because its
+# useful range happened to match the camera's.
+#
+# So the probe now spans the time it takes someone to walk the last few metres. It still returns EARLY the
+# moment it sees anyone, so a visitor already standing in front of the camera costs exactly one frame -- and
+# an empty room costs 4 frames only ~6 times an hour on this sensor, versus 465 on the PIR. Cheap either way.
+# The durable fix is to range-gate the radar over its UART so it stops firing at people the camera can't yet
+# see; these numbers are what makes it work well in the meantime.
 #
 # BEHAVIOUR CHANGE WORTH KNOWING. A PIR reports MOVEMENT; this reports PRESENCE. OUT goes HIGH when someone
 # arrives and STAYS HIGH while they stand there, even perfectly still. gpiozero fires on the rising edge, so
@@ -76,7 +92,8 @@ set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_e
 echo ">> Retuning the Concierge wake for an LD2410C mmWave presence sensor:"
 set_kv ROBOT_PIR_HOLD_S 0
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 1
-set_kv ROBOT_CONCIERGE_PROBE_TRIES 1
+set_kv ROBOT_CONCIERGE_PROBE_TRIES 4
+set_kv ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.4
 if [ -n "$PIN" ]; then
   set_kv ROBOT_PIR_PIN "$PIN"
 else

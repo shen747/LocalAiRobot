@@ -1190,12 +1190,29 @@ def main():
     print("Autonomy (look around / find X) only runs if you say an explore phrase.")
     print("During autonomy, Ctrl-C aborts back to the prompt; at the prompt, 'q' or Ctrl-C quits.")
 
-    # Warm the model NOW (best-effort) so the first command isn't a multi-minute cold load, then
-    # an audible greeting confirms the stack is up -- useful when running headless under systemd.
+    # Warm the model in the BACKGROUND (best-effort) so the first command isn't a multi-minute cold load.
+    #
+    # THIS USED TO BE A BLOCKING CALL, AND IT COST A FIELD ROBOT 17 MINUTES OF ITS LIFE. When ollama can't
+    # bring its llama-server up (out of memory, model not pulled, a wedged daemon) the HTTP request does not
+    # honour our timeout -- one run sat here for 17m12s and then failed anyway, with the log reporting a
+    # cheerful "failed after 1 attempt(s) over 15s". For all of those 17 minutes the main loop had not
+    # started: no motion wakes, no wake word, no greetings. A concierge that is deaf and blind for a
+    # quarter of an hour after every boot is a far worse failure than a slow first sentence, which is the
+    # ONLY thing the warmup was ever protecting against.
+    #
+    # So it runs on a daemon thread now, exactly like the face model above (see the faceid-warmup thread).
+    # The robot is live immediately; the model finishes warming behind it, and if it never does, the first
+    # command cold-loads -- which is precisely the fallback the old code already had on failure.
     if os.environ.get("ROBOT_WARMUP", "1") == "1":
-        fc.set_expression("warmup")
-        ok = inference.warm_up(cfg, _llm_timeout())
-        print(f"Model warmup: {'ready' if ok else 'skipped (will cold-load on first command)'}")
+        def _warm():
+            try:
+                ok = inference.warm_up(cfg, _llm_timeout())
+                log.info("model warmup: %s", "ready" if ok
+                         else "failed -- the first command will cold-load instead")
+            except Exception as e:
+                log.warning("model warmup errored (%s) -- the first command will cold-load", e)
+        threading.Thread(target=_warm, daemon=True, name="llm-warmup").start()
+        print("Model warmup: started in the background (the robot is live now).")
     snd.play("greeting")
 
     # ESC ARMING PROMPT (headless safety). The WP-1060 arms to the neutral it sees at ITS power-on, so the
@@ -1484,6 +1501,22 @@ def main():
                         snd.play_blocking("sleep")      # say goodbye + how to wake me, FULLY, before we re-enter
                                                         # the wake listen (which then holds audio_lock)
                         idle["face"] = "sleeping"       # stay "asleep" until the next wake / motion
+                        # DISCARD any motion that fired DURING the conversation. It is almost always the
+                        # person we were just talking to -- they stood in front of the sensor for the whole
+                        # exchange -- so servicing it now makes Jarvis smile at the back of someone who has
+                        # already walked off. A field log caught exactly that: a wake-word chat ran
+                        # 09:14:52-09:15:32, the sensor tripped mid-conversation, and the queued wake was
+                        # honoured the instant the chat ended -- "motion but nobody there, 30.54s since the
+                        # PIR fired". The greet cooldown doesn't cover this case because it is only armed
+                        # when the CONCIERGE greets; a conversation opened by the wake word never arms it.
+                        # (A genuinely different visitor arriving mid-chat is not lost: they are still
+                        # there, so the next edge -- or their next movement -- wakes it normally.)
+                        if motion_event is not None and motion_event.is_set():
+                            motion_event.clear()
+                            log.debug("concierge: discarded a motion wake that arrived during the "
+                                      "conversation (almost certainly the person we were talking to)")
+                        motion_wake.arm_cooldown(
+                            _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
                         break
                     fc.set_expression("idle")   # nothing heard yet; keep waiting for a follow-up
                     continue

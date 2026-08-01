@@ -84,10 +84,15 @@ so `ROBOT_PIR_PIN` and the whole two-stage wake carry over untouched. Pass a BCM
 it (`... 17`); omit it and your current pin is kept.
 
 What differs is only how much *defence* the wake needs. A PIR next to a warm Pi lies constantly (a field log:
-3,741 of 3,786 wakes had nobody there), so the defaults pay a hold filter, a 4 s silent cooldown and a second
-probe frame to survive it. mmWave doesn't false-trigger on fan exhaust or sunlight, so the radar patch drops
-all three — roughly 0.89 s to greet you (with a ~43% chance of waiting out a cooldown first) → ~0.7 s
-essentially every time.
+3,741 of 3,786 wakes had nobody there), so the defaults pay a hold filter and a 4 s silent cooldown to
+survive it. mmWave doesn't false-trigger on fan exhaust or sunlight — measured on the same wall, **465 false
+wakes/hour → ~6** — so the radar patch drops both.
+
+It *widens* the camera probe though (2 → 4 looks over ~1.6 s), which is the opposite of what you'd expect
+and worth understanding: the radar sees people at 5–6 m, but the camera can only resolve a recognisable face
+at ~2 m (`ROBOT_FACE_ID_MIN_FACE_PX`). So the sensor correctly fires while the visitor is still walking in,
+and a single frame taken 1.2 s later misses them. The probe returns early the moment it sees anyone, so this
+costs nothing in practice. The durable fix is range-gating the radar over its UART.
 
 Two things to know before switching: 24 GHz **passes through plasterboard**, so expect to range-gate it over
 its UART; and it reports *presence*, not *movement*, so it sits permanently HIGH in a room you occupy all day

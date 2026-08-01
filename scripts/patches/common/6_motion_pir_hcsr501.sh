@@ -54,6 +54,7 @@ echo ">> Restoring the Concierge wake defaults for a classic PIR:"
 set_kv ROBOT_PIR_HOLD_S 0.1
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 4
 set_kv ROBOT_CONCIERGE_PROBE_TRIES 2
+set_kv ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.15
 if [ -n "$PIN" ]; then
   set_kv ROBOT_PIR_PIN "$PIN"
 else
