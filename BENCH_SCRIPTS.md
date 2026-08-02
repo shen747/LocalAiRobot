@@ -438,7 +438,7 @@ After changing code on the PC and pushing. **Order matters** — doing it wrong 
 against a stale journal.
 
 ```bash
-# 1. New code (config/robot.env is git-ignored, so your key + volume survive a pull)
+# 1. New code -- see the robot.env warning under this block before you commit anything on the robot
 cd ~/LocalAiRobot && git pull
 
 # 2. New config keys are NOT pulled (robot.env is ignored) -- absent keys fall back to code defaults,
@@ -459,6 +459,20 @@ bash enroll_all.sh && ./scripts/rag.sh --faces
 # 6. Boot service + reboot, then verify as in §7 step 8
 ./scripts/run_me.sh --install-boot && sudo reboot now
 ```
+
+> 🔴 **`config/robot.env` is TRACKED, not ignored.** It's committed as a *template* with an empty
+> `ROBOT_GEMINI_API_KEY`; the real key exists only as a local modification on the robot. Consequences:
+>
+> - A pull **merges** — new keys arrive and your edited lines stay, unless the same line changed on both
+>   sides, which is an ordinary conflict to resolve by hand.
+> - **Never `git add -A` or `git commit -a` on the robot.** That stages `config/robot.env` *with your live
+>   API key* and pushes it to GitHub. If you're unsure what's staged:
+>   ```bash
+>   git diff --cached | grep -i gemini     # must print nothing
+>   git diff config/robot.env              # your local config drift, for eyeballing
+>   ```
+> - Editing it with `sed -i 's|^KEY=.*|KEY=value|'` **replaces the whole line, comments included** — the
+>   documentation for that key is gone until the next merge brings it back. Harmless, but don't be surprised.
 
 **When do you actually need `--all`?** `enroll_person.sh` **replaces** a person — it clears their prior
 embeddings before storing the new ones — so a plain `bash enroll_all.sh` already rebuilds every embedding it
