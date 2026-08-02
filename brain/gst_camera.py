@@ -57,6 +57,8 @@ class GstCamera:
         # even if construction below fails (no camera).
         self._cap_lock = threading.Lock()
         self._cap_worker = None
+        self.capture_wh = (0, 0)     # set BEFORE the try, like the watchdog state: a failed construction
+                                     # must still leave every attribute readable (0,0 = "never opened")
         try:
             self._cap_timeout = float(os.environ.get("ROBOT_CAMERA_CAPTURE_TIMEOUT_S", "12") or 12)
         except (TypeError, ValueError):
@@ -102,10 +104,42 @@ class GstCamera:
                 cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
                 pass
+            # ASK FOR A USABLE CAPTURE RESOLUTION. This used to be left entirely to the driver, and virtually
+            # every UVC webcam defaults to 640x480 -- so the face recogniser was being fed a fraction of the
+            # sensor the camera actually has. It matters more than it looks: face size in the final frame is
+            # (face's share of the frame width) x ROBOT_CAMERA_SIZE, and ArcFace needs real detail to fill a
+            # 112x112 aligned crop. On a wall-mounted concierge a visitor measured 70px -- soft enough that
+            # match scores sat at 0.25-0.40 against enrolment photos whose faces were 126-212px. Same person,
+            # same model: the live path simply had less to work with.
+            # A camera that can't do the requested mode silently gives its nearest one, so we LOG what we
+            # actually got rather than what we asked for -- otherwise this is a setting that lies.
+            want_w, want_h = _envi("ROBOT_CAMERA_CAPTURE_WIDTH", 1280), _envi("ROBOT_CAMERA_CAPTURE_HEIGHT", 720)
+            if want_w > 0 and want_h > 0:
+                try:
+                    cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, want_w)
+                    cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, want_h)
+                except Exception:
+                    pass
+            try:
+                self.capture_wh = (int(cap.get(self._cv2.CAP_PROP_FRAME_WIDTH)),
+                                   int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT)))
+            except Exception:
+                self.capture_wh = (0, 0)
             self._cap = cap
             self.available = True
-            log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG)%s",
-                     self.backend, self.size, self._apply_autofocus())
+            cw, ch = self.capture_wh
+            note = ""
+            if cw and ch:
+                note = f", sensor {cw}x{ch}"
+                if want_w > 0 and (cw, ch) != (want_w, want_h):
+                    note += f" (asked {want_w}x{want_h} -- camera gave its nearest mode)"
+                # The recogniser sees (face's share of frame width) x size pixels, so capturing BELOW the
+                # square target throws detail away before face_id ever runs. Worth saying out loud.
+                if cw < self.size:
+                    note += (f" !! capture is narrower than the {self.size}px square target -- faces will be "
+                             "upscaled and soft; raise ROBOT_CAMERA_CAPTURE_WIDTH/HEIGHT")
+            log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG%s)%s",
+                     self.backend, self.size, note, self._apply_autofocus())
         except Exception as e:
             # No camera / no cv2 / bad pipeline: degrade to 'no frame' rather than crash the brain.
             log.warning("camera unavailable (%s) -- vision will report no frame (USB: `v4l2-ctl "
