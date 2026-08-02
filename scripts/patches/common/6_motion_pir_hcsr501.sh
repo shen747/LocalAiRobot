@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
 #   PATCH:   classic PIR motion sensor (HC-SR501 / Adafruit) as the Concierge wake  -- THE DEFAULT
-#   RUN IF:  you're on a PIR, or going BACK to one after trying the mmWave radar
+#   RUN IF:  you're on a PIR, or coming BACK to one after trying another wake sensor
 #   BOARD:   common  (Pi 5 or Jetson)
 #   DOES:    config only -- restores the wake timings that survive a chattering sensor
 # =============================================================================
-# This is the exact opposite of common/6_motion_ld2410c.sh and restores the shipped defaults. Run it if the
-# radar didn't suit you -- most likely because it sees through walls, or because Jarvis lives in a room you
-# occupy all day (a presence sensor sits permanently HIGH there and stops producing wake edges at all,
+# Restores the shipped defaults. Run it to come BACK from any other wake sensor -- it resets
+# ROBOT_WAKE_SENSOR to 'pir' as well as the timings, so a robot that was on the I2C VCNL4200 stops polling a
+# chip you have just unplugged. Run it if the other sensor didn't suit you -- e.g. a presence sensor in a
+# room you occupy all day (it sits permanently HIGH there and stops producing wake edges at all,
 # whereas a PIR reporting MOVEMENT keeps working).
 #
 # WIRING (unchanged -- both sensors present the same 3 wires):
@@ -18,7 +19,7 @@
 #     OUT       ->     GPIO 4 (pin 7)      <- 3.3V logic, Pi-safe, no divider needed
 #   Full guide: docs/wiring/pir-sensor-wiring.md
 #
-# WHY THESE NUMBERS ARE HIGHER THAN THE RADAR'S. A PIR next to a warm Pi false-triggers relentlessly -- a
+# WHY THESE DEFENCES EXIST. A PIR next to a warm Pi false-triggers relentlessly -- a
 # 19-hour field log recorded 3,786 motion wakes of which 3,741 (98.8%) had nobody in front of the camera, and
 # 1,232 of those landed between midnight and 6am in an empty house. These three keys are what make that
 # survivable rather than crippling:
@@ -40,7 +41,7 @@ ENV="$REPO/config/robot.env"
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 PIN="${1:-}"
 # The only argument is an optional BCM pin -- reject anything else rather than writing it into robot.env
-# as ROBOT_PIR_PIN (see the same guard in 6_motion_ld2410c.sh).
+# as ROBOT_PIR_PIN (same guard as the other wake-sensor patches).
 case "$PIN" in
   -h|--help) sed -n '2,/^# ===*$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   ""|[0-9]|[0-9][0-9]) ;;
@@ -58,6 +59,10 @@ set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_e
 }
 
 echo ">> Restoring the Concierge wake defaults for a classic PIR:"
+# Put the BACKEND back first. Without this, switching PIR -> VCNL4200 -> PIR leaves ROBOT_WAKE_SENSOR on
+# 'proximity', so you re-wire a PIR to GPIO 4 and the brain carries on polling an I2C chip that isn't there
+# -- it degrades to wake-word-only and the motion trigger silently never fires.
+set_kv ROBOT_WAKE_SENSOR pir
 set_kv ROBOT_PIR_HOLD_S 0.1
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 4
 set_kv ROBOT_CONCIERGE_PROBE_TRIES 2

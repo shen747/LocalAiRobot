@@ -76,23 +76,36 @@ Full flow: [docs/concierge.md](../../docs/concierge.md).
 ## 6 — Concierge wake sensor (which thing tells Jarvis someone arrived) · `common/`
 ```bash
 ./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- THE DEFAULT
-./scripts/patches/common/6_motion_ld2410c.sh       # HLK-LD2410C 24GHz mmWave PRESENCE radar instead
+./scripts/patches/common/6_motion_vcnl4200.sh      # Vishay VCNL4200 active-IR proximity (I2C) instead
 ```
-**Config only — no code changes, and the wiring is identical** (VCC→5V, GND→GND, OUT→GPIO 4). Both sensors
-present a plain digital HIGH/LOW on OUT, which is all `gpiozero.MotionSensor` in `brain/pir.py` ever reads,
-so `ROBOT_PIR_PIN` and the whole two-stage wake carry over untouched. Pass a BCM pin to either script to move
-it (`... 17`); omit it and your current pin is kept.
+The PIR patch is **config only** — a PIR hands the Pi a digital HIGH/LOW on `ROBOT_PIR_PIN`, which is all
+`gpiozero.MotionSensor` in `brain/pir.py` ever reads. Pass a BCM pin to move it (`... 17`).
 
-What differs is only how much *defence* the wake needs. A PIR next to a warm Pi lies constantly (a field log:
-3,741 of 3,786 wakes had nobody there), so the defaults pay a hold filter and a 4 s silent cooldown to
-survive it. mmWave doesn't false-trigger on fan exhaust or sunlight — measured on the same wall, **465 false
-wakes/hour → ~6** — so the radar patch drops both.
+The VCNL4200 patch **also switches the backend** (`ROBOT_WAKE_SENSOR=proximity` → `brain/proximity.py`),
+because that sensor is I²C: four wires, not the PIR's pin, and it must be configured over the bus before it
+measures anything. Its `NEAR`/`FAR` arguments are **raw reflected-IR counts, not centimetres** — measure them
+in place with `./scripts/proximity_probe.sh`, in dark clothing as well as light.
 
-It *widens* the camera probe though (2 → 4 looks over ~1.6 s), which is the opposite of what you'd expect
-and worth understanding: the radar sees people at 5–6 m, but the camera can only resolve a recognisable face
-at ~2 m (`ROBOT_FACE_ID_MIN_FACE_PX`). So the sensor correctly fires while the visitor is still walking in,
-and a single frame taken 1.2 s later misses them. The probe returns early the moment it sees anyone, so this
-costs nothing in practice. The durable fix is range-gating the radar over its UART.
+### Choosing between them — field notes
+
+**A PIR is passive**: it fires when a warm body *crosses* between its Fresnel zones. That makes head-on
+approach its worst case. Measured on the reference build with sensitivity at MAX and the delay pot at MIN,
+**12 deliberate walk-straight-at-it approaches gave 1–3 detections; the same sensor gave 12/12 when the
+person crossed its field instead.** A heated room and winter clothing make it worse again (both cut the
+thermal contrast it depends on), and the HC-SR501 has a hardware-fixed ~2.5 s blocking time after each
+trigger. **Aim a PIR across the traffic, never down the approach lane.**
+
+**An active IR proximity sensor** emits its own beam and measures the reflection, so head-on approach is its
+*best* case and thermal contrast stops mattering. The trade is range (~50–100 cm useful) and reflectivity
+(a black coat returns far less than a white shirt). Good for a greeter people walk *up to*.
+
+**24 GHz mmWave presence radar (HLK-LD2410C) was tried and rejected here.** It produced **zero** false wakes
+against the PIR's 465/hour — but only **4 usable wakes in 25 minutes**, because it reports *presence*, sees
+through plasterboard, and in a room its owner occupies "is anyone present?" is permanently true. With almost
+no rising edges there is nothing to trigger on. It would suit a **doorway or porch** — somewhere presence
+genuinely changes — and would need range-gating over its UART to stop it announcing people the camera can't
+yet see. The patch for it was removed once the hardware went back; `git log --diff-filter=D -- scripts/patches`
+will find it if you ever want it again.
 
 Two things to know before switching: 24 GHz **passes through plasterboard**, so expect to range-gate it over
 its UART; and it reports *presence*, not *movement*, so it sits permanently HIGH in a room you occupy all day

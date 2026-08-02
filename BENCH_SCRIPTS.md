@@ -373,9 +373,9 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot   # frees /dev/video0 from the CSI overlay
 
 # 4B. Wake sensor -- SKIP unless you swapped it; the defaults are already tuned for a PIR.
-#     Config only, no code changes, identical wiring (VCC->5V, GND->GND, OUT->GPIO 4).
+#     See "Swapping the wake sensor" below -- the two are NOT wire-compatible.
 # ./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- the default
-# ./scripts/patches/common/6_motion_ld2410c.sh       # HLK-LD2410C 24GHz mmWave presence radar instead
+# ./scripts/patches/common/6_motion_vcnl4200.sh      # Vishay VCNL4200 active-IR proximity (I2C) instead
 
 # 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
 #    Run it as YOURSELF -- no sudo (see the note under this block).
@@ -433,50 +433,79 @@ conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)
 
 `0` restores the goodbye. Unlike the volume, this one is read at startup — `./scripts/run_me.sh --reload`.
 
-### Swapping the wake sensor (PIR ↔ mmWave radar)
+### Swapping the wake sensor (PIR ↔ VCNL4200 proximity)
 
-Both sensors hand the Pi the same thing — a digital HIGH/LOW on one wire — which is all
-`gpiozero.MotionSensor` in [`brain/pir.py`](brain/pir.py) ever reads. So the swap is **three wires and one
-patch, no code changes**:
+**These two are NOT wire-compatible.** A PIR hands the Pi one digital HIGH/LOW on `ROBOT_PIR_PIN`; the
+VCNL4200 talks I²C, boots with its sensor disabled, and must be configured over the bus. So its patch also
+switches the backend (`ROBOT_WAKE_SENSOR=proximity` → [`brain/proximity.py`](brain/proximity.py)).
 
-| | Pi 5 |
-|---|---|
-| VCC | 5 V (pin 2) — *PIR needs 5 V, not 3.3 V, or it won't trigger* |
-| GND | GND (pin 6) |
-| OUT | GPIO 4 (pin 7) — the same pin either way |
+| | PIR (HC-SR501) | VCNL4200 |
+|---|---|---|
+| VCC | **5 V** — pin 2 *(3.3 V won't trigger)* | **3.3 V** — pin 1 |
+| GND | pin 6 | pin 6 |
+| Signal | OUT → GPIO 4 (pin 7) | SDA → GPIO 2 (pin 3), SCL → GPIO 3 (pin 5) |
+| Extra | — | I²C enabled; `i2cdetect -y 1` shows `0x51` |
 
-```bash
-./scripts/patches/common/6_motion_ld2410c.sh       # switch to the radar
-./scripts/patches/common/6_motion_pir_hcsr501.sh   # ...and back again
-./scripts/patches/common/6_motion_ld2410c.sh 17    # pass a BCM pin to move it off GPIO 4
-```
-
-All the patch changes is **how much defence the wake needs**. `ROBOT_PIR_HOLD_S` and
-`ROBOT_CONCIERGE_SILENT_COOLDOWN_S` exist *solely* to survive a PIR that lies — and it does: a field log had
-3,741 of 3,786 wakes with nobody in front of the camera. Measured on the same wall, the radar took that from
-**465 false wakes/hour to ~6**, so the patch drops both: **~0.89 s to greet you with a ~43% chance of waiting
-out a cooldown first → ~0.7 s essentially every time.**
-
-It *widens* the camera probe (2 → 4 looks over ~1.6 s), which sounds backwards until you see why: the radar
-detects people at 5–6 m but the camera only resolves a usable face at ~2 m, so the sensor fires while the
-visitor is still walking in and a single frame 1.2 s later catches an empty hallway. The probe returns early
-the instant it sees someone, so a visitor already in front of the camera still costs one frame. Verify with:
+**Order matters** — wire it, prove the chip answers, *then* touch the config. Doing it the other way round
+means debugging software against hardware that was never connected.
 
 ```bash
-journalctl -u robot.service | grep 'from PIR'
+# PIR -> VCNL4200
+sudo poweroff                                  # 1. wire the 4 pins above, power back on
+sudo raspi-config                              # 2. Interface Options -> I2C -> Yes, then reboot
+i2cdetect -y 1                                 # 3. MUST show 0x51 -- no device = wiring, stop here
+cd ~/LocalAiRobot && git checkout main && git pull
+./scripts/patches/common/6_motion_vcnl4200.sh  # 4. backend + starting thresholds + driver
+
+sudo systemctl stop robot.service              # 5. measure YOUR thresholds (see the warning below)
+./scripts/proximity_probe.sh
+./scripts/patches/common/6_motion_vcnl4200.sh 480 260   # 6. re-run with the suggested NEAR / FAR
+sudo systemctl start robot.service
+
+journalctl -u robot.service -n 40 | grep proximity      # 7. verify
 ```
 
-> ⚠️ **Meter OUT before you connect it.** The LD2410C datasheet specifies 3.3 V IO (Pi-safe), but clones
-> vary and 5 V on a GPIO destroys the pin.
+Want `proximity wake: VCNL4200 armed over I2C ... near>=480, far<=260`, then on approach
+`proximity: someone arrived (raw 512 >= near 480) -> wake`.
 
-Two behaviours to expect from radar, neither of which is a fault:
+```bash
+# VCNL4200 -> PIR (going back)
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # ALSO resets the backend -- without this the brain
+                                                   # keeps polling an I2C chip you just unplugged
+# power off, re-wire VCC->5V (pin 2), GND->GND, OUT->GPIO 4 (pin 7), power on
+./scripts/run_me.sh --reload
+./scripts/pir_sensor_probe.sh                      # walk past 10x -- the count should track your passes
+```
 
-- **It sees through plasterboard.** You will get wakes from the next room until you range-gate it over its
-  UART (TX/RX, 256000 baud 8N1). Budget an evening; this is the #1 complaint with these modules.
-- **It reports presence, not movement.** OUT stays HIGH the whole time someone is in view, so you get one
-  clean wake per arrival — and it finally notices someone who walks up and *stops moving*, which PIRs can't.
-  The flip side: in a room you occupy all day it sits HIGH for hours and produces no new edges at all. Ideal
-  by a door, wrong for a desk.
+> ⚠️ **Measure the thresholds — you cannot guess them.** `ROBOT_PROXIMITY_NEAR`/`_FAR` are **raw
+> reflected-IR counts, not centimetres**, and a white shirt at 80 cm can out-read a black coat at 40 cm.
+> Stop the brain and run [`./scripts/proximity_probe.sh`](scripts/proximity_probe.sh): empty doorway first
+> for the floor, then walk up — **in dark clothing as well as light, and take the lower reading**. It
+> suggests values from the session.
+
+### Which sensor, and why — field notes
+
+**A PIR is passive.** It fires when a warm body *crosses* between its Fresnel zones, which makes head-on
+approach its **worst** case. Measured on the reference build with sensitivity at MAX and the delay pot at
+MIN: **12 deliberate walk-straight-at-it approaches → 1–3 detections. The same sensor, same settings, person
+crossing its field instead → 12/12.** A heated room and winter clothing make it worse again (both cut the
+thermal contrast it depends on), and the HC-SR501 has a hardware-fixed ~2.5 s blocking time after every
+trigger. **So aim a PIR *across* the traffic, never down the approach lane** — that single change is usually
+worth more than any config.
+
+**Active IR proximity is the mirror image.** It emits its own beam and measures the reflection, so head-on
+approach is its *best* case and thermal contrast stops mattering entirely. The trade-offs: useful range is
+only ~50–100 cm (Adafruit's own guidance), and reflectivity matters a lot. Right for a greeter people walk
+**up to**; wrong for one watching a corridor.
+
+**24 GHz mmWave presence radar (HLK-LD2410C) was tried here and rejected.** It produced **zero** false wakes
+against the PIR's 465/hour — genuinely impressive — but only **4 usable wakes in 25 minutes**. It reports
+*presence*, sees through plasterboard, and in a room its owner occupies "is anyone present?" is permanently
+true, so there are almost no rising edges to trigger on. It would suit a **doorway or porch**, where presence
+actually changes, and would need range-gating over its UART to stop it announcing people the camera can't yet
+resolve. Its patch was removed when the hardware went back — `git log --diff-filter=D -- scripts/patches`
+will find it.
+
 
 **Proving the PIR is optional now.** A chattering sensor no longer breaks anything: the cheap Stage-A probe
 kills a false wake in ~120 ms and the silent outcome cooldown paces the rest, so this is tidy-up, not a
