@@ -1510,8 +1510,19 @@ def main():
                         log.info("conversation: %.0fs of silence -> sleeping (say the wake word to talk again)",
                                  silent_for)
                         fc.set_expression("sleeping")   # peaceful closed-eyes + Zzz
-                        snd.play_blocking("sleep")      # say goodbye + how to wake me, FULLY, before we re-enter
-                                                        # the wake listen (which then holds audio_lock)
+                        # The spoken goodbye ("Okay, chat later." / "Okay, see ya.") is OPTIONAL. It is right
+                        # after a real conversation, and wrong for a hallway greeter that people walk past:
+                        # there, the follow-up window almost always times out with nobody there, so the clip
+                        # is a farewell to an empty corridor. It is also BLOCKING -- it holds audio_lock until
+                        # it finishes, which is time the next arrival cannot be greeted in.
+                        # ROBOT_CONCIERGE_GREET_ONLY=1 drops it: the greeting stays the only thing Jarvis says,
+                        # and it goes quiet the moment the follow-up window expires. The face still changes to
+                        # 'sleeping', so you can see it happen without hearing it.
+                        if os.environ.get("ROBOT_CONCIERGE_GREET_ONLY", "0") == "1":
+                            log.info("conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)")
+                        else:
+                            snd.play_blocking("sleep")  # say goodbye FULLY before we re-enter the wake listen
+                                                        # (which then holds audio_lock)
                         idle["face"] = "sleeping"       # stay "asleep" until the next wake / motion
                         # DISCARD any motion that fired DURING the conversation. It is almost always the
                         # person we were just talking to -- they stood in front of the sensor for the whole
