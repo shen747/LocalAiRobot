@@ -222,6 +222,7 @@ Everything below runs **on the robot** unless a step says *ON YOUR PC*. The robo
 
 | § | What | When |
 |---|---|---|
+| [Volume](#volume--live-no-restart) | Change the speaker volume on a running robot | anytime |
 | [5](#5-first-contact-a-fresh-board) | First contact — OS update, git identity, SSH key | once per board |
 | [6](#6-quick-config--crawler-car) | Quick config: **crawler car** (it drives) | once, then rarely |
 | [7](#7-quick-config--concierge) | Quick config: **concierge** (stationary greeter) | once, then rarely |
@@ -230,6 +231,35 @@ Everything below runs **on the robot** unless a step says *ON YOUR PC*. The robo
 | [10](#10-pulling-logs) | Pulling logs & the one diagnostic line | when something's wrong |
 | [11](#11-spoken-earcons) | Regenerating the spoken earcons | when the word list changes |
 | [12](#12-recovery) | Recovery — Wi-Fi profile, offline disk read, golden image | when it breaks |
+
+## Volume — live, no restart
+
+The one you'll reach for most. On the robot, from `~/LocalAiRobot`:
+
+```bash
+sed -i 's|^ROBOT_SPEAKER_VOLUME=.*|ROBOT_SPEAKER_VOLUME=100|' config/robot.env
+./scripts/setup_audio.sh
+```
+
+`setup_audio.sh` runs `amixer sset` against the **live** device, so it takes effect immediately — nothing
+to restart. `ROBOT_SPEAKER_VOLUME` is the USB-speaker mixer percentage, 0–100; anything outside that range
+is rejected with a message and 100 used instead, because a bad value makes every `amixer sset` fail and
+merely *looks* like "this speaker has no volume control". Reference builds: crawler 100, concierge 75.
+
+It also survives reboots — `run_me.sh` calls `setup_audio.sh` before every launch. That's not redundancy:
+USB audio resets its own mixer to 0/low on a power cycle, **and** ALSA card ids are enumeration-order
+dependent, so the speaker and mic can swap places between boots.
+
+```bash
+grep -E '^ROBOT_SPEAKER_VOLUME=' config/robot.env    # confirm what took
+```
+
+Still too quiet at 100? You're out of software headroom — what's left is the speaker's own hardware gain:
+
+```bash
+aplay -l              # find the card number
+alsamixer -c 1        # raise the device's own control, Esc to leave
+```
 
 ## 5. First contact (a fresh board)
 
