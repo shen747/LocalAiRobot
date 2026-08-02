@@ -1,9 +1,43 @@
 #!/usr/bin/env bash
 # =============================================================================
 #   PATCH:   HLK-LD2410C 24GHz mmWave PRESENCE radar as the Concierge wake trigger
-#   RUN IF:  you replaced the PIR with an LD2410/LD2410C module
+#   RUN IF:  you replaced the PIR with an LD2410/LD2410C module AND the robot sits
+#            somewhere people PASS THROUGH -- read the field result below first
 #   BOARD:   common  (Pi 5 or Jetson)
 #   DOES:    config only -- retunes the wake timings for a sensor that doesn't lie
+# =============================================================================
+#
+#  *** FIELD RESULT: THIS SENSOR FAILED IN A ROOM THE OWNER OCCUPIES ALL DAY. ***
+#
+#  Tried on a wall-mounted concierge in a home office. What was measured over ~25 minutes:
+#      * FALSE wakes:      ZERO. Every single edge had a real person in front of the camera
+#                          (11-16 face hits each). Against the PIR's 465 false wakes an HOUR,
+#                          that part was a total success.
+#      * USABLE wakes:     4 in 25 minutes -- gaps of 851s, 306s, 341s.
+#      * Suppressed by us: 0 cooldown, 0 debounce, 0 noise. Nothing was filtered in software.
+#  So the sensor was not lying and the pipeline was not dropping anything: the OUT pin simply
+#  stayed HIGH. gpiozero triggers on the LOW->HIGH edge, and there were almost no edges to fire on.
+#
+#  WHY: this reports PRESENCE, out to 5-6m, THROUGH plasterboard. In a room its owner occupies,
+#  "is anyone present?" is permanently YES -- including through the wall from the next room. So the
+#  output only drops when the whole area is empty for longer than the absence delay, and you get one
+#  edge per genuine absence rather than one per arrival. Walking past it twelve times produced ONE wake.
+#
+#  A PIR answers "did something just MOVE?", which is much closer to "did someone just ARRIVE?" --
+#  the question a greeter actually needs. Its 465 lies/hour are survivable (that is exactly what the
+#  two-stage wake in brain/main.py exists for); having no edges at all is not.
+#
+#  USE THIS SENSOR WHERE PRESENCE ACTUALLY CHANGES: a front door, a porch, a garage, a hallway
+#  people cross and leave. There it is strictly better than a PIR -- no fan-exhaust or sunlight
+#  false triggers, it sees someone who walks up and stands still, and it works from INSIDE a sealed
+#  plastic enclosure (24GHz passes through polycarbonate; a PIR needs a hole).
+#
+#  BEFORE RETRYING IT IN AN OCCUPIED ROOM: range-gate it over the UART first (TX/RX, 256000 baud)
+#  down to roughly the camera's useful distance (~2m). Then presence changes as someone approaches
+#  the robot instead of being true whenever they are in the house. Untried here -- it is the obvious
+#  next experiment, not a proven fix.
+#
+#  Going back:  ./scripts/patches/common/6_motion_pir_hcsr501.sh   (and re-wire the PIR to GPIO 4)
 # =============================================================================
 # NO CODE CHANGES ARE NEEDED. The LD2410C's OUT pin is a plain digital presence line -- HIGH while a person
 # is there, LOW when not -- which is exactly what gpiozero.MotionSensor already reads in brain/pir.py. As far
@@ -82,6 +116,13 @@ ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; YEL=$'\033[1;33m'; RST=$'\033[0m'; else GRN=''; YEL=''; RST=''; fi
 PIN="${1:-}"
+# The only argument is an optional BCM pin. Guard the obvious mistakes -- without this, `--help` is taken
+# as a pin number and written straight into config/robot.env as ROBOT_PIR_PIN=--help (asked for it, got it).
+case "$PIN" in
+  -h|--help) sed -n '2,/^# ===*$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|[0-9]|[0-9][0-9]) ;;
+  *) echo "!! '$PIN' is not a BCM pin number. Usage: $(basename "$0") [BCM_PIN]" >&2; exit 2 ;;
+esac
 
 set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_esc_hb_qr_1060.sh); append if absent
   local key="$1" val="$2"

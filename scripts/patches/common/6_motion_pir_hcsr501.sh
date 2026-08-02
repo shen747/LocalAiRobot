@@ -39,6 +39,13 @@ ENV="$REPO/config/robot.env"
 [ -f "$ENV" ] || { echo "config/robot.env not found at $ENV -- run this from the repo on the robot." >&2; exit 1; }
 if [ -t 1 ]; then GRN=$'\033[1;32m'; RST=$'\033[0m'; else GRN=''; RST=''; fi
 PIN="${1:-}"
+# The only argument is an optional BCM pin -- reject anything else rather than writing it into robot.env
+# as ROBOT_PIR_PIN (see the same guard in 6_motion_ld2410c.sh).
+case "$PIN" in
+  -h|--help) sed -n '2,/^# ===*$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|[0-9]|[0-9][0-9]) ;;
+  *) echo "!! '$PIN' is not a BCM pin number. Usage: $(basename "$0") [BCM_PIN]" >&2; exit 2 ;;
+esac
 
 set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_esc_hb_qr_1060.sh); append if absent
   local key="$1" val="$2"
