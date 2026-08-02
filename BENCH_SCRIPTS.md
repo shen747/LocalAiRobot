@@ -360,11 +360,12 @@ sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
        -e 's|^ROBOT_FACE_BACKEND=.*|ROBOT_FACE_BACKEND=framebuffer|' \
        -e 's|^ROBOT_FOLLOWUP_SILENCE_S=.*|ROBOT_FOLLOWUP_SILENCE_S=10|' \
        -e 's|^ROBOT_SPEAKER_VOLUME=.*|ROBOT_SPEAKER_VOLUME=75|' \
+       -e 's|^ROBOT_CONCIERGE_GREET_ONLY=.*|ROBOT_CONCIERGE_GREET_ONLY=1|' \
        config/robot.env
 
 # 3. Check it took (ROBOT_CAMERA_OVERLAY is deliberately absent -- it's an install-time env var for step 4,
 #    not a robot.env key, so grepping for it always finds nothing)
-grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME|ROBOT_PIR_PIN|ROBOT_PIR_COOLDOWN_S|ROBOT_CONCIERGE_SILENT_COOLDOWN_S|ROBOT_CONCIERGE_GREET_COOLDOWN_S|ROBOT_FACE_ID_DETECTOR_BACKEND)=' config/robot.env
+grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME|ROBOT_PIR_PIN|ROBOT_PIR_COOLDOWN_S|ROBOT_CONCIERGE_SILENT_COOLDOWN_S|ROBOT_CONCIERGE_GREET_COOLDOWN_S|ROBOT_CONCIERGE_GREET_ONLY|ROBOT_FACE_ID_DETECTOR_BACKEND)=' config/robot.env
 
 # 4. Camera -- ONLY for a USB webcam. install_stack already did the CSI/IMX519 overlay + autofocus.
 #    (No ESC patch: the concierge never drives.)
@@ -407,6 +408,30 @@ face_id: ready (model=arcface.onnx, detector=yunet, 5-point ALIGNED, threshold=0
 > crops, so unaligned input makes every score collapse into 0.13–0.21 and the "closest" name a lottery (a
 > field run recognised **2.3%** of frames that contained a face). Fix with `./scripts/provision_face_id.sh`,
 > then **re-run step 6** so the stored embeddings are aligned too.
+
+### `ROBOT_CONCIERGE_GREET_ONLY` — greet, then say nothing
+
+`1` drops the spoken goodbye (`"Okay, chat later."` / `"Okay, see ya."`). **The conversation itself is
+unchanged** — Jarvis greets, listens, and chats normally if you talk to it. The only difference is what
+happens when the follow-up window times out after `ROBOT_FOLLOWUP_SILENCE_S`: instead of playing a
+`sleep_sounds/*.wav` it simply goes quiet, so the **greeting becomes the only thing it ever says
+unprompted**.
+
+Worth having on a hallway greeter for two reasons:
+
+- It gets **walked past** far more often than talked to, so that window usually expires with nobody there
+  and the goodbye is a farewell to an empty corridor.
+- The clip is **blocking** — it holds the audio lock until it finishes, and that's time the *next* arrival
+  can't be greeted in.
+
+You can still see it happen (the face changes to `sleeping`) and the log records it:
+
+```
+conversation: 16s of silence -> sleeping (say the wake word to talk again)
+conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)
+```
+
+`0` restores the goodbye. Unlike the volume, this one is read at startup — `./scripts/run_me.sh --reload`.
 
 ### Swapping the wake sensor (PIR ↔ mmWave radar)
 
