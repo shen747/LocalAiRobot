@@ -12,6 +12,7 @@ adafruit-circuitpython-servokit   # ESC (Electronic Speed Controller) + steering
 gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
 lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5
 adafruit-circuitpython-vl53l1x    # 3x VL53L1X laser ToF sensors -- ONLY when ROBOT_SENSOR_TYPE=vl53l1x (I2C, no GPIO)
+adafruit-circuitpython-vcnl4200   # VCNL4200 active-IR proximity as the Concierge wake -- ONLY when ROBOT_WAKE_SENSOR=proximity (I2C, no GPIO)
 Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
 numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
 opencv-python-headless<5          # Concierge Mode face detect (brain/face_id.py) + the USB-webcam v4l2 path.

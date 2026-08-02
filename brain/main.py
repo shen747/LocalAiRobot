@@ -642,9 +642,21 @@ def main():
     # in-progress listen so wait_for_trigger() returns 'MOTION'. Both degrade to no-ops if unconfigured.
     face_identifier = FaceID(mem)
     motion_event = threading.Event()
-    motion_wake = MotionWake(
-        os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None,
-        lambda: (motion_event.set(), wake.cancel_listen()))
+    # WHICH sensor decides "someone arrived". Both expose the same surface (available / arm_cooldown /
+    # stats_line / close / last_wake_at + counters), so everything downstream -- the two-stage look, the
+    # outcome cooldowns, the latency line -- is identical either way. See brain/proximity.py for why a PIR
+    # can fail on a greeter people walk STRAIGHT AT: 12 deliberate approaches produced 1-3 detections with
+    # both pots maxed, because head-on motion barely crosses a PIR's Fresnel zones.
+    _wake_cb = lambda: (motion_event.set(), wake.cancel_listen())
+    _sensor_kind = (os.environ.get("ROBOT_WAKE_SENSOR", "") or "pir").strip().lower()
+    if _sensor_kind in ("proximity", "vcnl4200"):
+        from proximity import ProximityWake
+        motion_wake = ProximityWake(concierge.enabled(), _wake_cb)
+    else:
+        if _sensor_kind != "pir":
+            log.warning("unknown ROBOT_WAKE_SENSOR=%r -- using 'pir'", _sensor_kind)
+        motion_wake = MotionWake(
+            os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None, _wake_cb)
     if concierge.enabled():
         # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
         # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import
