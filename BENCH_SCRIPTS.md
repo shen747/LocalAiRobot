@@ -488,6 +488,100 @@ Want `proximity wake: VCNL4200 armed over I2C ... near>=480, far<=260`, then on 
 > for the floor, then walk up — **in dark clothing as well as light, and take the lower reading**. It
 > suggests values from the session.
 
+### Swapping the PIR itself (hobby HC-SR501 → an industrial PaPIRs)
+
+Different from the section above: this is one PIR for another, **not** a change of sensor *family*. Same
+three wires, same `ROBOT_PIR_PIN`, same backend, **no patch to run and no code change** — the two keys
+involved already exist and are inert at their defaults.
+
+It is still not a drop-in. An **HC-SR501 is a hobby module**: 5 V in, its own regulator, a push-pull output
+that drives HIGH hard, two pots, and a **~2.5 s latch** holding the output up after each trigger. A
+**Panasonic PaPIRs (EKMC/EKMB) is the bare industrial part**: no pots, no latch, a deliberately weak output,
+a real warm-up, and an output pin that swings to whatever you feed Vdd.
+
+| | HC-SR501 | PaPIRs EKMC/EKMB |
+|---|---|---|
+| VCC | **5 V** (pin 2) — its regulator needs it | **3.3 V** (pin 1) — see the warning below |
+| Signal | OUT → GPIO 4 (pin 7) | OUT → GPIO 4 (pin 7) |
+| Output stage | push-pull, drives HIGH hard | weak (~100 µA into a high-impedance load) |
+| Output hold | latched ~2.5 s | none — the pulse can be short |
+| Warm-up | ~5 s | **up to 30 s**, output undefined meanwhile |
+
+> 🔴 **Power it from 3.3 V, not 5 V.** Its output is referenced to Vdd, so on a 5 V supply it puts **5 V on
+> a GPIO that is 3.3 V-only and not 5 V-tolerant**. The part is specced 3.0–6.0 V, so 3.3 V is fully in
+> spec with no downside — the HC-SR501 only needed 5 V because of its on-board regulator.
+
+**1. Measure `ROBOT_PIR_PULL` — don't guess.** A PIR's output is one of two designs needing *opposite*
+settings, and the wrong one gives you either permanent silence or a permanent trigger — both of which just
+look like "the sensor is dead". Read the raw pin with `pinctrl`, which bypasses the brain entirely:
+
+```bash
+sudo systemctl stop robot.service      # nothing else may hold the pin
+sleep 40                               # WAIT OUT THE WARM-UP -- readings before this are junk
+
+pinctrl set 4 ip pn                    # A: input, NO pull -- what does the sensor drive on its own?
+watch -n 0.2 pinctrl get 4             #    stand still ~15s, then wave. Ctrl-C. (reads "... | hi" / "| lo")
+pinctrl set 4 ip pu && watch -n 0.2 pinctrl get 4   # B: with an internal PULL-UP
+pinctrl set 4 ip pd && watch -n 0.2 pinctrl get 4   # C: with an internal PULL-DOWN
+```
+
+| Observation (at rest → on motion) | Set |
+|---|---|
+| **A** steady `lo` → `hi` | `ROBOT_PIR_PULL=none` ← expected for a PaPIRs |
+| **A** steady `hi` → `lo` | `ROBOT_PIR_PULL=up` |
+| **A** wanders, but **B** steady `hi` → `lo` | `ROBOT_PIR_PULL=up` (open-collector output) |
+| **A** wanders, but **C** steady `lo` → `hi` | `ROBOT_PIR_PULL=down` (as the HC-SR501) |
+
+**Steady matters more than which way round it is.** A reading that wanders with nobody in the room means
+that pull setting is wrong for this sensor, and you'll get phantom wakes all night. `none` is the likely
+answer for a PaPIRs because the Pi's internal pull-down is ~50 kΩ — at 3.3 V that already draws ~66 µA
+against the part's ~100 µA budget, which can drag the HIGH level down until the pin never reads as
+triggered. (`pinctrl`'s setting is only for the test; gpiozero re-applies its own at startup.)
+
+**2. Set both keys, restart, verify.**
+
+```bash
+sed -i -e 's|^ROBOT_PIR_PULL=.*|ROBOT_PIR_PULL=none|' \
+       -e 's|^ROBOT_PIR_WARMUP_S=.*|ROBOT_PIR_WARMUP_S=30|' \
+       config/robot.env
+sudo systemctl start robot.service
+journalctl -u robot.service -n 40 | grep 'PIR motion wake'
+./scripts/pir_sensor_probe.sh          # walk past 10x -- the count should track your passes
+```
+
+Want **both** lines — the second confirms the pull actually took:
+
+```
+PIR motion wake: warming up for 30s -- edges ignored until the sensor settles
+PIR motion wake: armed on BCM GPIO 4 (Concierge Mode) -- hold 0.10s, debounce 2.0s, pull=none
+```
+
+`ROBOT_PIR_WARMUP_S` exists because a pyroelectric front-end's output is **undefined** while it settles.
+Without it you get a burst of phantom wakes at every boot — and the chatter warning fires, sending you
+hunting a hardware fault that was never there.
+
+**3. If the sensor clearly sees you but the brain logs nothing, it's the pulse width.** Two things assume
+the HC-SR501's wide latched pulse:
+
+- `ROBOT_PIR_HOLD_S` (default `0.1`) is a **noise filter**: after an edge it re-reads the pin 0.1 s later
+  and discards the wake if the pin already fell. A pulse shorter than that is rejected as electrical noise
+  *every single time*. Fix: **`ROBOT_PIR_HOLD_S=0`** skips the re-read.
+- gpiozero **samples** the pin at 10 Hz, so a pulse under ~100 ms can be missed before it is ever seen.
+
+The hourly summary tells them apart — this is what its `noise` counter is for:
+
+```bash
+journalctl -u robot.service | grep 'concierge: last'
+```
+
+`+N noise` climbing as you walk past → the first case; set `ROBOT_PIR_HOLD_S=0` and re-test. **Nothing at
+all** in the log while `pinctrl` clearly saw you → the second, which needs a faster sample rate in
+[`brain/pir.py`](brain/pir.py). Neither is a mounting problem — don't go back to re-aiming the sensor.
+
+> ⚠️ **A better PIR does not change the physics.** It is still passive, so it still fires when a body
+> *crosses* between its Fresnel zones, and head-on approach is still its worst case. You are buying
+> sensitivity and a cleaner output, **not a different detection geometry** — see the field numbers below.
+
 ### Which sensor, and why — field notes
 
 **A PIR is passive.** It fires when a warm body *crosses* between its Fresnel zones, which makes head-on
