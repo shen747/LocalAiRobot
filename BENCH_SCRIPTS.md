@@ -270,9 +270,10 @@ Do this **before** §6/§7 — `install_stack` runs apt itself and wants a curre
 sudo apt update && sudo apt upgrade -y
 ```
 
-> ⚠️ A later `apt upgrade` can replace libcamera and silently **revert an Arducam IMX519 autofocus fork**. If
-> the camera startup line says `FIXED-FOCUS` after an upgrade, re-run
-> `./scripts/patches/pi5/3_camera_imx519.sh` (delete `~/.localairobot/.imx519_af_installed` first to force it).
+> ℹ️ Nothing here depends on libcamera any more. The supported cameras are **USB (UVC)**, which need no boot
+> overlay, no vendor driver and no autofocus tuning — so an `apt upgrade` can't quietly change what the camera
+> does. (This used to be a live hazard: an upgrade could replace libcamera and silently revert the Arducam
+> IMX519 autofocus fork, leaving every frame fixed-focus and face scores stuck around 0.14–0.24.)
 
 ```bash
 # 2. Git identity + rebase-on-pull
@@ -327,7 +328,7 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # ./scripts/patches/common/2_sensor_hcsr04.sh     # 3x HC-SR04 ultrasonics
 # ./scripts/patches/common/2_sensor_vl53l1x.sh    # VL53L1X ToF instead
 # ./scripts/patches/common/4_imu_bno085.sh        # BNO085 IMU
-# ./scripts/patches/pi5/3_camera_imx519.sh        # Arducam IMX519 CSI + autofocus
+./scripts/patches/pi5/3_camera_usb_webcam.sh 0    # your camera (USB) -- or 3_camera_usb_ir_1080p.sh
 
 # 5. Prove the wiring -- ESC ON, WHEELS OFF THE GROUND
 ./scripts/run_diagnostics.sh --wheels-off
@@ -363,14 +364,18 @@ sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
        -e 's|^ROBOT_CONCIERGE_GREET_ONLY=.*|ROBOT_CONCIERGE_GREET_ONLY=1|' \
        config/robot.env
 
-# 3. Check it took (ROBOT_CAMERA_OVERLAY is deliberately absent -- it's an install-time env var for step 4,
-#    not a robot.env key, so grepping for it always finds nothing)
+# 3. Check it took
 grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME|ROBOT_PIR_PIN|ROBOT_PIR_COOLDOWN_S|ROBOT_CONCIERGE_SILENT_COOLDOWN_S|ROBOT_CONCIERGE_GREET_COOLDOWN_S|ROBOT_CONCIERGE_GREET_ONLY|ROBOT_FACE_ID_DETECTOR_BACKEND)=' config/robot.env
 
-# 4. Camera -- ONLY for a USB webcam. install_stack already did the CSI/IMX519 overlay + autofocus.
-#    (No ESC patch: the concierge never drives.)
-# ./scripts/patches/pi5/3_camera_usb_webcam.sh 0
-# ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot   # frees /dev/video0 from the CSI overlay
+# 4. Camera -- REQUIRED, pick ONE. (No ESC patch: the concierge never drives.)
+./scripts/patches/pi5/3_camera_usb_webcam.sh 0      # any USB webcam
+# ./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # ...or the 1080p IR-CUT night-vision module
+#
+# No reboot and no boot-overlay step: a USB camera is not a CSI device. ./scripts/run_me.sh --reload is enough.
+# Upgrading a robot that ONCE ran a CSI camera? a stale overlay can still hold /dev/video0 -- check once with
+#   grep -n 'LocalAiRobot camera' /boot/firmware/config.txt
+# and if it finds a dtoverlay line:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot
+# (that is now the installer's DEFAULT, so a plain re-run clears it too).
 
 # 4B. Wake sensor -- SKIP unless you swapped it; the defaults are already tuned for a PIR.
 #     See "Swapping the wake sensor" below -- the two are NOT wire-compatible.

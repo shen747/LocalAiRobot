@@ -34,10 +34,10 @@ BOOTSTRAP=0
 for arg in "$@"; do
   case "$arg" in
     --bootstrap)  BOOTSTRAP=1 ;;
-    --imx519-af)  echo "note: IMX519 autofocus setup moved to a patch -- just run ./scripts/patches/pi5/3_camera_imx519.sh (no install flag needed)." >&2; exit 2 ;;
+    --imx519-af)  echo "note: the CSI camera support was removed -- this build is USB-only. Run ./scripts/patches/pi5/3_camera_usb_webcam.sh (or 3_camera_usb_ir_1080p.sh)." >&2; exit 2 ;;
     -h|--help)    echo "usage: $(basename "$0") [--bootstrap]"; \
                   echo "  --bootstrap  also install the systemd boot service (brain auto-starts on boot)"; \
-                  echo "  (camera autofocus? no flag -- run ./scripts/patches/pi5/3_camera_imx519.sh for your camera)"; exit 0 ;;
+                  echo "  (camera? no flag -- run ./scripts/patches/pi5/3_camera_usb_webcam.sh or 3_camera_usb_ir_1080p.sh after)"; exit 0 ;;
     *) echo "unknown option: $arg (use --bootstrap)" >&2; exit 2 ;;
   esac
 done
@@ -65,25 +65,36 @@ sudo apt install -y git build-essential cmake alsa-utils curl \
 echo ">> [2/8] camera stack (picamera2 + libcamera, from apt -- NOT pip)"
 sudo apt install -y --no-install-recommends python3-picamera2 || \
   echo "   (python3-picamera2 not found -- update Raspberry Pi OS, or the camera feature stays off)"
-# Camera boot overlay. The build uses an Arducam IMX519 16MP AUTOFOCUS module, which is THIRD-PARTY and so
-# is NOT auto-detected -- it needs an explicit dtoverlay in the boot config. We write it here (idempotent;
-# config.txt backed up once) so the reboot at the end of install brings the camera up with no hand-editing.
-#   Using an OFFICIAL Pi camera (OV5647/IMX219/IMX708)? those auto-detect -- run:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh
-#   Camera on the other CSI connector? re-run with:  ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack_pi5.sh
-CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-imx519,cam0}"
+# Camera boot overlay. DEFAULT IS 'none': camera_auto_detect=1 and NO dtoverlay of ours. That is what a USB
+# webcam wants (it is not a CSI device at all and ignores the boot config), and also what every OFFICIAL Pi
+# camera wants (OV5647/IMX219/IMX708 are auto-detected). So the default is right for the whole supported set.
+#
+# It used to default to 'imx519,cam0' for the third-party Arducam module, and that was the wrong default. On a
+# USB build it wrote a CSI overlay nobody asked for -- inert while no ribbon camera is attached, but dead boot
+# config, and the moment a CSI sensor IS plugged in that overlay takes /dev/video0 out from under the webcam.
+# It also auto-installed Arducam's libcamera FORK: a third-party system change, made silently, on machines
+# whose camera is a USB device that can never use it. The CSI camera patches are gone (USB only now), so this
+# is config-only -- it writes an overlay if you ask for one and installs nothing.
+#
+#   Need some other CSI sensor? pass its overlay and this writes it verbatim (it is not validated):
+#       ROBOT_CAMERA_OVERLAY=imx296,cam1 ./scripts/install_stack_pi5.sh
+#   USB webcam / USB IR module (the supported builds): just run the installer, then pick your camera patch:
+#       ./scripts/patches/pi5/3_camera_usb_webcam.sh      or  3_camera_usb_ir_1080p.sh
+CAMERA_OVERLAY="${ROBOT_CAMERA_OVERLAY:-none}"
 CAMCFG=/boot/firmware/config.txt; [ -f "$CAMCFG" ] || CAMCFG=/boot/config.txt
 case "$CAMERA_OVERLAY" in
   none|off|auto)
-    # Auto-detected sensors (OV5647/IMX219/IMX708/Camera Module 3) need camera_auto_detect=1 and NO
-    # dtoverlay=imx519. Actively UNDO a prior IMX519 install so a SWITCH from the reference build is clean
-    # (not just a fresh install): restore camera_auto_detect=1 and delete the LocalAiRobot dtoverlay=imx519
-    # line. A hand-added dtoverlay is left alone (only our tagged line is removed).
+    # USB cameras and auto-detected sensors (OV5647/IMX219/IMX708) both want camera_auto_detect=1 and no
+    # overlay of ours. Actively UNDO a previous CSI install so upgrading an existing robot is clean, not just
+    # a fresh flash: restore camera_auto_detect=1 and delete our overlay line. Keyed on the [LocalAiRobot
+    # camera] TAG rather than the sensor name, so it removes whichever overlay a past install wrote (the old
+    # default was dtoverlay=imx519) -- a dtoverlay YOU added by hand is untagged and is left alone.
     if [ -f "$CAMCFG" ]; then
       if grep -qE '^[[:space:]]*camera_auto_detect=' "$CAMCFG"; then
         sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=.*|camera_auto_detect=1   # [LocalAiRobot camera]|' "$CAMCFG"
       fi
-      sudo sed -i -E '/^[[:space:]]*dtoverlay=imx519.*\[LocalAiRobot camera\]/d' "$CAMCFG"
-      echo "   camera overlay: none -- camera_auto_detect=1 restored + LocalAiRobot dtoverlay=imx519 removed (official/auto-detected sensors)."
+      sudo sed -i -E '/^[[:space:]]*dtoverlay=.*\[LocalAiRobot camera\]/d' "$CAMCFG"
+      echo "   camera overlay: none -- camera_auto_detect=1 restored, any LocalAiRobot dtoverlay removed (USB + official sensors)."
     else
       echo "   camera overlay: skipped (ROBOT_CAMERA_OVERLAY=$CAMERA_OVERLAY; boot config not found -- not a Pi?)."
     fi ;;
@@ -95,42 +106,25 @@ case "$CAMERA_OVERLAY" in
       else
         echo 'camera_auto_detect=0   # [LocalAiRobot camera]' | sudo tee -a "$CAMCFG" >/dev/null
       fi
-      if grep -qE '^[[:space:]]*dtoverlay=imx519' "$CAMCFG"; then
-        sudo sed -i -E "s|^[[:space:]]*dtoverlay=imx519.*|dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]|" "$CAMCFG"
+      if grep -qE '^[[:space:]]*dtoverlay=.*\[LocalAiRobot camera\]' "$CAMCFG"; then
+        sudo sed -i -E "s|^[[:space:]]*dtoverlay=.*\[LocalAiRobot camera\].*|dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]|" "$CAMCFG"
       else
         echo "dtoverlay=${CAMERA_OVERLAY}   # [LocalAiRobot camera]" | sudo tee -a "$CAMCFG" >/dev/null
       fi
-      echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (IMX519; live after the reboot)"
-      echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other port -- re-run with ROBOT_CAMERA_OVERLAY=imx519,cam1"
-      # IMX519 default: auto-run the camera patch so its AUTOFOCUS tuning (Arducam's libcamera fork) is set up
-      # for you -- the stock Bookworm tuning has NO AF algorithm, so without this AF is a no-op ("Could not set
-      # AF_MODE"). Runs ONLY for the IMX519; other cameras (OV5647/CM3) don't need it. Best-effort: a failure
-      # leaves the camera fixed-focus and the install continues. Set ROBOT_CAMERA_AF_INSTALL=0 to skip the fork.
-      # Step 21: gate the auto-AF re-run on a sentinel the PATCH writes ONLY on real success, so a re-run of
-      # this (deliberately re-runnable) installer doesn't re-download + re-apply the Arducam libcamera fork
-      # every time. The standalone patch stays un-gated, so an explicit run always force-reapplies the fork.
-      case "$CAMERA_OVERLAY" in imx519*)
-        AF_SENTINEL="${H}/.localairobot/.imx519_af_installed"
-        if [ "${ROBOT_CAMERA_AF_INSTALL:-1}" = 0 ]; then
-          echo "   [camera AF] skipped (ROBOT_CAMERA_AF_INSTALL=0). Enable later:  ./scripts/patches/pi5/3_camera_imx519.sh"
-        elif [ -f "$AF_SENTINEL" ]; then
-          echo "   [camera AF] already installed ($AF_SENTINEL) -- skipping the Arducam fork re-install."
-          echo "               force a reinstall:  rm \"$AF_SENTINEL\"   or run  ./scripts/patches/pi5/3_camera_imx519.sh"
-        else
-          echo "   [camera AF] auto-installing IMX519 autofocus tuning (./scripts/patches/pi5/3_camera_imx519.sh)..."
-          LAR_FROM_INSTALL=1 bash "${REPO}/scripts/patches/pi5/3_camera_imx519.sh" \
-            || echo "   (AF tuning step failed -- camera still works fixed-focus; re-run ./scripts/patches/pi5/3_camera_imx519.sh later)"
-        fi ;;
-      esac
+      echo "   camera overlay set: camera_auto_detect=0 + dtoverlay=${CAMERA_OVERLAY} (live after the reboot)"
+      echo "   nothing listed by 'rpicam-hello --list-cameras' after reboot? camera's on the other CSI port -- re-run with ...,cam1"
+      echo "   NOTE: config only. This installs no camera driver or tuning -- the supported builds are USB"
+      echo "         (./scripts/patches/pi5/3_camera_usb_webcam.sh or 3_camera_usb_ir_1080p.sh) and need no overlay."
     else
       echo "   (boot config not found -- skipping camera overlay; not a Pi?)"
     fi ;;
 esac
 
-# Camera AUTOFOCUS (IMX519) is set up by a PATCH now, not an install flag: ./scripts/patches/pi5/3_camera_imx519.sh
-# installs Arducam's AF tuning (their libcamera fork). It's kept out of the plain install because it's a
-# THIRD-PARTY system change that can conflict with later apt libcamera updates -- so it stays an explicit,
-# discoverable per-camera step (no flag to remember). Camera Module 3 (IMX708) has first-class AF with no fork.
+# No autofocus step here any more. The supported cameras are USB modules, and both are FIXED focus (the IR
+# module's 3.6mm lens has enough depth of field that 1-3m is sharp with nothing to hunt for), so the install
+# has no camera driver or tuning work to do at all -- ROBOT_CAMERA_AUTOFOCUS=0 and that's the end of it. The
+# Arducam AF fork this used to install was a third-party libcamera replacement that could break on an apt
+# libcamera update; it went out with the CSI patches. `git log --diff-filter=D -- scripts/patches/pi5` finds it.
 
 # USB power headroom on BATTERY. The robot runs off a UBEC (LiPo -> 5V) into the UPS HAT / USB-C, and a bare
 # 5V feed CANNOT do USB-PD negotiation -- so the Pi 5 firmware assumes a weak supply and CLAMPS all USB ports
@@ -371,7 +365,8 @@ echo "     ...then SSH back in:   cd ~/LocalAiRobot        (new shells auto-load
 echo
 echo "   3. Patch YOUR hardware -- run ONE patch per part you use (full catalog: scripts/patches/README.md):"
 echo "        ./scripts/patches/common/1_esc_hb_qr_1060.sh    # your ESC  (REQUIRED -- writes its throttle map)"
-echo "        ./scripts/patches/pi5/3_camera_usb_webcam.sh    # ONLY for a USB webcam (skip for the CSI cam)"
+echo "        ./scripts/patches/pi5/3_camera_usb_webcam.sh    # your camera -- or 3_camera_usb_ir_1080p.sh"
+echo "                                                        # (IR/night-vision module). Pick exactly ONE."
 echo "        # + sensor (common/2_sensor_*) / IMU / encoder / concierge face-id patches as needed"
 echo "   4. Prove the wiring (ESC ON, WHEELS OFF the ground):  ./scripts/run_diagnostics.sh --wheels-off"
 echo "   5. Drive it:   ./scripts/run_me.sh         (live: say 'hey jarvis' | bench: ./scripts/run_me.sh --dry)"

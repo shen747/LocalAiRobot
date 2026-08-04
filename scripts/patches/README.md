@@ -20,8 +20,8 @@ type, one camera). Run them **after** `install_stack_pi5.sh` / `install_stack_je
 ```
 scripts/patches/
   common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600   5_face_id_insightface
-  pi5/      3_camera_imx519 / _ov5647 / _cm3 / _usb_webcam
-  jetson/   3_camera_usb_webcam (default) / 3_camera_imx519_csi
+  pi5/      3_camera_usb_webcam / 3_camera_usb_ir_1080p
+  jetson/   3_camera_usb_webcam / 3_camera_usb_ir_1080p
 ```
 
 ## 1 — ESC (drive) · `common/`
@@ -37,25 +37,34 @@ scripts/patches/
 ```
 
 ## 3 — Camera · **your board's folder**
+**The camera is USB (UVC) on both boards.** Pick exactly one patch — same two choices per board:
 ```bash
-# Raspberry Pi 5 (pi5/) -- these set the boot overlay + AF tuning:
-./scripts/patches/pi5/3_camera_imx519.sh       # Arducam IMX519 16MP autofocus (the reference) -- ALSO installs the AF tuning
-./scripts/patches/pi5/3_camera_ov5647.sh       # fixed-focus 5MP OV5647 (auto-detected)
-./scripts/patches/pi5/3_camera_cm3.sh          # official Camera Module 3 / IMX708 (first-class autofocus)
-./scripts/patches/pi5/3_camera_usb_webcam.sh   # USB webcam (v4l2) instead of the CSI cam -- installs OpenCV; no ribbon/overlay/AF fork
+# Raspberry Pi 5 (pi5/):
+./scripts/patches/pi5/3_camera_usb_webcam.sh   # any USB webcam (v4l2) -- installs OpenCV; no ribbon, no overlay
+./scripts/patches/pi5/3_camera_usb_ir_1080p.sh # ...or a 1080p USB module with IR-CUT night vision + fixed 3.6mm lens
 
 # Jetson (jetson/):
-./scripts/patches/jetson/3_camera_usb_webcam.sh   # USB webcam (v4l2) -- the Jetson DEFAULT / easiest path
-./scripts/patches/jetson/3_camera_imx519_csi.sh   # Arducam IMX519 (CSI/gstreamer) -- prints the separate Arducam Jetson driver step
+./scripts/patches/jetson/3_camera_usb_webcam.sh   # any USB webcam (v4l2)
+./scripts/patches/jetson/3_camera_usb_ir_1080p.sh # ...or the same 1080p IR night-vision module
 ```
-The Pi's three CSI patches set `ROBOT_CAMERA_AUTOFOCUS` and print the boot-overlay reinstall command (that
-step needs `sudo` + a reboot). `pi5/3_camera_imx519.sh` additionally installs Arducam's autofocus tuning
-(their libcamera fork) — without it the IMX519 runs fixed-focus (`Could not set AF_MODE`).
-`pi5/3_camera_usb_webcam.sh` is the exception: it leaves the CSI/picamera2 world entirely, sets
-`ROBOT_CAMERA_BACKEND=v4l2` and installs OpenCV (`cv2`, which the CSI path doesn't need) — no overlay, no AF
-fork; it just prints how to free `/dev/video0` if you're coming from a CSI build. The Jetson camera is
-**not** a boot overlay — a USB webcam just works (`v4l2`), and the IMX519 CSI needs Arducam's separate,
-JetPack-version-specific driver (the `jetson/3_camera_imx519_csi.sh` patch prints it).
+Both patches set `ROBOT_CAMERA_BACKEND=v4l2` and a `/dev/videoN` source; the IR one additionally asks for
+1920x1080 capture, a 768px square target and `ROBOT_CAMERA_AUTOFOCUS=0` (its 3.6mm lens is fixed). Neither
+touches the boot config: **a USB camera is not a CSI device, so no `dtoverlay` and no reboot are involved** —
+`./scripts/run_me.sh --reload` is enough. This is why `install_stack_pi5.sh` now defaults to
+`ROBOT_CAMERA_OVERLAY=none`, and why there is no autofocus/driver step in the install any more.
+
+> **Night vision changes what recognition can do.** After dark the IR-CUT filter swings out and frames are
+> greyscale infrared — faces still *detect*, but ArcFace embeddings from IR are a different domain to daylight
+> enrolment photos, so expect the generic greeting at night until you enrol a few IR shots per person too
+> (`ROBOT_FACE_ID_AGGREGATE=max` exists exactly so both sets can live under one name). The patch spells out
+> the steps when you run it.
+
+**CSI cameras are no longer supported.** The Arducam IMX519 / OV5647 / Camera Module 3 patches were removed:
+a USB module gives better faces per pound for a stationary concierge, and the IMX519 path dragged in Arducam's
+**libcamera fork** — a third-party system change that an `apt upgrade` could silently revert. The picamera2
+backend (`brain/picamera2_backend.py`) still exists and still works if you set `ROBOT_CAMERA_BACKEND=picamera2`
+for an auto-detected official module; only the patches and the installer's auto-AF step went.
+`git log --diff-filter=D -- scripts/patches` will find them if you ever want one back.
 
 ## 4 — Optional add-on sensors (off by default) · `common/`
 ```bash

@@ -7,7 +7,8 @@
 # =============================================================================
 # A UVC webcam needs no boot overlay, no autofocus fork and no 22->15 ribbon. cv2 is a base dependency
 # (brain/requirements.txt), so it's already installed -- this patch only sets the camera keys. Re-runnable.
-# Revert to the CSI camera with scripts/patches/pi5/3_camera_imx519.sh.
+# Want the 1080p IR/night-vision module instead? run scripts/patches/pi5/3_camera_usb_ir_1080p.sh -- it sets
+# these same two keys plus a 1080p capture mode, a bigger square, and fixed focus.
 #   Usage:  ./scripts/patches/pi5/3_camera_usb_webcam.sh [index]   (index defaults to 0; or a /dev/videoN path)
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"; ENV="$REPO/config/robot.env"

@@ -83,11 +83,11 @@ class PiCamera2Camera:
                         log.warning(
                             "camera: AUTOFOCUS REQUESTED BUT UNAVAILABLE -- this sensor exposes no 'AfMode' "
                             "control, so every frame is FIXED-FOCUS (soft close-up faces -> weak face-ID "
-                            "scores). On the Arducam IMX519 the stock libcamera tuning has no AF algorithm: "
-                            "install Arducam's fork with  ./scripts/patches/pi5/3_camera_imx519.sh  (force a "
-                            "reinstall with  rm ~/.localairobot/.imx519_af_installed  first), then reboot and "
-                            "check this line says 'autofocus'. Fixed-focus sensor (OV5647/IMX219)? that's "
-                            "expected -- set ROBOT_CAMERA_AUTOFOCUS=0 to silence this.")
+                            "scores). Fixed-focus sensor (OV5647/IMX219)? that's expected -- set "
+                            "ROBOT_CAMERA_AUTOFOCUS=0 to silence this. A sensor that SHOULD focus but can't "
+                            "usually means its libcamera tuning has no AF algorithm, which is a vendor driver "
+                            "install, not a robot setting. The supported cameras are USB "
+                            "(scripts/patches/pi5/3_camera_usb_webcam.sh or 3_camera_usb_ir_1080p.sh).")
                 except Exception as e:
                     log.warning("camera: autofocus not enabled (%s) -- frames will be FIXED-FOCUS", e)
             log.info("camera: Picamera2 started (still capture -> %dpx square JPEG%s)",

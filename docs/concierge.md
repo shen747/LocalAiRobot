@@ -115,11 +115,19 @@ repo's own enrolment photos that moves same-vs-different separation **0.334 → 
   (pin 2), GND → GND (pin 6)** (`ROBOT_PIR_PIN=4`). Full
   pinout + tuning: **[docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md)**; test it with
   `./scripts/pir_sensor_probe.sh`. Set `ROBOT_PIR_PIN=` empty for a wake-word-only concierge.
-- **A camera** for the face pipeline — **whichever one your build already has**. The reference CSI camera
-  (Arducam IMX519 via picamera2) works as-is: `install_stack_pi5.sh` sets its overlay + autofocus for you, so
-  there is **nothing extra to run**. Only run `pi5/3_camera_usb_webcam.sh` if your camera really is a USB
-  webcam — on a CSI build it switches `ROBOT_CAMERA_BACKEND` to `v4l2` and *breaks* the working camera.
-  Check which backend you're on: the startup log says `camera: Picamera2 started` (CSI) or `v4l2`/OpenCV (USB).
+- **A camera** for the face pipeline — a **USB (UVC) module**, and you must apply **one** camera patch (the
+  installer no longer sets a camera up for you; it deliberately writes no boot overlay):
+  ```bash
+  ./scripts/patches/pi5/3_camera_usb_webcam.sh 0      # any USB webcam
+  ./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0    # ...or a 1080p IR-CUT night-vision module
+  ```
+  No reboot — a USB camera isn't a CSI device, so `./scripts/run_me.sh --reload` is enough. Confirm from the
+  startup log: `camera: OpenCV/v4l2 …`, and check the resolution it reports is the one you asked for.
+  **Recognition is the concierge's whole job, so frame detail matters more here than anywhere else** — see
+  `ROBOT_CAMERA_SIZE` / `ROBOT_CAMERA_CAPTURE_WIDTH` below, and measure real face sizes in place with
+  `./scripts/camera_face_probe.sh`. On an IR module, **night frames are greyscale infrared and won't match
+  daylight enrolment photos** — enrol a few night shots per person too (`ROBOT_FACE_ID_AGGREGATE=max` keeps
+  both sets under one name).
 - **No motor board / ESC / ultrasonics needed.** Concierge never drives, so `brain/driver.py` doesn't even
   probe the PCA9685 (an absent motor board is expected here, not a hardware failure) — skip the `1_esc_*` and
   `2_sensor_*` patches entirely. The `I2C->PCA9685 …` lines you see at startup are the *simulated* PWM kit.

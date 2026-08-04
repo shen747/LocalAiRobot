@@ -124,7 +124,7 @@ if [ "$DEEP" = 1 ]; then
   done
   for f in /boot/firmware/config.txt /boot/config.txt; do
     if [ -f "$f" ] && grep -q '# \[LocalAiRobot camera\]' "$f"; then
-      CAM_OFF=1; CAMCFG="$f"; PLAN+=("reset    remove the IMX519 camera overlay from $f (restore camera_auto_detect=1)"); break
+      CAM_OFF=1; CAMCFG="$f"; PLAN+=("reset    remove the LocalAiRobot camera overlay from $f (restore camera_auto_detect=1)"); break
     fi
   done
   for f in /boot/firmware/config.txt /boot/config.txt; do
@@ -203,8 +203,10 @@ if [ "$I2C_OFF" = 1 ]; then
 fi
 
 if [ "$CAM_OFF" = 1 ] && [ -n "${CAMCFG:-}" ]; then
-  echo ">> remove the IMX519 camera overlay from $CAMCFG (restore auto-detect)"
-  sudo sed -i -E '/^[[:space:]]*dtoverlay=imx519.*# \[LocalAiRobot camera\]/d' "$CAMCFG" || true
+  echo ">> remove the LocalAiRobot camera overlay from $CAMCFG (restore auto-detect)"
+  # Match the [LocalAiRobot camera] TAG, not a sensor name: older installs wrote dtoverlay=imx519 by default,
+  # newer ones write nothing at all unless ROBOT_CAMERA_OVERLAY was set. A dtoverlay YOU added is untagged.
+  sudo sed -i -E '/^[[:space:]]*dtoverlay=.*# \[LocalAiRobot camera\]/d' "$CAMCFG" || true
   sudo sed -i -E 's|^[[:space:]]*camera_auto_detect=0[[:space:]]*# \[LocalAiRobot camera\].*|camera_auto_detect=1|' "$CAMCFG" || true
   sudo rm -f "$CAMCFG.localairobot.bak"
 fi

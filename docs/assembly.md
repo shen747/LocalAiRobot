@@ -321,44 +321,46 @@ latest cached value, never blocking the control loop.
 
 ---
 
-## Phase 5 — Wire the camera (Arducam **IMX519** autofocus recommended; any libcamera module works)
+## Phase 5 — Plug in the camera (**USB / UVC** — no ribbon, no overlay)
 
 Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text brain
-`gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var). It's on the **CSI ribbon**,
-not GPIO/I2C, so it doesn't conflict with anything.
+`gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var), and the whole basis of
+Concierge face recognition. **It's a USB device** — nothing on GPIO/I2C, nothing in the boot config, so it
+conflicts with nothing and needs no reboot.
 
-> 🔌 **Find the CSI ribbon fiddly? Use a USB webcam instead — supported, zero rebuild.** Any **UVC** webcam
-> works, and one patch does the whole switch — it sets the keys **and** installs OpenCV (the v4l2 path needs
-> `cv2`; the CSI default doesn't): **`./scripts/patches/pi5/3_camera_usb_webcam.sh`** (pass an index if it
-> isn't `0`). That sets `ROBOT_CAMERA_BACKEND=v4l2` + `ROBOT_CAMERA_SOURCE=0`; find the index with
-> `v4l2-ctl --list-devices`. This path **skips the 22→15 ribbon, the IMX519 overlay, and the autofocus fork
-> entirely** (UVC cams auto-focus/expose themselves). If you're switching **from** the reference IMX519 build,
-> also free `/dev/video0` from the CSI driver so the webcam stays index `0`:
-> `ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot`. Same vision pipeline; trade-offs
-> are a USB port + a little USB power. The rest of this phase is for the **CSI** route.
+Pick **one** module and run its patch:
 
-- **Any libcamera module works — zero code change.** The build uses an **Arducam IMX519 16MP autofocus**:
-  it focuses on whatever you show it, so `remember`/`find` shots of a held-up object or a face come out
-  **sharp**. **Fixed-focus** modules (Pi Camera v2 **IMX219**, or **OV5647** v1) also work but can't focus
-  close up. A **NoIR** variant drops the IR-cut filter (reddish daylight, but sees under IR light).
-- ⚠️ **The Pi 5 needs the 22→15 cable.** Its CSI/DSI ports are the narrow **22-pin, 0.5 mm** type; a
-  module's 15-pin cable **won't fit**. Get a **22→15 adapter FPC** (the Arducam kit often bundles this as
-  its "Pi Zero cable") and run it from the camera to either CAM/DISP port (contacts correct way, latch closed).
-- Install: `python3-picamera2` comes from **apt** (the installer does this) and the venv uses
-  `--system-site-packages`. Confirm with `rpicam-hello --list-cameras`, then grab a frame with
-  `rpicam-jpeg -n -o /tmp/test.jpg`. *(Brain logs `camera unavailable`? libcamera saw **no** camera —
-  reseat the ribbon. The brain runs fine without it; vision just reports "no frame".)*
-- **A third-party sensor (IMX519) needs a boot overlay** — `camera_auto_detect` only finds the *official*
-  OV5647/IMX219/IMX708. **`install_stack_pi5.sh` sets it up for you** (`camera_auto_detect=0` +
-  `dtoverlay=imx519,cam0`, backing up `config.txt`); the install's reboot brings it up. Is `rpicam-hello
-  --list-cameras` empty afterwards? the camera's on the other CSI port — re-run with
-  `ROBOT_CAMERA_OVERLAY=imx519,cam1 ./scripts/install_stack_pi5.sh` and reboot. Official modules need no overlay
-  (install with `ROBOT_CAMERA_OVERLAY=none`).
-- **A NoIR module has no IR-cut filter:** reddish/magenta in daylight, and blind in the dark without an
-  **IR illuminator** (850/940 nm). A *standard* module gives natural colour but is still dark-blind.
-- Tuning: `ROBOT_CAMERA_ENABLE`, `ROBOT_CAMERA_SIZE`, `ROBOT_CAMERA_WARMUP_S`, `ROBOT_CAMERA_AUTOFOCUS`
-  (on by default — a one-shot focus before each capture on AF sensors; a no-op on fixed-focus). Vision is **CPU-only and
-  slow** on the Pi 5 (`ROBOT_VISION_TIMEOUT_S` defaults to 600 s) — the car holds neutral during each look.
+```bash
+./scripts/patches/pi5/3_camera_usb_webcam.sh 0      # any USB webcam
+./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0    # ...or a 1080p IR-CUT night-vision module
+```
+*(Jetson: identical scripts under `scripts/patches/jetson/`. Pass a different index — or a `/dev/videoN`
+path — if the camera isn't `0`; find it with `v4l2-ctl --list-devices`.)* Then `./scripts/run_me.sh --reload`
+and check the startup line: `camera: OpenCV/v4l2 …` with the resolution you asked for.
+
+- **Why USB and not the CSI ribbon.** The CSI route needed a **22→15 adapter FPC** (the Pi 5's CSI/DSI ports
+  are the narrow 22-pin 0.5 mm type, so a module's own 15-pin cable won't fit), a **boot overlay** for any
+  third-party sensor, a reboot to apply it, and — on the Arducam IMX519 — **Arducam's libcamera fork** for
+  autofocus, which an `apt upgrade` could silently revert and leave every frame soft. A USB module has none of
+  that, works the same on both boards, and for a stationary concierge buys more usable face pixels per pound.
+  **The CSI camera patches were removed.** The `picamera2` and `gstreamer` *backends* still exist — set
+  `ROBOT_CAMERA_BACKEND` by hand if you want an official auto-detected module.
+- **Resolution is the thing that actually matters**, especially for Concierge: the recogniser only ever sees
+  (the face's share of the frame width) × `ROBOT_CAMERA_SIZE` pixels, and ArcFace wants ≥112 px to downscale
+  into. `ROBOT_CAMERA_CAPTURE_WIDTH/HEIGHT` asks the camera for a sensor mode (most UVC webcams default to a
+  useless 640×480 if you don't); the startup line reports what you **actually** got. Measure real face sizes
+  where people will stand with `./scripts/camera_face_probe.sh`.
+- ⚠️ **Prove the mode is real before trusting it:** `v4l2-ctl --list-formats-ext -d /dev/video0`. Some cheap
+  1080p modules only offer that size as uncompressed **YUYV at 5 fps** — every capture reads several frames,
+  so a look that should take a moment crawls. You want **MJPG 1920×1080 @ 30 fps**.
+- **IR night vision changes what recognition can do.** After dark the IR-CUT filter swings out and frames are
+  **greyscale infrared**. Faces still *detect* fine, but IR embeddings are a different domain to daylight
+  enrolment photos — so enrol a few night shots per person as well; `ROBOT_FACE_ID_AGGREGATE=max` is exactly
+  what lets both live under one name. A **plain** webcam is dark-blind unless you add an 850/940 nm illuminator.
+- Tuning: `ROBOT_CAMERA_ENABLE`, `ROBOT_CAMERA_SIZE`, `ROBOT_CAMERA_DISCARD_FRAMES`, `ROBOT_CAMERA_AUTOFOCUS`
+  (**set `0` on a fixed-lens module** — the IR board's 3.6 mm lens has enough depth of field that 1–3 m is
+  sharp, and its patch sets this for you). Vision is **CPU-only and slow** on the Pi 5
+  (`ROBOT_VISION_TIMEOUT_S` defaults to 600 s) — the car holds neutral during each look.
 
 ---
 

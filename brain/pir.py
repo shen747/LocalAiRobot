@@ -91,16 +91,43 @@ class MotionWake:
         self.rejected_spike = 0
         self.rejected_cooldown = 0
         self.rejected_outcome = 0
+        self.rejected_warmup = 0
+        self._warmup_s = max(0.0, _envf("ROBOT_PIR_WARMUP_S", 0))
+        self._ready_at = 0.0        # monotonic deadline; 0 = no warm-up window
         if not pin:
             return
         try:
             from gpiozero import MotionSensor
-            self._sensor = MotionSensor(int(pin))
+            # PULL. An HC-SR501-class module drives its output push-pull, so gpiozero's default internal
+            # pull-DOWN is free insurance: an UNWIRED pin reads LOW instead of floating and inventing motion.
+            # An industrial part like the Panasonic PaPIRs (EKMC/EKMB) is different -- its datasheet caps the
+            # output at 100uA into a HIGH-IMPEDANCE load, and the Pi's internal pull-down is ~50k, which at
+            # 3.3V already draws ~66uA. That is inside the budget but not comfortably, and it can drag the
+            # HIGH level down. ROBOT_PIR_PULL=none floats the pin instead (no pull resistor at all), which is
+            # what those parts want. Only do that with a sensor that actively drives BOTH states -- on an
+            # open-collector output a floating pin is noise.
+            pull = (os.environ.get("ROBOT_PIR_PULL", "") or "down").strip().lower()
+            if pull in ("none", "float", "off"):
+                self._sensor = MotionSensor(int(pin), pull_up=None, active_state=True)
+            elif pull == "up":                       # active-LOW modules (open-collector "alarm" outputs)
+                self._sensor = MotionSensor(int(pin), pull_up=True)
+            else:
+                self._sensor = MotionSensor(int(pin))
             self._sensor.when_motion = self._fire   # gpiozero fires this on its own thread
             self.available = True
-            log.info("PIR motion wake: armed on BCM GPIO %s (Concierge Mode) -- hold %.2fs, debounce %.1fs "
-                     "(outcome cooldowns are set by the concierge look, not here)",
-                     pin, self._hold_s, self._cooldown_s)
+            # WARM-UP. A PIR's output is UNDEFINED while its pyroelectric front-end settles, and the datasheet
+            # figure is not small: Panasonic PaPIRs specifies up to 30 SECONDS, during which the pin may toggle
+            # on its own. Arming immediately means a burst of phantom wakes after every boot -- and since the
+            # brain is starting up at that exact moment, they are the least useful wakes of the whole run.
+            # We arm the sensor now (so the pin is claimed) but IGNORE its edges until the window expires.
+            if self._warmup_s > 0:
+                self._ready_at = time.monotonic() + self._warmup_s
+                log.info("PIR motion wake: warming up for %.0fs -- edges ignored until the sensor settles "
+                         "(ROBOT_PIR_WARMUP_S; PaPIRs datasheet says up to 30s, HC-SR501 needs ~5s)",
+                         self._warmup_s)
+            log.info("PIR motion wake: armed on BCM GPIO %s (Concierge Mode) -- hold %.2fs, debounce %.1fs, "
+                     "pull=%s (outcome cooldowns are set by the concierge look, not here)",
+                     pin, self._hold_s, self._cooldown_s, pull)
         except Exception as e:
             log.warning("PIR motion sensor init failed on pin %s (%s) -- motion wake disabled "
                         "(the wake word still works)", pin, e)
@@ -161,6 +188,14 @@ class MotionWake:
     def _fire(self):
         """gpiozero's rising-edge callback (its own thread). Filters the edge, then wakes the brain."""
         edge_at = time.monotonic()                 # BEFORE the hold sleep: that sleep is part of the latency
+        # Warm-up FIRST, before the spike filter even sleeps: during the window the pin is meaningless, so
+        # there is nothing to measure and no point paying hold_s to measure it.
+        if self._ready_at and edge_at < self._ready_at:
+            self.rejected_warmup += 1
+            if self._verbose:
+                log.info("PIR: edge on GPIO %s ignored -- still warming up (%.0fs left)",
+                         self._pin, self._ready_at - edge_at)
+            return
         if self._is_spike():                       # sleeps up to hold_s -- fine, this is gpiozero's thread
             self.rejected_spike += 1
             if self._verbose:
@@ -201,9 +236,10 @@ class MotionWake:
         while `debounce` is just the same pulse train arriving twice."""
         if not self.available:
             return ""
+        warm = f" + {self.rejected_warmup} (warm-up)" if self.rejected_warmup else ""
         return (f"PIR GPIO {self._pin}: woke {self.accepted}x, suppressed {self.rejected_outcome} "
                 f"(outcome cooldown) + {self.rejected_cooldown} (debounce) + {self.rejected_spike} "
-                f"(noise spikes)")
+                f"(noise spikes){warm}")
 
     def close(self):
         try:

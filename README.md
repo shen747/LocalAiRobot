@@ -20,8 +20,8 @@
 Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 1. **Clone it** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`
-2. **Install it** — `./scripts/install_stack_pi5.sh` grabs the offline AI stack, sets your username, and enables the **IMX519 camera** overlay; then `sudo reboot` and SSH back in. *(On a Jetson Orin Nano, run `./scripts/install_stack_jetson.sh` instead.)*
-3. **Patch it** — `./scripts/patches/common/1_esc_hb_qr_1060.sh` drops in your ESC's bench-tested defaults. Running any hardware other than the reference build (different camera, laser sensors, …)? there's a one-command patch for each, sorted into `common/` + your board's folder — **full catalog:** [scripts/patches/README.md](scripts/patches/README.md).
+2. **Install it** — `./scripts/install_stack_pi5.sh` grabs the offline AI stack and sets your username; then `sudo reboot` and SSH back in. *(On a Jetson Orin Nano, run `./scripts/install_stack_jetson.sh` instead.)*
+3. **Patch it** — `./scripts/patches/common/1_esc_hb_qr_1060.sh` drops in your ESC's bench-tested defaults, and `./scripts/patches/pi5/3_camera_usb_webcam.sh` points it at your camera. Running any hardware other than the reference build (laser sensors, a night-vision camera, …)? there's a one-command patch for each, sorted into `common/` + your board's folder — **full catalog:** [scripts/patches/README.md](scripts/patches/README.md).
 4. **Prove it** — ESC on, **wheels off the ground**: `./scripts/run_diagnostics.sh --wheels-off`. Green ✓ down the list; fix any red ✗ with the doc pointer it prints, then chase the **ALL-OK**.
 5. **Drive it** — `./scripts/run_me.sh`, say *"hey jarvis"*, and go. (Bench first? `./scripts/run_me.sh --dry` — nothing moves.)
 
@@ -73,8 +73,7 @@ Search terms are generic — use your preferred retailer.
 
 | Part | Search term | Notes |
 |---|---|---|
-| Camera | `Arducam IMX519 16MP autofocus Raspberry Pi` **or** fixed-focus `Raspberry Pi Camera V2 IMX219` / `OV5647` | visual input for the VLM. **IMX519 (autofocus) recommended** — it focuses on whatever you show it (a held-up object, a face), so `remember`/`find` shots are sharp. It's third-party, so `install_stack_pi5.sh` **enables its boot overlay for you** (official IMX219/OV5647 auto-detect — using one? install with `ROBOT_CAMERA_OVERLAY=none`). Any libcamera camera works — no code change. |
-| **Pi 5 camera adapter cable** ⚠️ | `Raspberry Pi 5 camera cable 22-pin 0.5mm to 15-pin 1mm` | the Pi 5 CSI port is the narrow 22-way type; a bare V2's 15-way cable **won't fit** without this. **Some Arducam kits bundle it** (their "Pi Zero cable" is 22→15) — check before buying separately |
+| Camera | `1080p USB camera module IR-CUT night vision 3.6mm` **or** any `USB webcam 1080p` | visual input for the VLM and for Concierge face recognition. **USB (UVC), not the CSI ribbon** — no adapter cable, no boot overlay, no vendor driver, and it works identically on the Pi 5 and the Jetson. Apply one patch (`scripts/patches/<board>/3_camera_usb_*.sh`) and that's the whole setup. The **IR-CUT** variant sees in the dark, at the cost of greyscale IR frames that need their own enrolment photos. |
 | IR illuminator (optional) | `850nm IR LED illuminator board` | a NoIR module sees nothing in the dark without IR light; skip for lit rooms / a standard module |
 | Face screen — pick one | **USB-C:** `3.5 inch USB Type-C secondary screen 320x480 IPS` · **DSI:** `Freenove 5 inch DSI touchscreen 800x480 Raspberry Pi` | the robot's face. **USB-C** = the TURZX/"NO AIDA64" panel (USB-serial, `turing` backend). **DSI** = a ribbon panel like the Freenove 5" 800×480 (`framebuffer` backend, `/dev/fb0`). Either works — the code auto-detects; touch (if any) is unused. See [assembly](docs/assembly.md) |
 
@@ -102,7 +101,7 @@ Tool: a **soldering iron** (PCA9685 headers, motor/ESC (Electronic Speed Control
 > and the **spur gear pitch** — it must match the pinion (SCX10 standard is **32P / Mod 0.8**).
 
 > 🔧 **Not the reference build?** Every hardware alternative has a **one-command patch** that writes the
-> right `config/robot.env` keys — a different **ESC**, **camera** (OV5647 / official Camera Module 3),
+> right `config/robot.env` keys — a different **ESC**, **camera** (plain USB webcam / IR night-vision module),
 > **obstacle sensors** (VL53L1X laser ToF), or an optional **IMU / wheel encoder**. Browse the full
 > catalog with the exact hardware each one targets: [**scripts/patches/README.md**](scripts/patches/README.md).
 
@@ -238,9 +237,9 @@ the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
 
 **Quick start (Pi 5 — greet people from photos you already have):**
 
-> Needs a **PIR motion sensor** + a **camera** (the CSI camera the installer sets up works; USB webcam? add
-> `./scripts/patches/pi5/3_camera_usb_webcam.sh`). Concierge **never drives**, so **skip** the ESC patch and
-> the wheels-off diagnostics from the main Quickstart.
+> Needs a **PIR motion sensor** + a **USB camera** (`./scripts/patches/pi5/3_camera_usb_webcam.sh`, or
+> `3_camera_usb_ir_1080p.sh` for a night-vision module). Concierge **never drives**, so **skip** the ESC patch
+> and the wheels-off diagnostics from the main Quickstart.
 
 1. **Wire the PIR** — `OUT → GPIO4 (physical pin 7)`, `VCC → 5V (pin 2)` ⚠️ **not 3.3 V — a PIR on 3.3 V won't trigger reliably**, `GND → GND (pin 6)`. Only the OUT line is 3.3 V → Pi-safe, no divider. `ROBOT_PIR_PIN=4` is already the default. Wiring guide: [docs/wiring/pir-sensor-wiring.md](docs/wiring/pir-sensor-wiring.md).
 2. **Clone** — `git clone https://github.com/YOUR_GITHUB_USER/LocalAiRobot.git ~/LocalAiRobot && cd ~/LocalAiRobot`

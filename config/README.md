@@ -245,7 +245,7 @@ with [`BENCH_SCRIPTS.md`](../BENCH_SCRIPTS.md), then set them in the patch.
 | `ROBOT_CAMERA_SIZE` | `512` | Square letterbox size (px) the frame is reduced to before the VLM. |
 | `ROBOT_CAMERA_WARMUP_S` | `1.0` | Settle time for auto-exposure/white-balance before each capture. |
 | `ROBOT_CAMERA_CAPTURE_TIMEOUT_S` | `12` | Hard cap on one still capture (autofocus + frame settle). A wedged USB/libcamera read returns "no frame" instead of freezing explore; keep it generous so a healthy-but-slow capture isn't killed. |
-| `ROBOT_CAMERA_AUTOFOCUS` | `1` | On AF sensors (IMX519), run a one-shot focus before each capture; ignored on fixed-focus (IMX219/OV5647). |
+| `ROBOT_CAMERA_AUTOFOCUS` | `1` | Ask the camera to focus. On `v4l2` this sets the UVC autofocus control (many webcams have none — the startup log then says `firmware default`); on `picamera2` it runs a one-shot focus before each capture. **Set `0` for a fixed-lens module** such as the 3.6mm IR board — `3_camera_usb_ir_1080p.sh` does that for you. |
 | `ROBOT_WAKE_PERSON_CHECK` | `auto` | On wake, snap a frame + VLM-check if a **person** is in front (runs parallel to recording, so ~free on remote) and feed it into that reply. `auto` = on for remote / off for local; `1` = always, `0` = never. |
 | `ROBOT_VISION_TIMEOUT_S` | `600` | Timeout for one image call — vision is **CPU-only and slow** on the Pi 5 (tens of s to minutes). |
 | `ROBOT_FAKE_VISION` | *(empty)* | Dry-run scripted sighting `target:horizontal:distance:confidence` (e.g. `sofa:left:near:0.9`) so explore/find runs with no camera. |
