@@ -499,84 +499,125 @@ that drives HIGH hard, two pots, and a **~2.5 s latch** holding the output up af
 **Panasonic PaPIRs (EKMC/EKMB) is the bare industrial part**: no pots, no latch, a deliberately weak output,
 a real warm-up, and an output pin that swings to whatever you feed Vdd.
 
-| | HC-SR501 | PaPIRs EKMC/EKMB |
+Figures below are from the **EKMB1105112** sheet (Ver. 1.1, WL series, 1 µA, black lens). Its siblings
+`EKMB1205112` (2 µA) and `EKMB1305112K` (6 µA) share every number that matters here.
+
+| | HC-SR501 | **PaPIRs EKMB1105112** |
 |---|---|---|
-| VCC | **5 V** (pin 2) — its regulator needs it | **3.3 V** (pin 1) — see the warning below |
+| VCC | **5 V** (pin 2) — its regulator needs it | **3.3 V** (pin 1) — 2.3–4.0 V operating, **4.5 V absolute max** |
 | Signal | OUT → GPIO 4 (pin 7) | OUT → GPIO 4 (pin 7) |
-| Output stage | push-pull, drives HIGH hard | weak (~100 µA into a high-impedance load) |
-| Output hold | latched ~2.5 s | none — the pulse can be short |
-| Warm-up | ~5 s | **up to 30 s**, output undefined meanwhile |
+| Output stage | push-pull, drives HIGH hard | **sources only**, Iout max 100 µA, Vout ≥ Vdd−0.5 V |
+| Output hold | latched ~2.5 s | **Standby Hold ~2.6 s typ**, then **Mask ~1.3 s** (blind) |
+| Warm-up (Twu) | ~5 s | **25 s typ, 210 s MAX** — output undefined meanwhile |
+| Detection | ~110°, a handful of zones | **122° / 88 zones** (area A) + 150° / 16 zones (area B), 5 m |
+| Idle current | ~50 mA | **1.0 µA** |
 
-> 🔴 **Power it from 3.3 V, not 5 V.** Its output is referenced to Vdd, so on a 5 V supply it puts **5 V on
-> a GPIO that is 3.3 V-only and not 5 V-tolerant**. The part is specced 3.0–6.0 V, so 3.3 V is fully in
-> spec with no downside — the HC-SR501 only needed 5 V because of its on-board regulator.
+> 🔴 **3.3 V only — 5 V destroys this sensor.** Operating range is **2.3–4.0 V** and the *absolute maximum
+> rating* is **4.5 V**, so 5 V is beyond the destruct limit for the part itself — quite apart from putting
+> 5 V on a GPIO that is 3.3 V-only and not 5 V-tolerant. Never wire this to pin 2. Good news: Panasonic
+> characterises the detection performance **at 3 V**, so 3.3 V is essentially the reference condition and
+> you give up nothing in range.
 
-**1. Measure `ROBOT_PIR_PULL` — don't guess.** A PIR's output is one of two designs needing *opposite*
-settings, and the wrong one gives you either permanent silence or a permanent trigger — both of which just
-look like "the sensor is dead". Read the raw pin with `pinctrl`, which bypasses the brain entirely:
+> 🔴 **The decoupling capacitor is required, not optional.** §6-3(8): *"Please use a stabilized power
+> supply. Power supply noise can cause operating errors… install a capacitor on the sensor's power supply
+> pin."* That is exactly the phantom-wake storm you already fought once. Put a **0.1 µF ceramic right at
+> the sensor's Vdd/GND pins**, plus **10–100 µF** bulk if the run is long. §6-3(6) also asks for
+> **shielded cable, kept as short as possible** — relevant here, because this sensor wants to be mounted
+> *outside* the enclosure. §6-3(7) recommends surge protection, and §6-3(5) warns **±200 V of static can
+> destroy it**: handle it by the body, not the pins.
+
+**Mounting — this part is fussier than the HC-SR501, and the numbers are specified:**
+
+- **Lens clearance is a hard number** (§7-1/7-2). The lens must protrude **≥ 6.2 mm** past your enclosure
+  to get the full detection area (A **and** B); **≥ 0.7 mm** if area A alone is enough. Recess it further
+  and you are optically cropping the sensor — which looks exactly like a dead sensor. The mounting hole
+  should be **tapered or oversized**, not a tight straight bore.
+- **No glass or acrylic in front of it** (§6-1(2a)) — those block IR transmission. A "protective window"
+  over the lens disables the sensor.
+- **Mount it on a PCB** (§6-3(2)) and don't press or deform the lens — it's soft polyethylene (§6-3(11)).
+- **Keep it away from moving air and temperature swings** — HVAC vents, hot or cold draughts, humidifier
+  vapour. It is worth restating that the original 465-false-wakes-per-hour storm on this build was the PIR
+  sitting in the enclosure's only vent hole, watching the Pi's own warm exhaust. The datasheet independently
+  names this class of cause; mount it **outside** the enclosure, in still air.
+
+**The settings, from the datasheet:**
 
 ```bash
-sudo systemctl stop robot.service      # nothing else may hold the pin
-sleep 40                               # WAIT OUT THE WARM-UP -- readings before this are junk
-
-pinctrl set 4 ip pn                    # A: input, NO pull -- what does the sensor drive on its own?
-watch -n 0.2 pinctrl get 4             #    stand still ~15s, then wave. Ctrl-C. (reads "... | hi" / "| lo")
-pinctrl set 4 ip pu && watch -n 0.2 pinctrl get 4   # B: with an internal PULL-UP
-pinctrl set 4 ip pd && watch -n 0.2 pinctrl get 4   # C: with an internal PULL-DOWN
+sed -i -e 's|^ROBOT_PIR_PULL=.*|ROBOT_PIR_PULL=down|' \
+       -e 's|^ROBOT_PIR_WARMUP_S=.*|ROBOT_PIR_WARMUP_S=210|' \
+       config/robot.env
+./scripts/run_me.sh --reload
 ```
 
-| Observation (at rest → on motion) | Set |
-|---|---|
-| **A** steady `lo` → `hi` | `ROBOT_PIR_PULL=none` ← expected for a PaPIRs |
-| **A** steady `hi` → `lo` | `ROBOT_PIR_PULL=up` |
-| **A** wanders, but **B** steady `hi` → `lo` | `ROBOT_PIR_PULL=up` (open-collector output) |
-| **A** wanders, but **C** steady `lo` → `hi` | `ROBOT_PIR_PULL=down` (as the HC-SR501) |
+- **`ROBOT_PIR_PULL=down`** — the same value as the HC-SR501, for the opposite reason. The wiring diagram
+  (§4-7) shows current flowing **out of the sensor into your load**: it **sources** only (Iout max 100 µA),
+  is **active-high**, and is high-impedance when idle, so it cannot pull the pin down itself and *needs*
+  the pull-down to define its LOW state. Leave the pin floating (`none`) and it wanders and invents visitors
+  all night. The Pi's ~50 kΩ internal pull-down draws ~66 µA at 3.3 V, inside the 100 µA budget, and
+  **Vout ≥ Vdd−0.5 V = 2.8 V** against that load — comfortably above the Pi's ~2.31 V logic-high threshold.
+- **`ROBOT_PIR_WARMUP_S=210`** — Circuit Stability Time (Twu) is **25 s typical but 210 s maximum**, and
+  during it "the output's status is undefined (ON/OFF) and detection is therefore not guaranteed". 210 is
+  the only spec-compliant value, and it is nearly free: the **wake word still works** throughout, and the
+  robot boots rarely. Without it you get a burst of phantom wakes at every boot, the chatter warning fires,
+  and you go hunting a hardware fault that was never there. **Drop it to `30` while bench-testing**, or a
+  3½-minute silence after each restart will look exactly like a dead sensor.
+- **`ROBOT_PIR_HOLD_S` — leave it at `0.1`.** See the correction below.
 
-**Steady matters more than which way round it is.** A reading that wanders with nobody in the room means
-that pull setting is wrong for this sensor, and you'll get phantom wakes all night. `none` is the likely
-answer for a PaPIRs because the Pi's internal pull-down is ~50 kΩ — at 3.3 V that already draws ~66 µA
-against the part's ~100 µA budget, which can drag the HIGH level down until the pin never reads as
-triggered. (`pinctrl`'s setting is only for the test; gpiozero re-applies its own at startup.)
+> ⚠️ **Do not set `ROBOT_PIR_HOLD_S=0` on this part.** The EKMB's §4-5 timing chart defines a **Standby
+> Hold Time of ~2.6 s typ** (extended if motion continues) followed by a **Mask Time of ~1.3 s** during
+> which no detection is possible. So its output *is* latched, comparable to the HC-SR501's ~2.5 s, and the
+> 100 ms re-read works exactly as designed — it still filters wire-level electrical noise, which isn't
+> latched. It is the **EKMC1605111** that has no hold time, no mask time and no minimum pulse width; on
+> *that* part `HOLD_S=0.1` would discard every real visitor. Check which part you have before touching it.
 
-**2. Set both keys, restart, verify.**
+**Two consequences of the hold + mask times worth knowing.** Rising edges can be no closer together than
+**~3.9 s** (2.6 hold + 1.3 mask), so this sensor self-limits the wake rate and `ROBOT_PIR_COOLDOWN_S=2`
+never binds. And that 1.3 s mask is **real blindness** — a second visitor arriving inside it is not seen at
+all, by the hardware, regardless of software.
+
+**On the transient warning.** §6-1(4) notes an "unnecessary detection signal might be outputted, on rare
+occasions… due to the nature of pyro-electric element", and suggests a pulse-count circuit. You already
+have something better: the concierge's **Stage-A camera probe** settles it in ~120 ms *with evidence* — it
+looks, finds nobody, and arms a short silent cooldown. A pulse counter guesses; a camera knows.
+
+**The polling change.** [`brain/pir.py`](brain/pir.py) now uses `DigitalInputDevice` with **edge callbacks**
+(lgpio → kernel edge events) instead of `MotionSensor`, which sampled at 10 Hz. On *this* part that was not
+strictly necessary — a 100 ms sample period cannot miss a 2.6 s pulse — but it removes up to a full sample
+period of latency from every wake, and it is required for the latch-less EKMC. No effect on the HC-SR501
+beyond waking sooner.
+
+**What actually makes this sensor better for a hallway.** Not sensitivity — **zone density**. Area A gives
+**88 detection zones across 122°**, where an HC-SR501's Fresnel lens has roughly a dozen over a similar
+span. Head-on approach produces only small changes in angular position, so the denser the zones, the more
+likely a given step still crosses a boundary. That is the *mechanism* behind your 1–3/12 head-on result,
+and this part attacks it directly. Two caveats from §6-1(2): the target must move at around **1.0 m/s**
+(very fast movement can also be missed), and **glass or acrylic in front of the sensor blocks IR** — do not
+put it behind a window in the enclosure.
+
+**Verify after the reload** — the second line confirms the pull actually took:
 
 ```bash
-sed -i -e 's|^ROBOT_PIR_PULL=.*|ROBOT_PIR_PULL=none|' \
-       -e 's|^ROBOT_PIR_WARMUP_S=.*|ROBOT_PIR_WARMUP_S=30|' \
-       config/robot.env
-sudo systemctl start robot.service
 journalctl -u robot.service -n 40 | grep 'PIR motion wake'
 ./scripts/pir_sensor_probe.sh          # walk past 10x -- the count should track your passes
 ```
 
-Want **both** lines — the second confirms the pull actually took:
-
 ```
-PIR motion wake: warming up for 30s -- edges ignored until the sensor settles
-PIR motion wake: armed on BCM GPIO 4 (Concierge Mode) -- hold 0.10s, debounce 2.0s, pull=none
+PIR motion wake: warming up for 210s -- edges ignored until the sensor settles
+PIR motion wake: armed on BCM GPIO 4 (Concierge Mode) -- hold 0.10s, debounce 2.0s, pull=down
 ```
 
-`ROBOT_PIR_WARMUP_S` exists because a pyroelectric front-end's output is **undefined** while it settles.
-Without it you get a burst of phantom wakes at every boot — and the chatter warning fires, sending you
-hunting a hardware fault that was never there.
-
-**3. If the sensor clearly sees you but the brain logs nothing, it's the pulse width.** Two things assume
-the HC-SR501's wide latched pulse:
-
-- `ROBOT_PIR_HOLD_S` (default `0.1`) is a **noise filter**: after an edge it re-reads the pin 0.1 s later
-  and discards the wake if the pin already fell. A pulse shorter than that is rejected as electrical noise
-  *every single time*. Fix: **`ROBOT_PIR_HOLD_S=0`** skips the re-read.
-- gpiozero **samples** the pin at 10 Hz, so a pulse under ~100 ms can be missed before it is ever seen.
-
-The hourly summary tells them apart — this is what its `noise` counter is for:
+**Optional sanity check on the wiring**, if it behaves oddly — read the raw pin with `pinctrl`, which
+bypasses the brain entirely. Expect steady `lo` at rest and `hi` while you wave, after the 30 s warm-up:
 
 ```bash
-journalctl -u robot.service | grep 'concierge: last'
+sudo systemctl stop robot.service      # nothing else may hold the pin
+sleep 40                               # WAIT OUT THE WARM-UP -- readings before this are junk
+pinctrl set 4 ip pd && watch -n 0.2 pinctrl get 4    # Ctrl-C when done; reads "... | hi" / "| lo"
 ```
 
-`+N noise` climbing as you walk past → the first case; set `ROBOT_PIR_HOLD_S=0` and re-test. **Nothing at
-all** in the log while `pinctrl` clearly saw you → the second, which needs a faster sample rate in
-[`brain/pir.py`](brain/pir.py). Neither is a mounting problem — don't go back to re-aiming the sensor.
+A reading that **wanders with nobody in the room** means the pin isn't being held down — check the
+pull-down took, and check the decoupling capacitor. A pin that **never goes high** means either the supply
+or the polarity is wrong.
 
 > ⚠️ **A better PIR does not change the physics.** It is still passive, so it still fires when a body
 > *crosses* between its Fresnel zones, and head-on approach is still its worst case. You are buying

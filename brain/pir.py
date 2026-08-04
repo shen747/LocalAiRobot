@@ -6,8 +6,10 @@
 # wait_for_trigger() returns immediately and the main loop runs the concierge greeting pipeline. The wake
 # word keeps working in parallel; motion is purely additional.
 #
-# gpiozero.MotionSensor on the Pi (same lgpio pin factory as the ultrasonics). Lazy import + graceful
-# degrade: no ROBOT_PIR_PIN, or no gpiozero (laptop/Jetson) -> available=False, a harmless no-op.
+# gpiozero.DigitalInputDevice on the Pi (same lgpio pin factory as the ultrasonics), driven by EDGE
+# callbacks rather than polling -- see the note on the construction below for why that matters on a sensor
+# with no output latch. Lazy import + graceful degrade: no ROBOT_PIR_PIN, or no gpiozero (laptop/Jetson) ->
+# available=False, a harmless no-op.
 #
 # TRIGGER HYGIENE (why this file has more than a callback in it). A PIR is an ANALOG sensor with a digital
 # output, and in a robot it sits inches from a warm Pi 5, its fan exhaust and a noisy 5V rail -- all classic
@@ -97,23 +99,41 @@ class MotionWake:
         if not pin:
             return
         try:
-            from gpiozero import MotionSensor
-            # PULL. An HC-SR501-class module drives its output push-pull, so gpiozero's default internal
-            # pull-DOWN is free insurance: an UNWIRED pin reads LOW instead of floating and inventing motion.
-            # An industrial part like the Panasonic PaPIRs (EKMC/EKMB) is different -- its datasheet caps the
-            # output at 100uA into a HIGH-IMPEDANCE load, and the Pi's internal pull-down is ~50k, which at
-            # 3.3V already draws ~66uA. That is inside the budget but not comfortably, and it can drag the
-            # HIGH level down. ROBOT_PIR_PULL=none floats the pin instead (no pull resistor at all), which is
-            # what those parts want. Only do that with a sensor that actively drives BOTH states -- on an
-            # open-collector output a floating pin is noise.
+            # EDGE-DRIVEN, NOT POLLED. This used to be gpiozero.MotionSensor, a SmoothedInputDevice that
+            # SAMPLES the pin at 10Hz and reports through a queue. Whether that can MISS a detection depends
+            # on the part, and the PaPIRs family is not consistent about it:
+            #   EKMC1605111  -- no hold time, no mask time, no minimum pulse width; the output just tracks
+            #                   target present/absent, so a real detection CAN be shorter than one sampling
+            #                   period and vanish unseen. Polling is genuinely unsafe here.
+            #   EKMB1105112  -- has a Standby Hold Time of ~2.6s (extended while motion continues) and then
+            #                   a ~1.3s Mask Time. A 100ms sampling period cannot miss a 2600ms pulse, so
+            #                   polling would in fact have been safe on this one.
+            # Edge callbacks are the right answer for both: correct on the parts that need it, and on the
+            # rest they simply remove up to a full sampling period (100ms) of latency from every wake, which
+            # is worth having on a greeter people walk straight past. DigitalInputDevice hands the callback
+            # straight off the pin factory's edge detection (lgpio -> kernel edge events on the Pi 5).
+            from gpiozero import DigitalInputDevice
+            # PULL. What the sensor's output stage can DRIVE decides this, and the two families differ:
+            #   HC-SR501-class module -- push-pull, drives HIGH hard and LOW hard.
+            #   PaPIRs (EKMB/EKMC)    -- SOURCES current only (datasheet 4-7 wiring diagram: current flows
+            #                            OUT of the sensor into your load, Iout max 100uA), active-HIGH, and
+            #                            high-impedance when idle. It cannot pull the pin down itself.
+            # Both therefore want the internal pull-DOWN (the default): it defines the LOW state that the
+            # PaPIRs leaves floating, and on the HC-SR501 it is free insurance that an UNWIRED pin reads LOW
+            # instead of floating and inventing motion. The Pi's pull-down is ~50k, which at 3.3V draws ~66uA
+            # -- inside the 100uA budget -- and Vout is specified as >= Vdd-0.5V, i.e. 2.8V on a 3.3V supply,
+            # comfortably above the Pi's ~2.31V logic-high threshold. Verified against EKMB1105112 4-4/4-7.
+            # ROBOT_PIR_PULL=none removes the resistor entirely: correct ONLY for a sensor that actively
+            # drives BOTH states. On a source-only or open-collector output a floating pin is noise, so do not
+            # use it for the PaPIRs -- an idle pin would wander and invent visitors all night.
             pull = (os.environ.get("ROBOT_PIR_PULL", "") or "down").strip().lower()
             if pull in ("none", "float", "off"):
-                self._sensor = MotionSensor(int(pin), pull_up=None, active_state=True)
+                self._sensor = DigitalInputDevice(int(pin), pull_up=None, active_state=True)
             elif pull == "up":                       # active-LOW modules (open-collector "alarm" outputs)
-                self._sensor = MotionSensor(int(pin), pull_up=True)
+                self._sensor = DigitalInputDevice(int(pin), pull_up=True)
             else:
-                self._sensor = MotionSensor(int(pin))
-            self._sensor.when_motion = self._fire   # gpiozero fires this on its own thread
+                self._sensor = DigitalInputDevice(int(pin))
+            self._sensor.when_activated = self._fire   # gpiozero fires this on its own thread
             self.available = True
             # WARM-UP. A PIR's output is UNDEFINED while its pyroelectric front-end settles, and the datasheet
             # figure is not small: Panasonic PaPIRs specifies up to 30 SECONDS, during which the pin may toggle
@@ -123,7 +143,8 @@ class MotionWake:
             if self._warmup_s > 0:
                 self._ready_at = time.monotonic() + self._warmup_s
                 log.info("PIR motion wake: warming up for %.0fs -- edges ignored until the sensor settles "
-                         "(ROBOT_PIR_WARMUP_S; PaPIRs datasheet says up to 30s, HC-SR501 needs ~5s)",
+                         "(ROBOT_PIR_WARMUP_S; PaPIRs EKMB Circuit Stability Time is 25s TYP but 210s MAX, "
+                         "HC-SR501 needs ~5s). The wake WORD is unaffected during this window.",
                          self._warmup_s)
             log.info("PIR motion wake: armed on BCM GPIO %s (Concierge Mode) -- hold %.2fs, debounce %.1fs, "
                      "pull=%s (outcome cooldowns are set by the concierge look, not here)",
@@ -135,7 +156,19 @@ class MotionWake:
     # -- trigger filters ---------------------------------------------------------------------------------
     def _is_spike(self):
         """True when the edge had already fallen again by the end of the hold window -- i.e. electrical noise,
-        not a person. Skipped when ROBOT_PIR_HOLD_S=0, or if the sensor can't report its level."""
+        not a person. Skipped when ROBOT_PIR_HOLD_S=0, or if the sensor can't report its level.
+
+        !! THIS FILTER NEEDS A LATCHED OUTPUT, so check your sensor before trusting it. It assumes an
+        HC-SR501-style held pulse, where "still HIGH 100ms later" really does separate a person from a spike.
+        Where that holds:
+          HC-SR501     -- ~2.5s latch.                                          keep the default.
+          EKMB1105112  -- Standby Hold Time ~2.6s typ, then a ~1.3s Mask Time.  keep the default.
+          EKMC1605111  -- NO hold time, NO mask time, NO minimum pulse width.   SET ROBOT_PIR_HOLD_S=0.
+        On a part with no latch a perfectly genuine short detection has already fallen by the time we
+        re-read, so this discards EVERY real visitor and files them as noise -- the symptom is the
+        `noise spikes` counter climbing in lockstep with people walking past. The fallback transient filter
+        for those parts is the concierge's Stage-A camera probe (~120ms, and it settles the question with
+        evidence rather than a guess), which is what Panasonic's suggested "pulse count circuit" is for."""
         if self._hold_s <= 0 or self._sensor is None:
             return False
         time.sleep(self._hold_s)
@@ -162,11 +195,14 @@ class MotionWake:
             log.warning(
                 "PIR CHATTER: %d motion triggers in %s on GPIO %s -- that is far more than real "
                 "visitors, so the sensor is almost certainly false-triggering. Each one wakes the camera, so "
-                "this burns CPU + disk all day. Usual causes: VCC on a NOISY 5V rail (try a separate supply "
-                "or add a 100uF cap across the PIR's VCC/GND), the sensor pointed at the Pi's own FAN EXHAUST "
-                "/ a heat source / a sunlit window, or the sensitivity pot turned right up. Probe it with "
-                "./scripts/pir_sensor_probe.sh, and raise ROBOT_PIR_COOLDOWN_S / ROBOT_PIR_HOLD_S (or clear "
-                "ROBOT_PIR_PIN for wake-word-only) meanwhile.",
+                "this burns CPU + disk all day. Usual causes: VCC on a NOISY rail (a decoupling cap across "
+                "the sensor's VCC/GND is REQUIRED by the PaPIRs datasheet, not optional), the sensor pointed "
+                "at the Pi's own FAN EXHAUST / a heat source / a sunlit window / an HVAC vent, a sensitivity "
+                "pot turned right up, or -- on a source-only output like the PaPIRs -- ROBOT_PIR_PULL=none "
+                "leaving the pin floating when it should be 'down'. Probe it with "
+                "./scripts/pir_sensor_probe.sh, and raise ROBOT_PIR_COOLDOWN_S (or clear ROBOT_PIR_PIN for "
+                "wake-word-only) meanwhile. Do NOT reach for ROBOT_PIR_HOLD_S on a latch-less sensor -- see "
+                "_is_spike(); it will start discarding real visitors instead.",
                 self._window_count, elapsed_txt, self._pin)
 
     def arm_cooldown(self, seconds, reason=""):
