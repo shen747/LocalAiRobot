@@ -298,12 +298,25 @@ git -C ~/LocalAiRobot remote set-url origin git@github.com:<github_user>/LocalAi
 git clone git@github.com:<github_user>/LocalAiRobot.git ~/LocalAiRobot
 cd ~/LocalAiRobot
 
-# 5. Ignore a file LOCALLY, with no .gitignore commit -- this is where a private notes/keys file goes:
+# 5. Make the LOCAL BRANCH this robot lives on. `main` stays a clean mirror of origin and is never edited
+#    here; local_branch carries ONE commit holding your API key, your paths and your tuning.
+#    *** local_branch NEVER gets pushed. *** It is how the key stays off GitHub while still being committed.
+git checkout -b local_branch
+
+# 6. Ignore a file LOCALLY, with no .gitignore commit -- this is where a private notes/keys file goes:
 nano .git/info/exclude
 ```
 
-`config/robot.env` arrives as the **committed template** with an empty `ROBOT_GEMINI_API_KEY` — the `sed`
-block in §6/§7 step 2 is what fills in the real key. There is nothing else to set up by hand.
+**How updates work from here on.** `config/robot.env` is a **tracked** file, committed as a template with an
+empty `ROBOT_GEMINI_API_KEY`. Rather than fighting that, this robot keeps its edits in git — on a branch that
+never leaves the Pi:
+
+```
+origin/main ─── main            (pulled, never edited on the robot)
+                 └── local_branch   ONE commit: your key + <placeholder> substitutions + tuning
+```
+
+Every update is then: pull `main`, rebase your one commit on top. That's §6/§7 step 0 and §8 step 1.
 
 > **Restoring a cloned disk image onto a second board?** Regenerate the **host** keys (a different thing from
 > the key above) or every SSH client will scream about a duplicate fingerprint:
@@ -314,8 +327,11 @@ block in §6/§7 step 2 is what fills in the real key. There is nothing else to 
 The mobile build: ESC + sensors, USB-C face panel. From `~/LocalAiRobot`, in order.
 
 ```bash
-# 0. Get the code FIRST -- install_stack installs deps against whatever checkout is already there
-cd ~/LocalAiRobot && git pull
+# 0. Get the code FIRST -- install_stack installs deps against whatever checkout is already there.
+#    main mirrors origin; local_branch replays your private config commit on top of it.
+cd ~/LocalAiRobot
+git checkout main && git pull                 # newest upstream code
+git checkout local_branch && git rebase main  # your config back on top  (FRESH BOARD: nothing to rebase yet)
 
 # 1. Install the stack (needs internet; re-runnable)
 #    MUTUALLY EXCLUSIVE -- run the line for YOUR board, never both.
@@ -365,13 +381,16 @@ robot: edit it, then `./scripts/setup_audio.sh`.
 The stationary greeter: PIR motion + face ID, DSI/HDMI face. From `~/LocalAiRobot`, in order.
 
 **Setting up a board from scratch? Do [§5](#5-first-contact-a-fresh-board) first** — it ends with the
-`git clone` that everything below assumes. On a fresh box you also skip step 0's `git pull` (nothing to
-update) and step 5's purge (nothing to purge).
+`git clone` and the `local_branch` that everything below assumes. On a fresh box you also skip step 5's
+purge (nothing to purge).
 
 ```bash
 # 0. Get the code FIRST. The spoken WAVs are committed, so this is also how new voice cues reach the Pi.
-cd ~/LocalAiRobot && git pull           # FRESH BOARD: skip -- §5 step 4 just cloned it
-ls sounds/sleep_sounds/*.wav | wc -l    # want 12; 0 = the cues were never committed+pushed (see §11)
+#    main mirrors origin; local_branch replays your private config commit on top of it.
+cd ~/LocalAiRobot
+git checkout main && git pull                 # newest upstream code
+git checkout local_branch && git rebase main  # your config back on top  (FRESH BOARD: nothing to rebase yet)
+ls sounds/sleep_sounds/*.wav | wc -l          # want 12; 0 = the cues were never committed+pushed (see §11)
 
 # 1. Install the stack. This also downloads BOTH face models: arcface.onnx (recogniser) and
 #    face_detection_yunet.onnx (the landmark detector that makes recognition actually work -- see step 6).
@@ -642,11 +661,16 @@ After changing code on the PC and pushing. **Order matters** — doing it wrong 
 against a stale journal.
 
 ```bash
-# 1. New code -- see the robot.env warning under this block before you commit anything on the robot
-cd ~/LocalAiRobot && git pull
+# 1. New code. main mirrors origin and is never edited here; local_branch is your ONE config commit,
+#    replayed on top of whatever main just pulled. If the rebase stops, see the note under this block.
+cd ~/LocalAiRobot
+git checkout main && git pull                 # newest upstream code
+git checkout local_branch && git rebase main  # your key + paths + tuning back on top
 
-# 2. New config keys are NOT pulled (robot.env is ignored) -- absent keys fall back to code defaults,
-#    which is usually fine, but check for ones you want to tune:
+git log --oneline main..local_branch          # sanity: should be exactly ONE commit, and it is yours
+
+# 2. New config keys DO arrive -- config/robot.env is tracked, so the rebase brings upstream's new keys and
+#    replays your edits over them. Spot-check one you care about rather than assuming:
 grep -c ROBOT_CONCIERGE_SILENT_COOLDOWN_S config/robot.env   # 0 = your robot.env predates the two-stage wake
 
 # 3. Fetch any new models (idempotent -- instant no-op when they're already there)
@@ -667,19 +691,24 @@ bash enroll_all.sh && ./scripts/rag.sh --faces
 ./scripts/run_me.sh --install-boot && sudo reboot now
 ```
 
-> 🔴 **`config/robot.env` is TRACKED, not ignored.** It's committed as a *template* with an empty
-> `ROBOT_GEMINI_API_KEY`; the real key exists only as a local modification on the robot. Consequences:
+> 🔴 **Never push `local_branch`.** It holds your live API key by design. Only `main` is ever pushed, and
+> only from your PC. Committing on the robot is fine — expected, even — but that branch stays on the Pi.
 >
-> - A pull **merges** — new keys arrive and your edited lines stay, unless the same line changed on both
->   sides, which is an ordinary conflict to resolve by hand.
-> - **Never `git add -A` or `git commit -a` on the robot.** That stages `config/robot.env` *with your live
->   API key* and pushes it to GitHub. If you're unsure what's staged:
+> - **Changing your local config?** Edit, then fold it into the same commit so there stays exactly one:
 >   ```bash
->   git diff --cached | grep -i gemini     # must print nothing
->   git diff config/robot.env              # your local config drift, for eyeballing
+>   git add -u && git commit --amend --no-edit
 >   ```
-> - Editing it with `sed -i 's|^KEY=.*|KEY=value|'` **replaces the whole line, comments included** — the
->   documentation for that key is gone until the next merge brings it back. Harmless, but don't be surprised.
+> - **The rebase stopped with a conflict?** Normal, and usually in `config/robot.env` — upstream changed a
+>   default or reworded a comment on a line you also edited. Keep **your** value and **their** comment:
+>   ```bash
+>   nano config/robot.env                  # resolve the <<<<<<< markers
+>   git add config/robot.env && git rebase --continue
+>   git rebase --abort                     # ...or bail out entirely, nothing lost
+>   ```
+> - **Editing with `sed -i 's|^KEY=.*|KEY=value|'` replaces the whole line, comments included** — that key's
+>   documentation is gone until a later rebase brings it back. Harmless, but it is why those lines conflict.
+> - `git log --oneline main..local_branch` should always show **exactly one commit**. More than one means an
+>   amend became a new commit; squash them back with `git rebase -i main`.
 
 **When do you actually need `--all`?** `enroll_person.sh` **replaces** a person — it clears their prior
 embeddings before storing the new ones — so a plain `bash enroll_all.sh` already rebuilds every embedding it
