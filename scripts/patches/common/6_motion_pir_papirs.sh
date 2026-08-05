@@ -20,31 +20,35 @@
 # |    old VCC wire without moving it.                                                                 |
 # +---------------------------------------------------------------------------------------------------+
 #
-# WIRING -- three wires, same signal pin as any other PIR:
+# WIRING -- three wires, same signal pin as any other PIR. Plain jumper wires straight onto the Pi header
+# are exactly right: no soldering, no PCB, no breadboard needed.
 #     PaPIRs           Pi 5
 #     ------           ----
 #     VDD       ->     3.3V (pin 1)        <- NOT pin 2. See the box above.
 #     GND       ->     GND  (pin 6, 9, ...)
 #     OUT       ->     GPIO 4 (pin 7)      <- or whatever BCM pin you pass as this script's argument
-#   + a 0.1uF ceramic capacitor ACROSS VDD/GND, right at the sensor. This is REQUIRED, not tidiness:
-#     6-3(8) says "power supply noise can cause operating errors... install a capacitor on the sensor's
-#     power supply pin", and noise immunity is only +/-20V. Add 10-100uF bulk if the wire run is long,
-#     and use SHIELDED cable kept SHORT (6-3(6)).
 #   ! The pin ORDER is a drawing in the datasheet, not text. Read it off the "Bottom VIEW" on page 1 --
 #     do NOT assume the schematic order in the 4-7 wiring diagram is the physical order.
-#   ! Handle it by the body: 6-3(5) warns +/-200V of static can destroy it.
+#   ! Handle it by the body, not the pins: 6-3(5) warns +/-200V of static can destroy it.
+#   * Keep the run short (under ~30cm) and away from motor/ESC wiring. This part's output is deliberately
+#     weak (100uA), so a long noisy run is what upsets it.
+#   * A 0.1uF ceramic capacitor bridged across VDD/GND at the sensor end is Panasonic's recommendation for
+#     supply noise (6-3(8)). Worth adding if you have one; if you don't, start without it and only chase
+#     this if you actually see phantom wakes.
 #
-# MOUNTING -- fussier than a hobby module, and the numbers are specified:
-#   * The LENS must protrude >= 6.2mm past your enclosure for the full detection area (A and B), or
-#     >= 0.7mm for area A alone (7-1/7-2). Recessed deeper you are optically cropping it, which looks
-#     exactly like a dead sensor. Make the panel hole TAPERED or oversized, not a tight straight bore.
-#   * NO GLASS OR ACRYLIC in front of it (6-1(2a)) -- they block IR. A "protective window" disables it.
-#   * Keep it away from HVAC vents, hot/cold draughts and humidifier vapour (6-1(1c)). On the reference
-#     build a PIR mounted in the enclosure's only vent hole -- watching the Pi's own warm exhaust --
-#     produced 465 false wakes an HOUR. Mount it OUTSIDE the case, in still air.
-#   * It is still a PASSIVE sensor: it fires when a body CROSSES between its detection zones, so aim it
-#     ACROSS the traffic rather than down the approach lane. This part is much better at head-on than a
-#     hobby module (88 zones over 122 degrees vs roughly a dozen), but the physics is unchanged.
+# MOUNTING -- where you point it matters more than which sensor you bought:
+#   * Aim it ACROSS the traffic, not down the approach lane. Passive IR detects a body CROSSING between its
+#     detection zones, so head-on is its worst case. This part is much better at head-on than a hobby module
+#     (88 zones over 122 degrees vs roughly a dozen), but the physics is unchanged.
+#   * Mount it OUTSIDE the case, in still air, away from heat sources, HVAC vents and sunlit windows
+#     (6-1(1c)). On the reference build a PIR sitting in the enclosure's only vent hole -- watching the Pi's
+#     own warm exhaust -- produced 465 false wakes an HOUR.
+#   * NOTHING in front of the lens: glass and acrylic block IR (6-1(2a)), so a "protective window" disables
+#     it. Hold the sensor still (tape, glue, a printed clip -- anything that stops it wobbling or rotating),
+#     but do not clamp or press the lens: it is soft polyethylene (6-3(11)).
+#   * Mounting it through a PANEL? The lens needs to protrude >= 6.2mm past the surface for the full
+#     detection area, or >= 0.7mm for the narrower central zone (7-1/7-2), through a hole slightly larger
+#     than the lens. Sitting loose outside the case, this does not apply.
 #
 # Re-runnable (idempotent). Back to the hobby module: 6_motion_pir_hcsr501.sh -- it rewrites the SAME
 # keys with that sensor's values, so switching either way is complete.
@@ -108,7 +112,7 @@ else
 fi
 echo
 echo "   ${YEL}VDD -> 3.3V (pin 1), NOT 5V: 5V is past this sensor's 4.5V absolute maximum and kills it.${RST}"
-echo "   ${YEL}A 0.1uF cap across VDD/GND at the sensor is REQUIRED, and the lens needs >=6.2mm clearance.${RST}"
+echo "   Plain jumper wires are fine -- no soldering, no PCB. Keep the run short and away from motor wiring."
 echo
 echo "   Reload:     ./scripts/run_me.sh --reload     (or reboot)"
 echo "   Verify:     journalctl -u robot.service -n 40 | grep 'PIR motion wake'"
