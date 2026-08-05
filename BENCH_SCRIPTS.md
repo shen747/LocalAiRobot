@@ -263,7 +263,8 @@ alsamixer -c 1        # raise the device's own control, Esc to leave
 
 ## 5. First contact (a fresh board)
 
-Do this **before** §6/§7 — `install_stack` runs apt itself and wants a current index.
+Do this **before** §6/§7. `install_stack` runs apt itself and wants a current index, and **step 4 is the
+clone** that every other section assumes already exists (`cd ~/LocalAiRobot` opens most of them).
 
 ```bash
 # 1. Update the OS (can take a while on a fresh image)
@@ -289,9 +290,16 @@ ssh -T git@github.com                             # "Hi <user>! You've successfu
 # Cloned over HTTPS? point the remote at SSH so pushes stop asking for a token:
 git -C ~/LocalAiRobot remote set-url origin git@github.com:<github_user>/LocalAiRobot.git
 
-# 4. Ignore a file LOCALLY, with no .gitignore commit -- this is where a private notes/keys file goes:
+# 4. CLONE THE REPO -- nothing in §6/§7 works before this; they all start with `cd ~/LocalAiRobot`
+git clone git@github.com:<github_user>/LocalAiRobot.git ~/LocalAiRobot
+cd ~/LocalAiRobot
+
+# 5. Ignore a file LOCALLY, with no .gitignore commit -- this is where a private notes/keys file goes:
 nano .git/info/exclude
 ```
+
+`config/robot.env` arrives as the **committed template** with an empty `ROBOT_GEMINI_API_KEY` — the `sed`
+block in §6/§7 step 2 is what fills in the real key. There is nothing else to set up by hand.
 
 > **Restoring a cloned disk image onto a second board?** Regenerate the **host** keys (a different thing from
 > the key above) or every SSH client will scream about a duplicate fingerprint:
@@ -344,13 +352,18 @@ robot: edit it, then `./scripts/setup_audio.sh`.
 
 The stationary greeter: PIR motion + face ID, DSI/HDMI face. From `~/LocalAiRobot`, in order.
 
+**Setting up a board from scratch? Do [§5](#5-first-contact-a-fresh-board) first** — it ends with the
+`git clone` that everything below assumes. On a fresh box you also skip step 0's `git pull` (nothing to
+update) and step 5's purge (nothing to purge).
+
 ```bash
 # 0. Get the code FIRST. The spoken WAVs are committed, so this is also how new voice cues reach the Pi.
-cd ~/LocalAiRobot && git pull
+cd ~/LocalAiRobot && git pull           # FRESH BOARD: skip -- §5 step 4 just cloned it
 ls sounds/sleep_sounds/*.wav | wc -l    # want 12; 0 = the cues were never committed+pushed (see §11)
 
 # 1. Install the stack. This also downloads BOTH face models: arcface.onnx (recogniser) and
 #    face_detection_yunet.onnx (the landmark detector that makes recognition actually work -- see step 6).
+#    SAY YES WHEN IT OFFERS TO REBOOT on a first install -- see the note below the block.
 ./scripts/install_stack_pi5.sh
 # ./scripts/install_stack_jetson.sh
 
@@ -399,14 +412,23 @@ bash enroll_all.sh
 journalctl -u robot.service -n 300 | grep -E 'camera:|PIR motion wake|detect captures|face_id: ready'
 ```
 
+> 🔴 **On a first install, say yes to the reboot.** It isn't cosmetic: the reboot is what applies your new
+> **device groups** (`gpio`/`video`/`audio` — without them the PIR and camera fail on permissions) and
+> **boot-to-console**, which is what gives the concierge face a `/dev/fb0` to draw on. Skip it and you get a
+> blank face panel and a missing `PIR motion wake` line, neither of which points at the real cause.
+
 Want:
 
 ```
-camera: ... autofocus=ON                      (", FIXED-FOCUS" = AF not engaged; the WARNING names the fix)
-PIR motion wake: armed on BCM GPIO 4 (Concierge Mode) -- hold 0.25s, debounce 2.0s
+camera: OpenCV ... backend started (still capture -> 512px square JPEG ...)
+PIR motion wake: armed on BCM GPIO 4 (Concierge Mode) -- hold 0.10s, debounce 2.0s, pull=down
 detect captures: keeping the deciding frame ... in /home/<user>/detect-captures
 face_id: ready (model=arcface.onnx, detector=yunet, 5-point ALIGNED, threshold=0.38)
 ```
+
+No `camera:` line at all means the step-4 patch never ran, or `/dev/video0` isn't the webcam
+(`v4l2-ctl --list-devices`). No `PIR motion wake` line means `ROBOT_PIR_PIN` is empty — or the `gpio` group
+never applied, i.e. you skipped the reboot above.
 
 > 🔴 **The line that matters is `5-point ALIGNED`.** If it says `detector=haar, UNALIGNED crops` there is a
 > loud WARNING right beneath it and recognition will be near-useless — ArcFace is trained on 5-point-aligned
