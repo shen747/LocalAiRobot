@@ -8,8 +8,13 @@
 #   ./scripts/pir_sensor_probe.sh          # use ROBOT_PIR_PIN from config/robot.env (default GPIO4/pin 7)
 #   ./scripts/pir_sensor_probe.sh 17       # probe a specific BCM pin instead (e.g. while testing wiring)
 #
-# Wiring: OUT -> the GPIO shown below, VCC -> 5V (pin 2/4), GND -> GND (pin 6/9/...). Docs:
-# docs/wiring/pir-sensor-wiring.md.
+# Works with EITHER supported PIR -- it reads the same pin the brain does, and honours ROBOT_PIR_PULL so the
+# two can never disagree about how the pin is biased.
+#
+# Wiring: OUT -> the GPIO shown below, GND -> GND (pin 6/9/...), and the supply depends on YOUR sensor:
+#   HC-SR501 / Adafruit  ->  VCC to 5V   (pin 2 or 4)
+#   Panasonic PaPIRs     ->  VDD to 3.3V (pin 1)  -- 5V is past its 4.5V absolute maximum and DESTROYS it
+# Docs: docs/wiring/pir-sensor-wiring.md, and BENCH_SCRIPTS.md "Swapping the PIR".
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$REPO/config/robot.env" ] && { set -a; . "$REPO/config/robot.env"; set +a; }
@@ -31,6 +36,7 @@ PHYS = {2:3,3:5,4:7,5:29,6:31,7:26,8:24,9:21,10:19,11:23,12:32,13:33,14:8,15:10,
 argv = sys.argv[1:]
 if any(a in ("-h", "--help") for a in argv):
     print("usage: pir_sensor_probe.sh [BCM_PIN]   (no arg = ROBOT_PIR_PIN from config; Ctrl-C to stop)")
+    print("  Works with either supported PIR. Pin bias follows ROBOT_PIR_PULL, the same key brain/pir.py uses.")
     sys.exit(0)
 nums = [a for a in argv if not a.startswith("-")]
 try:
@@ -39,13 +45,40 @@ except ValueError:
     print("pin must be a BCM GPIO number (e.g. 4)", file=sys.stderr); sys.exit(2)
 
 ph = PHYS.get(pin, "?")
-print(f"Live PIR  OUT=GPIO{pin} (physical pin {ph}).  Wave your hand in front of the sensor.  Ctrl-C to stop.")
-print("  PIR OUT idles LOW and goes HIGH on motion. Stuck HIGH = still 'holding' from the last trigger")
-print("  (turn the TIME/delay pot down). Never flips = check VCC->5V, GND->GND, OUT->the pin above.\n")
+# Bias the pin the SAME way brain/pir.py does, from the same env key -- otherwise the probe and the robot can
+# disagree about the sensor and you end up debugging the difference between two tools instead of the hardware.
+pull = (os.environ.get("ROBOT_PIR_PULL", "") or "down").strip().lower()
+warmup = os.environ.get("ROBOT_PIR_WARMUP_S", "0") or "0"
 
-# Raw read of the OUT line. pull_up=False = internal pull-DOWN (PIRs are active-high), so an UNWIRED pin
-# reads LOW instead of floating -- matches how the brain constructs the sensor.
-dev = DigitalInputDevice(pin, pull_up=False)
+print(f"Live PIR  OUT=GPIO{pin} (physical pin {ph}), pull={pull}.  Wave at the sensor.  Ctrl-C to stop.")
+print("  OUT idles LOW and goes HIGH on motion (both supported PIRs are active-high).")
+print("  Never flips?  Check GND, check OUT is on the pin above, and check the SUPPLY is right for YOUR")
+print("                sensor: HC-SR501 wants 5V (pin 2), a Panasonic PaPIRs wants 3.3V (pin 1) and is")
+print("                DESTROYED by 5V. Getting those two backwards is the usual cause.")
+print("  Stuck HIGH?   It is still holding from the last trigger -- both parts latch for ~2.5s. On an")
+print("                HC-SR501 you can turn the TIME/delay pot down; a PaPIRs has no pots (~2.6s, fixed).")
+try:
+    if float(warmup) > 0:
+        print(f"\n  !! WARM-UP: this sensor's output is UNDEFINED for up to {float(warmup):.0f}s after it gets POWER")
+        print( "     (ROBOT_PIR_WARMUP_S). This probe cannot tell when yours was powered up, so if you have just")
+        print( "     booted or re-plugged it, IGNORE everything below until that long has passed. Random flipping")
+        print( "     during the warm-up is normal and is not a fault.")
+except ValueError:
+    pass
+print()
+
+# Raw read of the OUT line, biased per ROBOT_PIR_PULL -- identical mapping to brain/pir.py:
+#   down (default) = internal pull-DOWN, active-high. Right for BOTH supported PIRs: the HC-SR501 drives
+#                    both states anyway, and the PaPIRs SOURCES current only, so it needs the pull-down to
+#                    define its LOW state. Also means an UNWIRED pin reads LOW instead of floating.
+#   up             = internal pull-UP, active-LOW (open-collector "alarm" outputs).
+#   none           = no resistor at all; only for a sensor that actively drives both states.
+if pull in ("none", "float", "off"):
+    dev = DigitalInputDevice(pin, pull_up=None, active_state=True)
+elif pull == "up":
+    dev = DigitalInputDevice(pin, pull_up=True)
+else:
+    dev = DigitalInputDevice(pin, pull_up=False)
 events, last, t_last = 0, False, None
 try:
     while True:
