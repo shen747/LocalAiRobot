@@ -477,6 +477,30 @@ case. The HC-SR501 has roughly a dozen zones; the PaPIRs has **88 across 122°**
 step is far more likely to still cross a boundary. That is the direct fix for the measured **1–3 detections
 out of 12** head-on approaches (the same sensor scored 12/12 when the person crossed its field).
 
+> ⚠️ **What this will NOT fix — read this before you buy.** Two failures look identical from across the room
+> and have opposite causes. A better sensor only fixes the first:
+>
+> | What you see | Cause | Does a new PIR help? |
+> |---|---|---|
+> | You have to wave or dance before anything happens | The PIR isn't firing — too few zones for a head-on approach | **Yes.** This is the one it fixes. |
+> | The face smiles for a moment, then goes back to sleep | The PIR **did** fire. The camera then looked and found no face | **No.** That's the camera or the probe timing. |
+>
+> The smile goes up the *instant* motion fires, before anything has looked (`ROBOT_CONCIERGE_SMILE_ON_MOTION=1`),
+> so **a flash is proof the sensor worked** — the failure after it is downstream. Expect a more sensitive PIR
+> to make that flash *more* frequent, not less. Tell them apart from the hourly line, and from the frames the
+> robot saves each time it gives up:
+>
+> ```bash
+> journalctl -u robot.service | grep 'concierge: last'   # "silent (probe)" high = flashing, not detecting
+> ls -t ~/detect-captures/*noface* | head               # exactly what the camera saw when it gave up
+> ```
+>
+> If those frames show a person, the sensor is doing its job and the fix is downstream: raise
+> `ROBOT_CAMERA_SIZE` (512 → 768 makes faces bigger for the detector), raise `ROBOT_CONCIERGE_PROBE_TRIES`
+> (2 → 4) and `ROBOT_CONCIERGE_PROBE_INTERVAL_S` (0.15 → 0.3) so a walking visitor has time to get into
+> frame, or set `ROBOT_CONCIERGE_SMILE_ON_MOTION=0` so the face only smiles once somebody has actually been
+> seen. If those frames show an empty hallway, *that* is the sensor, and this swap is the right move.
+
 | | HC-SR501 (hobby, ~£3) | **PaPIRs EKMB1105112** |
 |---|---|---|
 | **Power** | **5 V** → header pin 2 | **3.3 V** → header pin 1 ⚠️ |
