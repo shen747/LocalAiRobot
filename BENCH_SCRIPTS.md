@@ -317,9 +317,9 @@ The mobile build: ESC + sensors, USB-C face panel. From `~/LocalAiRobot`, in ord
 # 0. Get the code FIRST -- install_stack installs deps against whatever checkout is already there
 cd ~/LocalAiRobot && git pull
 
-# 1. Install the stack -- run the ONE for your board (needs internet; re-runnable)
+# 1. Install the stack -- PICK ONE for your board, never both (needs internet; re-runnable)
 ./scripts/install_stack_pi5.sh              # Raspberry Pi 5
-# ./scripts/install_stack_jetson.sh         # Jetson Orin Nano
+./scripts/install_stack_jetson.sh           # ...OR Jetson Orin Nano
 
 # 2. Config -- one block. `turing` = the USB-C serial panel; `framebuffer` is the concierge's DSI/HDMI screen.
 sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
@@ -332,15 +332,21 @@ sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
 
 grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME)=' config/robot.env
 
-# 3. ESC patch -- REQUIRED before it drives (writes the throttle map + ROBOT_ESC_CHANNEL)
+# 3. ESC patch -- REQUIRED before it drives. PICK ONE (writes the throttle map + ROBOT_ESC_CHANNEL)
 ./scripts/patches/common/1_esc_hb_qr_1060.sh      # HobbyWing QuicRun WP-1060 (Mode cap OFF, LIPO cap ON)
-# ./scripts/patches/common/1_esc_uliik_60a.sh     # ULIIK 60A instead
+./scripts/patches/common/1_esc_uliik_60a.sh       # ...OR ULIIK 60A
 
-# 4. Any OTHER hardware patch you actually use -- ONE per part (catalog: scripts/patches/README.md)
-# ./scripts/patches/common/2_sensor_hcsr04.sh     # 3x HC-SR04 ultrasonics
-# ./scripts/patches/common/2_sensor_vl53l1x.sh    # VL53L1X ToF instead
-# ./scripts/patches/common/4_imu_bno085.sh        # BNO085 IMU
-./scripts/patches/pi5/3_camera_usb_webcam.sh 0    # your camera (USB) -- or 3_camera_usb_ir_1080p.sh
+# 4. Obstacle sensors -- PICK ONE (catalog: scripts/patches/README.md)
+./scripts/patches/common/2_sensor_hcsr04.sh       # 3x HC-SR04 ultrasonics
+./scripts/patches/common/2_sensor_vl53l1x.sh      # ...OR VL53L1X laser ToF
+
+# 4B. Camera -- REQUIRED, PICK ONE
+./scripts/patches/pi5/3_camera_usb_webcam.sh 0    # any USB webcam
+./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # ...OR the 1080p IR-CUT night-vision module
+
+# 4C. Optional add-ons -- run any you actually have
+./scripts/patches/common/4_imu_bno085.sh          # BNO085 IMU
+./scripts/patches/common/4_encoder_as5600.sh      # AS5600 wheel encoder
 
 # 5. Prove the wiring -- ESC ON, WHEELS OFF THE GROUND
 ./scripts/run_diagnostics.sh --wheels-off
@@ -477,29 +483,10 @@ case. The HC-SR501 has roughly a dozen zones; the PaPIRs has **88 across 122°**
 step is far more likely to still cross a boundary. That is the direct fix for the measured **1–3 detections
 out of 12** head-on approaches (the same sensor scored 12/12 when the person crossed its field).
 
-> ⚠️ **What this will NOT fix — read this before you buy.** Two failures look identical from across the room
-> and have opposite causes. A better sensor only fixes the first:
->
-> | What you see | Cause | Does a new PIR help? |
-> |---|---|---|
-> | You have to wave or dance before anything happens | The PIR isn't firing — too few zones for a head-on approach | **Yes.** This is the one it fixes. |
-> | The face smiles for a moment, then goes back to sleep | The PIR **did** fire. The camera then looked and found no face | **No.** That's the camera or the probe timing. |
->
-> The smile goes up the *instant* motion fires, before anything has looked (`ROBOT_CONCIERGE_SMILE_ON_MOTION=1`),
-> so **a flash is proof the sensor worked** — the failure after it is downstream. Expect a more sensitive PIR
-> to make that flash *more* frequent, not less. Tell them apart from the hourly line, and from the frames the
-> robot saves each time it gives up:
->
-> ```bash
-> journalctl -u robot.service | grep 'concierge: last'   # "silent (probe)" high = flashing, not detecting
-> ls -t ~/detect-captures/*noface* | head               # exactly what the camera saw when it gave up
-> ```
->
-> If those frames show a person, the sensor is doing its job and the fix is downstream: raise
-> `ROBOT_CAMERA_SIZE` (512 → 768 makes faces bigger for the detector), raise `ROBOT_CONCIERGE_PROBE_TRIES`
-> (2 → 4) and `ROBOT_CONCIERGE_PROBE_INTERVAL_S` (0.15 → 0.3) so a walking visitor has time to get into
-> frame, or set `ROBOT_CONCIERGE_SMILE_ON_MOTION=0` so the face only smiles once somebody has actually been
-> seen. If those frames show an empty hallway, *that* is the sensor, and this swap is the right move.
+> ⚠️ **A sensor swap only fixes "nothing happens at all".** If the face instead smiles briefly and then goes
+> back to sleep, the PIR already fired and the *camera* found no face — that is `ROBOT_CAMERA_SIZE`,
+> `ROBOT_CONCIERGE_PROBE_TRIES` and `ROBOT_CONCIERGE_PROBE_INTERVAL_S`, whose shipped values already account
+> for it. `ls -t ~/detect-captures/*noface*` shows exactly what the camera saw when it gave up.
 
 | | HC-SR501 (hobby, ~£3) | **PaPIRs EKMB1105112** |
 |---|---|---|
