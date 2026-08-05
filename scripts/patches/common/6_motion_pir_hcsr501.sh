@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================================
-#   PATCH:   classic PIR motion sensor (HC-SR501 / Adafruit) as the Concierge wake  -- THE DEFAULT
-#   RUN IF:  you're on a PIR, or coming BACK to one after trying another wake sensor
+#   PATCH:   classic hobby PIR (HC-SR501 / Adafruit) as the Concierge wake  -- THE DEFAULT
+#   RUN IF:  your wake sensor is a cheap PIR module with two potentiometers
 #   BOARD:   common  (Pi 5 or Jetson)
-#   DOES:    config only -- restores the wake timings that survive a chattering sensor
+#   DOES:    config only -- the shipped wake timings that survive a chattering sensor
 # =============================================================================
-# Restores the shipped defaults. Run it to come BACK from any other wake sensor -- it resets
-# ROBOT_WAKE_SENSOR to 'pir' as well as the timings, so a robot that was on the I2C VCNL4200 stops polling a
-# chip you have just unplugged. Run it if the other sensor didn't suit you -- e.g. a presence sensor in a
-# room you occupy all day (it sits permanently HIGH there and stops producing wake edges at all,
-# whereas a PIR reporting MOVEMENT keeps working).
+# The cheap option, and the shipped default. A few pounds, works out of the box, and the settings below are
+# tuned around the fact that it false-triggers a lot next to a warm Pi.
 #
-# WIRING (unchanged -- both sensors present the same 3 wires):
+# WANT BETTER DETECTION? scripts/patches/common/6_motion_pir_papirs.sh configures a Panasonic PaPIRs --
+# same backend, same three wires, no code change, but 88 detection zones instead of roughly a dozen, which
+# is what actually decides whether someone walking STRAIGHT AT it gets seen. It runs on 3.3V, NOT 5V.
+#
+# WIRING:
 #     PIR              Pi 5
 #     ---              ----
 #     VCC       ->     5V   (pin 2 or 4)   <- 5V, NOT 3.3V: a PIR on 3.3V typically won't trigger
 #     GND       ->     GND  (pin 6, 9, ...)
 #     OUT       ->     GPIO 4 (pin 7)      <- 3.3V logic, Pi-safe, no divider needed
 #   Full guide: docs/wiring/pir-sensor-wiring.md
+#   ! The 5V above is specific to THIS module (it has an on-board regulator). A PaPIRs on 5V is destroyed.
 #
 # WHY THESE DEFENCES EXIST. A PIR next to a warm Pi false-triggers relentlessly -- a
 # 19-hour field log recorded 3,786 motion wakes of which 3,741 (98.8%) had nobody in front of the camera, and
@@ -58,11 +60,20 @@ set_kv() {   # replace KEY's whole line in place (proven pattern from common/1_e
   printf '   %-34s = %s\n' "$key" "$val"
 }
 
-echo ">> Restoring the Concierge wake defaults for a classic PIR:"
-# Put the BACKEND back first. Without this, switching PIR -> VCNL4200 -> PIR leaves ROBOT_WAKE_SENSOR on
-# 'proximity', so you re-wire a PIR to GPIO 4 and the brain carries on polling an I2C chip that isn't there
-# -- it degrades to wake-word-only and the motion trigger silently never fires.
+echo ">> Restoring the Concierge wake defaults for a classic hobby PIR:"
+# This patch writes the SAME KEY SET as 6_motion_pir_papirs.sh, only with different values -- so switching
+# in either direction is COMPLETE. A patch that leaves a key its counterpart set is how you end up
+# half-switched, and this repo has already been bitten by it once.
 set_kv ROBOT_WAKE_SENSOR pir
+# Push-pull output: it drives both states hard, so the internal pull-down is only insurance that an
+# UNWIRED pin reads LOW instead of floating and inventing motion.
+set_kv ROBOT_PIR_PULL down
+# No warm-up gate. This module settles in ~5s, which is over before the brain finishes starting -- unlike a
+# PaPIRs, whose output is undefined for up to 210s. Coming FROM that patch, this is the line that stops you
+# sitting through 3.5 minutes of silence wondering what broke.
+set_kv ROBOT_PIR_WARMUP_S 0
+# Re-read the pin after the edge; a spike that has already fallen was electrical noise, not a person. Safe
+# here because this module LATCHES its output high for ~2.5s after every trigger.
 set_kv ROBOT_PIR_HOLD_S 0.1
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 4
 set_kv ROBOT_CONCIERGE_PROBE_TRIES 2
@@ -78,6 +89,10 @@ echo
 echo "   Wiring: VCC->5V (NOT 3.3V), GND->GND, OUT->the GPIO above.  docs/wiring/pir-sensor-wiring.md"
 echo "   Prove it:   ./scripts/pir_sensor_probe.sh    (wave = MOTION, then SILENT for 2 min in an empty room)"
 echo "   Reload:     ./scripts/run_me.sh --reload     (or reboot)"
+echo
+echo "   AIM IT ACROSS THE TRAFFIC, not down the approach lane -- a PIR fires when a body CROSSES between"
+echo "   its zones, so head-on is its worst case (12 head-on approaches gave 1-3 detections here; the same"
+echo "   sensor gave 12/12 across). Mount it OUTSIDE the case, away from the Pi's warm exhaust."
 echo
 echo "${GRN}==============================${RST}"
 echo "${GRN}  PATCH APPLIED (PIR) !!!${RST}"

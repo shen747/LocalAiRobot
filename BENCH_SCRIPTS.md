@@ -390,10 +390,11 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # and if it finds a dtoverlay line:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot
 # (that is now the installer's DEFAULT, so a plain re-run clears it too).
 
-# 4B. Wake sensor -- SKIP unless you swapped it; the defaults are already tuned for a PIR.
-#     See "Swapping the wake sensor" below -- the two are NOT wire-compatible.
-# ./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- the default
-# ./scripts/patches/common/6_motion_vcnl4200.sh      # Vishay VCNL4200 active-IR proximity (I2C) instead
+# 4B. Wake sensor -- the shipped defaults already suit an HC-SR501, so SKIP unless yours is a PaPIRs.
+#     Same 3 wires and same GPIO either way, but a PaPIRs runs on 3.3V and 5V DESTROYS it: see
+#     "Choosing your PIR" below before you connect anything.
+# ./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit -- the default
+# ./scripts/patches/common/6_motion_pir_papirs.sh    # Panasonic PaPIRs (EKMB/EKMC) instead
 
 # 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
 #    Run it as YOURSELF -- no sudo (see the note under this block).
@@ -460,66 +461,21 @@ conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)
 
 `0` restores the goodbye. Unlike the volume, this one is read at startup — `./scripts/run_me.sh --reload`.
 
-### Swapping the wake sensor (PIR ↔ VCNL4200 proximity)
+### Choosing your PIR (hobby HC-SR501 vs an industrial PaPIRs)
 
-**These two are NOT wire-compatible.** A PIR hands the Pi one digital HIGH/LOW on `ROBOT_PIR_PIN`; the
-VCNL4200 talks I²C, boots with its sensor disabled, and must be configured over the bus. So its patch also
-switches the backend (`ROBOT_WAKE_SENSOR=proximity` → [`brain/proximity.py`](brain/proximity.py)).
-
-| | PIR (HC-SR501) | VCNL4200 |
-|---|---|---|
-| VCC | **5 V** — pin 2 *(3.3 V won't trigger)* | **3.3 V** — pin 1 |
-| GND | pin 6 | pin 6 |
-| Signal | OUT → GPIO 4 (pin 7) | SDA → GPIO 2 (pin 3), SCL → GPIO 3 (pin 5) |
-| Extra | — | I²C enabled; `i2cdetect -y 1` shows `0x51` |
-
-**Order matters** — wire it, prove the chip answers, *then* touch the config. Doing it the other way round
-means debugging software against hardware that was never connected.
+The wake sensor is a **PIR**, and there are two supported price points. Both are **config only** — a PIR
+hands the Pi one digital HIGH/LOW on `ROBOT_PIR_PIN`, which is all [`brain/pir.py`](brain/pir.py) ever
+reads — so the choice is wiring and numbers, **never code**:
 
 ```bash
-# PIR -> VCNL4200
-sudo poweroff                                  # 1. wire the 4 pins above, power back on
-sudo raspi-config                              # 2. Interface Options -> I2C -> Yes, then reboot
-i2cdetect -y 1                                 # 3. MUST show 0x51 -- no device = wiring, stop here
-cd ~/LocalAiRobot && git checkout main && git pull
-./scripts/patches/common/6_motion_vcnl4200.sh  # 4. backend + starting thresholds + driver
-
-sudo systemctl stop robot.service              # 5. measure YOUR thresholds (see the warning below)
-./scripts/proximity_probe.sh
-./scripts/patches/common/6_motion_vcnl4200.sh 480 260   # 6. re-run with the suggested NEAR / FAR
-sudo systemctl start robot.service
-
-journalctl -u robot.service -n 40 | grep proximity      # 7. verify
-```
-
-Want `proximity wake: VCNL4200 armed over I2C ... near>=480, far<=260`, then on approach
-`proximity: someone arrived (raw 512 >= near 480) -> wake`.
-
-```bash
-# VCNL4200 -> PIR (going back)
-./scripts/patches/common/6_motion_pir_hcsr501.sh   # ALSO resets the backend -- without this the brain
-                                                   # keeps polling an I2C chip you just unplugged
-# power off, re-wire VCC->5V (pin 2), GND->GND, OUT->GPIO 4 (pin 7), power on
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit -- the default
+./scripts/patches/common/6_motion_pir_papirs.sh    # Panasonic PaPIRs (EKMB/EKMC)
 ./scripts/run_me.sh --reload
-./scripts/pir_sensor_probe.sh                      # walk past 10x -- the count should track your passes
 ```
 
-> ⚠️ **Measure the thresholds — you cannot guess them.** `ROBOT_PROXIMITY_NEAR`/`_FAR` are **raw
-> reflected-IR counts, not centimetres**, and a white shirt at 80 cm can out-read a black coat at 40 cm.
-> Stop the brain and run [`./scripts/proximity_probe.sh`](scripts/proximity_probe.sh): empty doorway first
-> for the floor, then walk up — **in dark clothing as well as light, and take the lower reading**. It
-> suggests values from the session.
-
-### Swapping the PIR itself (hobby HC-SR501 → an industrial PaPIRs)
-
-Different from the section above: this is one PIR for another, **not** a change of sensor *family*. Same
-three wires, same `ROBOT_PIR_PIN`, same backend, **no patch to run and no code change** — the two keys
-involved already exist and are inert at their defaults.
-
-It is still not a drop-in. An **HC-SR501 is a hobby module**: 5 V in, its own regulator, a push-pull output
-that drives HIGH hard, two pots, and a **~2.5 s latch** holding the output up after each trigger. A
-**Panasonic PaPIRs (EKMC/EKMB) is the bare industrial part**: no pots, no latch, a deliberately weak output,
-a real warm-up, and an output pin that swings to whatever you feed Vdd.
+They write the **same key set** with different values, so switching in either direction is complete. That
+matters more than it sounds: a patch that leaves behind a key its counterpart set is how you end up
+half-switched with a robot that looks broken for no visible reason.
 
 Figures below are from the **EKMB1105112** sheet (Ver. 1.1, WL series, 1 µA, black lens). Its siblings
 `EKMB1205112` (2 µA) and `EKMB1305112K` (6 µA) share every number that matters here.
@@ -562,14 +518,8 @@ Figures below are from the **EKMB1105112** sheet (Ver. 1.1, WL series, 1 µA, bl
   sitting in the enclosure's only vent hole, watching the Pi's own warm exhaust. The datasheet independently
   names this class of cause; mount it **outside** the enclosure, in still air.
 
-**The settings, from the datasheet:**
-
-```bash
-sed -i -e 's|^ROBOT_PIR_PULL=.*|ROBOT_PIR_PULL=down|' \
-       -e 's|^ROBOT_PIR_WARMUP_S=.*|ROBOT_PIR_WARMUP_S=210|' \
-       config/robot.env
-./scripts/run_me.sh --reload
-```
+**The settings, from the datasheet** — `6_motion_pir_papirs.sh` writes all of these for you; they are spelled
+out here so you can check its work, or re-derive them for a different part number:
 
 - **`ROBOT_PIR_PULL=down`** — the same value as the HC-SR501, for the opposite reason. The wiring diagram
   (§4-7) shows current flowing **out of the sensor into your load**: it **sources** only (Iout max 100 µA),
@@ -642,31 +592,10 @@ pull-down took, and check the decoupling capacitor. A pin that **never goes high
 or the polarity is wrong.
 
 > ⚠️ **A better PIR does not change the physics.** It is still passive, so it still fires when a body
-> *crosses* between its Fresnel zones, and head-on approach is still its worst case. You are buying
-> sensitivity and a cleaner output, **not a different detection geometry** — see the field numbers below.
-
-### Which sensor, and why — field notes
-
-**A PIR is passive.** It fires when a warm body *crosses* between its Fresnel zones, which makes head-on
-approach its **worst** case. Measured on the reference build with sensitivity at MAX and the delay pot at
-MIN: **12 deliberate walk-straight-at-it approaches → 1–3 detections. The same sensor, same settings, person
-crossing its field instead → 12/12.** A heated room and winter clothing make it worse again (both cut the
-thermal contrast it depends on), and the HC-SR501 has a hardware-fixed ~2.5 s blocking time after every
-trigger. **So aim a PIR *across* the traffic, never down the approach lane** — that single change is usually
-worth more than any config.
-
-**Active IR proximity is the mirror image.** It emits its own beam and measures the reflection, so head-on
-approach is its *best* case and thermal contrast stops mattering entirely. The trade-offs: useful range is
-only ~50–100 cm (Adafruit's own guidance), and reflectivity matters a lot. Right for a greeter people walk
-**up to**; wrong for one watching a corridor.
-
-**24 GHz mmWave presence radar (HLK-LD2410C) was tried here and rejected.** It produced **zero** false wakes
-against the PIR's 465/hour — genuinely impressive — but only **4 usable wakes in 25 minutes**. It reports
-*presence*, sees through plasterboard, and in a room its owner occupies "is anyone present?" is permanently
-true, so there are almost no rising edges to trigger on. It would suit a **doorway or porch**, where presence
-actually changes, and would need range-gating over its UART to stop it announcing people the camera can't yet
-resolve. Its patch was removed when the hardware went back — `git log --diff-filter=D -- scripts/patches`
-will find it.
+> *crosses* between its detection zones, and head-on approach is still its worst case — you are buying
+> **zone density**, not a different detection geometry. **Aim it across the traffic, never down the approach
+> lane**, and mount it *outside* the enclosure in still air: the 465-false-wakes-per-hour storm on this build
+> was a PIR sitting in the case's only vent hole, watching the Pi's own warm exhaust.
 
 
 **Proving the PIR is optional now.** A chattering sensor no longer breaks anything: the cheap Stage-A probe

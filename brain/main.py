@@ -642,21 +642,22 @@ def main():
     # in-progress listen so wait_for_trigger() returns 'MOTION'. Both degrade to no-ops if unconfigured.
     face_identifier = FaceID(mem)
     motion_event = threading.Event()
-    # WHICH sensor decides "someone arrived". Both expose the same surface (available / arm_cooldown /
-    # stats_line / close / last_wake_at + counters), so everything downstream -- the two-stage look, the
-    # outcome cooldowns, the latency line -- is identical either way. See brain/proximity.py for why a PIR
-    # can fail on a greeter people walk STRAIGHT AT: 12 deliberate approaches produced 1-3 detections with
-    # both pots maxed, because head-on motion barely crosses a PIR's Fresnel zones.
+    # WHICH sensor decides "someone arrived". Only 'pir' ships today -- any digital-pin motion sensor, from a
+    # few-pound HC-SR501 to an industrial Panasonic PaPIRs, since brain/pir.py just reads a HIGH/LOW (pick
+    # one with scripts/patches/common/6_motion_pir_*.sh). The dispatch stays because a wake sensor only has
+    # to expose available / arm_cooldown / stats_line / close / last_wake_at + counters for everything
+    # downstream -- the two-stage look, the outcome cooldowns, the latency line -- to work unchanged.
+    #
+    # Know this before choosing where to POINT it: a PIR is passive, so it fires when a warm body CROSSES
+    # between its detection zones, which makes head-on approach its WORST case. Measured on the reference
+    # build: 12 deliberate walk-straight-at-it approaches produced 1-3 detections with both pots maxed,
+    # while the same sensor gave 12/12 when the person crossed its field. Aim it ACROSS the traffic.
     _wake_cb = lambda: (motion_event.set(), wake.cancel_listen())
     _sensor_kind = (os.environ.get("ROBOT_WAKE_SENSOR", "") or "pir").strip().lower()
-    if _sensor_kind in ("proximity", "vcnl4200"):
-        from proximity import ProximityWake
-        motion_wake = ProximityWake(concierge.enabled(), _wake_cb)
-    else:
-        if _sensor_kind != "pir":
-            log.warning("unknown ROBOT_WAKE_SENSOR=%r -- using 'pir'", _sensor_kind)
-        motion_wake = MotionWake(
-            os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None, _wake_cb)
+    if _sensor_kind != "pir":
+        log.warning("unknown ROBOT_WAKE_SENSOR=%r -- using 'pir'", _sensor_kind)
+    motion_wake = MotionWake(
+        os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None, _wake_cb)
     if concierge.enabled():
         # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
         # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import

@@ -19,7 +19,7 @@ type, one camera). Run them **after** `install_stack_pi5.sh` / `install_stack_je
 
 ```
 scripts/patches/
-  common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600   5_face_id_insightface
+  common/   1_esc_*   2_sensor_*   4_imu_bno085   4_encoder_as5600   5_face_id_insightface   6_motion_pir_*
   pi5/      3_camera_usb_webcam / 3_camera_usb_ir_1080p
   jetson/   3_camera_usb_webcam / 3_camera_usb_ir_1080p
 ```
@@ -83,42 +83,50 @@ recognition model. Then enrol people with `./scripts/enroll_person.sh "Name" "de
 Full flow: [docs/concierge.md](../../docs/concierge.md).
 
 ## 6 — Concierge wake sensor (which thing tells Jarvis someone arrived) · `common/`
+
+The wake sensor is a **PIR** — pick the one your budget allows. Both are **config only**: a PIR hands the Pi
+a digital HIGH/LOW on `ROBOT_PIR_PIN`, which is all `brain/pir.py` ever reads, so the choice is wiring and
+numbers and **never code**. Pass a BCM pin to move it (`... 17`).
+
 ```bash
-./scripts/patches/common/6_motion_pir_hcsr501.sh   # classic PIR (HC-SR501/Adafruit) -- THE DEFAULT
-./scripts/patches/common/6_motion_vcnl4200.sh      # Vishay VCNL4200 active-IR proximity (I2C) instead
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit -- THE DEFAULT, a few pounds
+./scripts/patches/common/6_motion_pir_papirs.sh    # Panasonic PaPIRs (EKMB/EKMC) -- the industrial part
 ```
-The PIR patch is **config only** — a PIR hands the Pi a digital HIGH/LOW on `ROBOT_PIR_PIN`, which is all
-`gpiozero.MotionSensor` in `brain/pir.py` ever reads. Pass a BCM pin to move it (`... 17`).
 
-The VCNL4200 patch **also switches the backend** (`ROBOT_WAKE_SENSOR=proximity` → `brain/proximity.py`),
-because that sensor is I²C: four wires, not the PIR's pin, and it must be configured over the bus before it
-measures anything. Its `NEAR`/`FAR` arguments are **raw reflected-IR counts, not centimetres** — measure them
-in place with `./scripts/proximity_probe.sh`, in dark clothing as well as light.
+| | HC-SR501 (hobby) | PaPIRs EKMB1105112 |
+|---|---|---|
+| **VCC** | **5 V** (pin 2) — it has its own regulator | **3.3 V** (pin 1) — see the warning below |
+| Detection zones | roughly a dozen | **88** across 122° (+16 more over 150°) |
+| Output | push-pull, latched ~2.5 s | sources only (100 µA max), latched ~2.6 s + 1.3 s mask |
+| Warm-up | ~5 s | **25 s typ, 210 s max** — output undefined meanwhile |
+| Idle current | ~50 mA | **1 µA** |
+| Tuning | two potentiometers | none — it is right or it is mounted wrong |
 
-### Choosing between them — field notes
+> 🔴 **A PaPIRs on 5 V is destroyed.** Its operating range is 2.3–4.0 V with a **4.5 V absolute maximum**, so
+> 5 V is past the destruct limit — quite apart from putting 5 V on a Pi GPIO that is not 5 V-tolerant. If you
+> are swapping from an HC-SR501, **move the VCC wire from pin 2 to pin 1.** The PaPIRs also *requires* a
+> 0.1 µF decoupling capacitor at its supply pin, and its lens must protrude **≥ 6.2 mm** past your enclosure
+> with **no glass or acrylic** in front of it. Its patch prints all of this when you run it.
 
-**A PIR is passive**: it fires when a warm body *crosses* between its Fresnel zones. That makes head-on
+The two patches write the **same key set** with different values, so switching in either direction is
+complete — that matters, because a patch that leaves behind a key its counterpart set is how you end up
+half-switched with a robot that looks broken.
+
+### Where you point it matters more than which you buy
+
+A PIR is **passive**: it fires when a warm body *crosses* between its detection zones, which makes head-on
 approach its worst case. Measured on the reference build with sensitivity at MAX and the delay pot at MIN,
 **12 deliberate walk-straight-at-it approaches gave 1–3 detections; the same sensor gave 12/12 when the
 person crossed its field instead.** A heated room and winter clothing make it worse again (both cut the
-thermal contrast it depends on), and the HC-SR501 has a hardware-fixed ~2.5 s blocking time after each
-trigger. **Aim a PIR across the traffic, never down the approach lane.**
+thermal contrast it depends on). **Aim a PIR across the traffic, never down the approach lane** — that one
+change is usually worth more than any config, and it is free.
 
-**An active IR proximity sensor** emits its own beam and measures the reflection, so head-on approach is its
-*best* case and thermal contrast stops mattering. The trade is range (~50–100 cm useful) and reflectivity
-(a black coat returns far less than a white shirt). Good for a greeter people walk *up to*.
+Zone density is the other half: it is what decides whether a small angular change still crosses a boundary,
+which is exactly what a head-on approach produces. That is the real reason the PaPIRs does better at it.
 
-**24 GHz mmWave presence radar (HLK-LD2410C) was tried and rejected here.** It produced **zero** false wakes
-against the PIR's 465/hour — but only **4 usable wakes in 25 minutes**, because it reports *presence*, sees
-through plasterboard, and in a room its owner occupies "is anyone present?" is permanently true. With almost
-no rising edges there is nothing to trigger on. It would suit a **doorway or porch** — somewhere presence
-genuinely changes — and would need range-gating over its UART to stop it announcing people the camera can't
-yet see. The patch for it was removed once the hardware went back; `git log --diff-filter=D -- scripts/patches`
-will find it if you ever want it again.
-
-Two things to know before switching: 24 GHz **passes through plasterboard**, so expect to range-gate it over
-its UART; and it reports *presence*, not *movement*, so it sits permanently HIGH in a room you occupy all day
-and stops producing wake edges — great for a door, wrong for a desk. Both scripts spell this out when run.
+**Mounting is a detection problem, not a tidiness one.** On this build a PIR fitted in the enclosure's only
+vent hole — watching the Pi's own warm exhaust — produced **465 false wakes an hour, all night**. Mount it
+*outside* the case, in still air, away from HVAC vents and sunlit windows.
 
 ---
 
