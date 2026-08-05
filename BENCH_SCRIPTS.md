@@ -301,6 +301,8 @@ cd ~/LocalAiRobot
 # 5. Make the LOCAL BRANCH this robot lives on. `main` stays a clean mirror of origin and is never edited
 #    here; local_branch carries ONE commit holding your API key, your paths and your tuning.
 #    *** local_branch NEVER gets pushed. *** It is how the key stays off GitHub while still being committed.
+#    The commit itself comes later, once §6/§7 have written your config -- it is one line, `git commit
+#    -m "local changes"`, and from then on you only ever AMEND it.
 git checkout -b local_branch
 
 # 6. Ignore a file LOCALLY, with no .gitignore commit -- this is where a private notes/keys file goes:
@@ -316,7 +318,17 @@ origin/main ─── main            (pulled, never edited on the robot)
                  └── local_branch   ONE commit: your key + <placeholder> substitutions + tuning
 ```
 
-Every update is then: pull `main`, rebase your one commit on top. That's §6/§7 step 0 and §8 step 1.
+**The whole workflow is three moves**, and you will only ever use these:
+
+| When | What |
+|---|---|
+| First time, after §6/§7 write your config | `git add -u && git commit -m "local changes"` |
+| Changed something locally since | `git add -u && git commit --amend --no-edit` — **amend, never a new commit** |
+| New code on `main` | `git checkout main && git pull` then `git checkout local_branch && git rebase main` |
+
+The `&&` in that last pair is deliberate: if the checkout fails (usually an uncommitted edit in the tree),
+the `git pull` must not run. Pulling while still on `local_branch` would merge `origin/main` *into* your
+private branch, which is precisely the tangle this layout exists to avoid.
 
 > **Restoring a cloned disk image onto a second board?** Regenerate the **host** keys (a different thing from
 > the key above) or every SSH client will scream about a duplicate fingerprint:
@@ -365,6 +377,11 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # 4C. Optional add-ons -- NOT exclusive, run any you actually have (or none)
 ./scripts/patches/common/4_imu_bno085.sh          # BNO085 IMU
 ./scripts/patches/common/4_encoder_as5600.sh      # AS5600 wheel encoder
+
+# 4D. SAVE IT as the one local commit. Steps 2-4C all edited config/robot.env -- your key, your board,
+#     your tuning. This single commit is what gets replayed on top of main at every future update.
+#     FIRST TIME ONLY: create it. After this you only ever AMEND it (see §8).
+git add -u && git commit -m "local changes"
 
 # 5. Prove the wiring -- ESC ON, WHEELS OFF THE GROUND
 ./scripts/run_diagnostics.sh --wheels-off
@@ -429,6 +446,11 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 #     read "Swapping the PIR" below before you rewire anything.
 ./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit
 ./scripts/patches/common/6_motion_pir_papirs.sh    # OR Panasonic PaPIRs (EKMB/EKMC)
+
+# 4C. SAVE IT as the one local commit. Steps 2-4B all edited config/robot.env -- your key, your camera,
+#     your wake sensor, your tuning. This single commit is what gets replayed on top of main every update.
+#     FIRST TIME ONLY: create it. After this you only ever AMEND it (see §8).
+git add -u && git commit -m "local changes"
 
 # 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
 #    Run it as YOURSELF -- no sudo (see the note under this block).
@@ -694,10 +716,14 @@ bash enroll_all.sh && ./scripts/rag.sh --faces
 > 🔴 **Never push `local_branch`.** It holds your live API key by design. Only `main` is ever pushed, and
 > only from your PC. Committing on the robot is fine — expected, even — but that branch stays on the Pi.
 >
-> - **Changing your local config?** Edit, then fold it into the same commit so there stays exactly one:
+> - **Changing your local config?** Never a second commit — fold it into the existing one, so `local changes`
+>   stays a single commit that rebases cleanly forever:
 >   ```bash
->   git add -u && git commit --amend --no-edit
+>   git add -u && git commit --amend --no-edit    # --no-edit keeps the "local changes" message
 >   ```
+>   `git add -u` stages **modifications to tracked files only**. If you added a brand-new file that belongs
+>   in the commit, name it explicitly (`git add path/to/file`) — never `git add -A`, which would sweep in
+>   stray captures, logs and anything else sitting in the tree.
 > - **The rebase stopped with a conflict?** Normal, and usually in `config/robot.env` — upstream changed a
 >   default or reworded a comment on a line you also edited. Keep **your** value and **their** comment:
 >   ```bash
