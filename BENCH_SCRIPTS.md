@@ -317,9 +317,10 @@ The mobile build: ESC + sensors, USB-C face panel. From `~/LocalAiRobot`, in ord
 # 0. Get the code FIRST -- install_stack installs deps against whatever checkout is already there
 cd ~/LocalAiRobot && git pull
 
-# 1. Install the stack -- PICK ONE for your board, never both (needs internet; re-runnable)
+# 1. Install the stack (needs internet; re-runnable)
+#    MUTUALLY EXCLUSIVE -- run the line for YOUR board, never both.
 ./scripts/install_stack_pi5.sh              # Raspberry Pi 5
-./scripts/install_stack_jetson.sh           # ...OR Jetson Orin Nano
+./scripts/install_stack_jetson.sh           # OR Jetson Orin Nano
 
 # 2. Config -- one block. `turing` = the USB-C serial panel; `framebuffer` is the concierge's DSI/HDMI screen.
 sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
@@ -332,19 +333,20 @@ sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
 
 grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME)=' config/robot.env
 
-# 3. ESC patch -- REQUIRED before it drives. PICK ONE (writes the throttle map + ROBOT_ESC_CHANNEL)
+# 3. ESC patch -- REQUIRED before it drives (writes the throttle map + ROBOT_ESC_CHANNEL).
+#    MUTUALLY EXCLUSIVE -- one ESC, one patch. The second would overwrite the first.
 ./scripts/patches/common/1_esc_hb_qr_1060.sh      # HobbyWing QuicRun WP-1060 (Mode cap OFF, LIPO cap ON)
-./scripts/patches/common/1_esc_uliik_60a.sh       # ...OR ULIIK 60A
+./scripts/patches/common/1_esc_uliik_60a.sh       # OR ULIIK 60A
 
-# 4. Obstacle sensors -- PICK ONE (catalog: scripts/patches/README.md)
+# 4. Obstacle sensors -- MUTUALLY EXCLUSIVE (catalog: scripts/patches/README.md)
 ./scripts/patches/common/2_sensor_hcsr04.sh       # 3x HC-SR04 ultrasonics
-./scripts/patches/common/2_sensor_vl53l1x.sh      # ...OR VL53L1X laser ToF
+./scripts/patches/common/2_sensor_vl53l1x.sh      # OR VL53L1X laser ToF
 
-# 4B. Camera -- REQUIRED, PICK ONE
+# 4B. Camera -- REQUIRED. MUTUALLY EXCLUSIVE: whichever you run LAST is the one that takes effect.
 ./scripts/patches/pi5/3_camera_usb_webcam.sh 0    # any USB webcam
-./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # ...OR the 1080p IR-CUT night-vision module
+./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # OR the 1080p IR-CUT night-vision module
 
-# 4C. Optional add-ons -- run any you actually have
+# 4C. Optional add-ons -- NOT exclusive, run any you actually have (or none)
 ./scripts/patches/common/4_imu_bno085.sh          # BNO085 IMU
 ./scripts/patches/common/4_encoder_as5600.sh      # AS5600 wheel encoder
 
@@ -374,8 +376,9 @@ ls sounds/sleep_sounds/*.wav | wc -l    # want 12; 0 = the cues were never commi
 # 1. Install the stack. This also downloads BOTH face models: arcface.onnx (recogniser) and
 #    face_detection_yunet.onnx (the landmark detector that makes recognition actually work -- see step 6).
 #    SAY YES WHEN IT OFFERS TO REBOOT on a first install -- see the note below the block.
-./scripts/install_stack_pi5.sh
-# ./scripts/install_stack_jetson.sh
+#    MUTUALLY EXCLUSIVE -- run the line for YOUR board, never both.
+./scripts/install_stack_pi5.sh          # Raspberry Pi 5
+./scripts/install_stack_jetson.sh       # OR Jetson Orin Nano
 
 # 2. Config -- one block
 sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
@@ -390,9 +393,10 @@ sed -i -e 's|^ROBOT_AI_BACKEND=.*|ROBOT_AI_BACKEND=mixed|' \
 # 3. Check it took
 grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKER_VOLUME|ROBOT_PIR_PIN|ROBOT_PIR_COOLDOWN_S|ROBOT_CONCIERGE_SILENT_COOLDOWN_S|ROBOT_CONCIERGE_GREET_COOLDOWN_S|ROBOT_CONCIERGE_GREET_ONLY|ROBOT_FACE_ID_DETECTOR_BACKEND)=' config/robot.env
 
-# 4. Camera -- REQUIRED, pick ONE. (No ESC patch: the concierge never drives.)
-./scripts/patches/pi5/3_camera_usb_webcam.sh 0      # any USB webcam
-# ./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # ...or the 1080p IR-CUT night-vision module
+# 4. Camera -- REQUIRED. (No ESC patch: the concierge never drives.)
+#    MUTUALLY EXCLUSIVE: both write the same keys, so whichever you run LAST is the one that takes effect.
+./scripts/patches/pi5/3_camera_usb_webcam.sh 0    # any USB webcam
+./scripts/patches/pi5/3_camera_usb_ir_1080p.sh 0  # OR the 1080p IR-CUT night-vision module
 #
 # No reboot and no boot-overlay step: a USB camera is not a CSI device. ./scripts/run_me.sh --reload is enough.
 # Upgrading a robot that ONCE ran a CSI camera? a stale overlay can still hold /dev/video0 -- check once with
@@ -400,11 +404,12 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 # and if it finds a dtoverlay line:  ROBOT_CAMERA_OVERLAY=none ./scripts/install_stack_pi5.sh && sudo reboot
 # (that is now the installer's DEFAULT, so a plain re-run clears it too).
 
-# 4B. Wake sensor -- the shipped defaults already suit an HC-SR501, so SKIP unless yours is a PaPIRs.
-#     Same 3 wires and same GPIO either way, but a PaPIRs takes 3.3V (pin 1) and 5V DESTROYS it.
-#     Step-by-step: "Swapping the PIR" below.
-# ./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit -- the default
-# ./scripts/patches/common/6_motion_pir_papirs.sh    # Panasonic PaPIRs (EKMB/EKMC) instead
+# 4B. Wake sensor -- MUTUALLY EXCLUSIVE: both write the SAME key set with different values, so the one you
+#     run LAST wins. The shipped defaults already match the HC-SR501, so you can skip this on that sensor.
+#     Same 3 wires and same GPIO either way, but a PaPIRs takes 3.3V (pin 1) and 5V DESTROYS it --
+#     read "Swapping the PIR" below before you rewire anything.
+./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit
+./scripts/patches/common/6_motion_pir_papirs.sh    # OR Panasonic PaPIRs (EKMB/EKMC)
 
 # 5. Clean slate -- only if this robot has run BEFORE (skip on a new board; nothing to purge).
 #    Run it as YOURSELF -- no sudo (see the note under this block).
@@ -647,10 +652,13 @@ grep -c ROBOT_CONCIERGE_SILENT_COOLDOWN_S config/robot.env   # 0 = your robot.en
 # 3. Fetch any new models (idempotent -- instant no-op when they're already there)
 ./scripts/provision_face_id.sh
 
-# 4. Clean slate, so the next log is only about the NEW code
-./scripts/purge_garbage.sh --dry-run
-./scripts/purge_garbage.sh
-# ./scripts/purge_garbage.sh --all     # ...and wipe memory.db (backs it up first, asks you to type WIPE)
+# 4. Clean slate, so the next log is only about the NEW code.
+#    The last two are MUTUALLY EXCLUSIVE -- --all is a superset, so running it after the plain one is
+#    just redundant, never harmful.
+./scripts/purge_garbage.sh --dry-run   # shows what would go, deletes nothing
+./scripts/purge_garbage.sh             # captures + logs + caches (KEEPS the face database)
+./scripts/purge_garbage.sh --all       # OR also wipe memory.db -- backs it up first, then asks you to
+                                       # type WIPE. Only needed per the note below; not routine.
 
 # 5. Re-enrol if anything about the face pipeline changed
 bash enroll_all.sh && ./scripts/rag.sh --faces
