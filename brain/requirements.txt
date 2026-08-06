@@ -29,3 +29,9 @@ openwakeword==0.4.0               # PINNED: 0.5+ require tflite-runtime, which h
                                   # onnxruntime and BUNDLES its models in the wheel (no separate download).
 onnxruntime                       # runs the wake-word + feature models on CPU
 sounddevice                       # continuous 16 kHz mic capture for the wake listener (needs PortAudio)
+
+# OPTIONAL -- only for the WIRELESS Zigbee wake sensor (ROBOT_ZIGBEE_WAKE=1, brain/zigbee_wake.py). Not
+# installed by default and not needed by any other feature: without it the Zigbee source logs one line and
+# degrades to available=False, leaving the wired PIR untouched. The patch installs it on demand:
+#     ./scripts/patches/common/6_wake_zigbee_pir.sh zigbee2mqtt/<your_sensor>
+# paho-mqtt>=2.0            # 2.x REQUIRES CallbackAPIVersion; brain/zigbee_wake.py is written for VERSION2

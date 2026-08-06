@@ -61,6 +61,9 @@ class MotionWake:
     (see the module note). Construct with the BCM pin + callback; .close() releases the GPIO.
     available=False (no-op) when no pin or gpiozero is present."""
 
+    # Identifies this source in the wake log when several are OR'd together (wake_sources.CompositeWake).
+    source_name = "gpio-pir"
+
     def __init__(self, pin, on_motion):
         self._sensor = None
         self._on_motion = on_motion

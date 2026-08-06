@@ -9,8 +9,15 @@ Description=Local AI Robot Brain (RC crawler)
 # NetworkManager-wait-online.service is enabled (./scripts/install_stack_pi5.sh --bootstrap does that). If
 # booting away from known Wi-Fi feels slow, disable that wait -- see docs/change-pi-wifi.md.
 # ollama.service: the local LLM the brain talks to.
-After=network-online.target ollama.service
-Wants=network-online.target ollama.service
+# mosquitto/zigbee2mqtt: ONLY used by the optional wireless Zigbee wake sensor (ROBOT_ZIGBEE_WAKE=1). Listed
+# unconditionally because systemd ignores ordering against units that are not installed -- a robot without a
+# dongle is unaffected. Deliberately Wants= and NOT Requires=: if Zigbee2MQTT fails to start, the greeter
+# must still come up on its wired PIR. A hard Requires= would take the whole robot down because a gateway
+# for a secondary sensor crashed. After= also does NOT wait for Zigbee2MQTT to finish opening its serial
+# link (several seconds) -- brain/zigbee_wake.py uses connect_async + paho's reconnect backoff precisely so
+# late arrival is a non-event, which is why there is no sleep here.
+After=network-online.target ollama.service mosquitto.service zigbee2mqtt.service
+Wants=network-online.target ollama.service mosquitto.service zigbee2mqtt.service
 # SURVIVE random switch-off/on + repeated brownouts: never let systemd's start-rate limiter permanently give
 # up. By default >5 restarts within 10s (a brown-out crash loop) latches the unit 'failed' and it stays dead
 # until a manual restart -- exactly when an unattended robot must self-recover. 0 = no limit, always retry.

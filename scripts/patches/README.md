@@ -93,6 +93,20 @@ numbers and **never code**. Pass a BCM pin to move it (`... 17`).
 ./scripts/patches/common/6_motion_pir_papirs.sh    # Panasonic PaPIRs (EKMB/EKMC) -- the industrial part
 ```
 
+**Plus one optional EXTRA, which is additive rather than exclusive** — it OR's a wireless sensor alongside
+whichever wired PIR you picked above, so either one waking the robot is enough:
+
+```bash
+./scripts/patches/common/6_wake_zigbee_pir.sh zigbee2mqtt/pir_hallway   # --off to disable
+```
+
+Needs a Zigbee coordinator, Zigbee2MQTT and an MQTT broker on the robot first; the full walkthrough
+(firmware, udev, broker, pairing) is in BENCH_SCRIPTS.md under *Adding a wireless Zigbee PIR*. It touches no
+`ROBOT_PIR_*` key, so the wired sensor is unaffected, and every combination works — wired only, both, or
+wireless only with `ROBOT_PIR_PIN` empty. It buys **coverage, not speed**: a GPIO pin interrupts in
+microseconds against 50–300 ms for a Zigbee round trip, so mount the wireless one where the wired one
+*cannot see* or it will never win a race.
+
 | | HC-SR501 (hobby) | PaPIRs EKMB1105112 |
 |---|---|---|
 | **VCC** | **5 V** (pin 2) — it has its own regulator | **3.3 V** (pin 1) — see the warning below |

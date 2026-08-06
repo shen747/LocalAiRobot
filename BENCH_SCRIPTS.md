@@ -232,9 +232,10 @@ Everything below runs **on the robot** unless a step says *ON YOUR PC*. The robo
 | [11](#11-spoken-earcons) | Regenerating the spoken earcons | when the word list changes |
 | [12](#12-recovery) | Recovery — Wi-Fi profile, offline disk read, golden image | when it breaks |
 
-Two walkthroughs live inside §7 rather than getting their own number, because they only make sense on a
-concierge build: [**`ROBOT_CONCIERGE_GREET_ONLY`**](#robot_concierge_greet_only--greet-then-say-nothing)
-and [**Swapping the PIR**](#swapping-the-pir-hobby-hc-sr501--industrial-papirs).
+Three walkthroughs live inside §7 rather than getting their own number, because they only make sense on a
+concierge build: [**`ROBOT_CONCIERGE_GREET_ONLY`**](#robot_concierge_greet_only--greet-then-say-nothing),
+[**Swapping the PIR**](#swapping-the-pir-hobby-hc-sr501--industrial-papirs) and
+[**Adding a wireless Zigbee PIR**](#adding-a-wireless-zigbee-pir-a-second-wake-source-ord-with-the-wired-one).
 
 ## Volume — live, no restart
 
@@ -446,6 +447,11 @@ grep -E '^(ROBOT_AI_BACKEND|ROBOT_CONCIERGE_MODE|ROBOT_FACE_BACKEND|ROBOT_SPEAKE
 #     read "Swapping the PIR" below before you rewire anything.
 ./scripts/patches/common/6_motion_pir_hcsr501.sh   # hobby HC-SR501 / Adafruit
 ./scripts/patches/common/6_motion_pir_papirs.sh    # OR Panasonic PaPIRs (EKMB/EKMC)
+
+# 4B-ii. OPTIONAL wireless SECOND wake sensor -- ADDITIVE, not exclusive with the two above: it is OR'd
+#        with whichever wired PIR you just picked, and either one waking the robot is enough. Needs a
+#        Zigbee coordinator + Zigbee2MQTT + a broker first -- see "Adding a wireless Zigbee PIR" below.
+./scripts/patches/common/6_wake_zigbee_pir.sh zigbee2mqtt/pir_hallway   # your topic; --off to disable
 
 # 4C. SAVE IT as the one local commit. Steps 2-4B all edited config/robot.env -- your key, your camera,
 #     your wake sensor, your tuning. This single commit is what gets replayed on top of main every update.
@@ -676,6 +682,178 @@ On an HC-SR501 specifically, false wakes usually trace to the **sensitivity pot*
 - Siblings `EKMB1205112` (2 µA) and `EKMB1305112K` (6 µA) share every figure above.
 
 </details>
+
+### Adding a wireless Zigbee PIR (a second wake source, OR'd with the wired one)
+
+A Zigbee occupancy sensor can wake the robot **as well as** the wired PIR — whichever fires first. It is
+**additive**: the wired sensor keeps behaving exactly as it does now, and all three combinations work.
+
+| You have | Result |
+|---|---|
+| Wired PIR only | Unchanged. Don't run the patch. |
+| **Both** | Either wakes the robot; a second hit inside `ROBOT_WAKE_DEDUPE_S` is the same person and collapses into one look |
+| **Wireless only** (`ROBOT_PIR_PIN` empty) | The Zigbee sensor carries the robot alone |
+| Neither working | Motion wake goes quiet, the **wake word still works**, nothing crashes |
+
+> ⚠️ **This buys COVERAGE, not speed.** A GPIO pin interrupts in microseconds; a Zigbee event travels
+> sensor → coordinator → Zigbee2MQTT → broker → brain, which is **50–300 ms**. For the *same* person the
+> wired sensor wins nearly every race. **Mount the wireless one where the wired one cannot see** — round a
+> corner, the far end of a hall, the top of the stairs. Side by side it will never win and adds only
+> latency. The hourly `wake wins:` line exists to prove which one is actually earning its keep.
+
+Reference hardware: **Sonoff ZBDongle-E** (EFR32MG21, +20 dBm PA) as coordinator, any Zigbee 3.0 occupancy
+sensor as the PIR.
+
+#### Step 1 — Flash the dongle to EmberZNet 7.4.x+
+
+The ZBDongle-E ships with **EmberZNet 6.10.3**, which drives Zigbee2MQTT's deprecated `ezsp` adapter. The
+modern `ember` adapter needs **7.4.x or newer**. Do this before anything else.
+
+1. ⚠️ **Flashing erases the Zigbee network.** On a fresh dongle there is nothing to lose; on one already in
+   service, take Zigbee2MQTT's `data/coordinator_backup.json` first or every paired device needs re-joining.
+2. Open a **Silabs firmware flasher** web tool in Chrome or Edge — it flashes over WebSerial, no probe and
+   no soldering. ⚠️ These URLs move; get the current one from the **Zigbee2MQTT EmberZNet adapter docs**
+   rather than a link pasted here.
+3. **Bootloader mode:** hold the **BOOT** button on the PCB while inserting the dongle, then release. Most
+   flashers can also trigger the bootloader over serial, in which case a plain insert works.
+4. Choose the **`ncp-uart-hw`** image for **EFR32MG21**, version **7.4.x+**. Not a router image, not
+   RCP/multiprotocol — this dongle is the coordinator.
+5. Replug, then **verify rather than assume**:
+
+```bash
+journalctl -u zigbee2mqtt -n 50 | grep -i 'ember\|version'   # want 7.4.x+, and NO ezsp deprecation warning
+```
+
+#### Step 2 — Stable device path (udev)
+
+`/dev/ttyUSB0` is enumeration-order dependent — add a second serial device and Zigbee2MQTT silently opens
+the wrong one. **Read your dongle's real IDs**, don't copy them:
+
+```bash
+udevadm info -a -n /dev/ttyUSB0 | grep -m3 -E 'idVendor|idProduct|serial'
+```
+
+The ZBDongle-E's USB-serial bridge is a Silicon Labs CP2102N (usually `10c4:ea60`) — use what your command
+prints:
+
+```bash
+sudo tee /etc/udev/rules.d/99-zigbee.rules >/dev/null <<'EOF'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+  ATTRS{serial}=="PUT_YOUR_SERIAL_HERE", SYMLINK+="ttyUSB_ZIGBEE", MODE="0660", GROUP="dialout"
+EOF
+sudo udevadm control --reload-rules && sudo udevadm trigger
+ls -l /dev/ttyUSB_ZIGBEE                # must resolve to the ttyUSBn the dongle actually took
+
+sudo systemctl disable --now ModemManager   # it grabs new serial devices and can hold the port at startup
+```
+
+> Include `ATTRS{serial}`. Without it the rule matches *any* Silabs bridge — including the ESP-style boards
+> common in this kind of build — and you are back to guessing which device you opened.
+
+#### Step 3 — Broker + Zigbee2MQTT
+
+```bash
+sudo apt install -y mosquitto mosquitto-clients
+sudo tee /etc/mosquitto/conf.d/local.conf >/dev/null <<'EOF'
+listener 1883 127.0.0.1
+allow_anonymous true
+EOF
+sudo systemctl enable --now mosquitto
+```
+
+**Bound to `127.0.0.1` deliberately** — broker, Zigbee2MQTT and the brain all live on this Pi, so there is
+no reason to expose an unauthenticated broker to the LAN. Move a component off-box and you add a listener
+*and* credentials in the same change.
+
+Install Zigbee2MQTT per its own docs, then in `data/configuration.yaml`:
+
+```yaml
+serial:
+  port: /dev/ttyUSB_ZIGBEE      # the udev symlink from Step 2 -- never a raw ttyUSBn
+  adapter: ember                # REQUIRED for EmberZNet 7.4.x+; 'ezsp' is the deprecated path
+
+advanced:
+  transmit_power: 20            # dBm. Default is 5; this dongle's +20 dBm PA is the reason to buy the -E.
+  channel: 15                   # see the interference note below
+  network_key: GENERATE         # once. Changing it later re-keys the network and drops every paired device.
+
+frontend:
+  port: 8080
+
+permit_join: false              # pair the sensor, then LOCK THE DOOR
+```
+
+```bash
+sudo systemctl enable --now zigbee2mqtt
+```
+
+> **Channel choice beats transmit power.** Zigbee and 2.4 GHz Wi-Fi overlap, and the Pi's own Wi-Fi is a
+> strong local interferer. Zigbee **15**, **20** or **25** sit in the gaps between Wi-Fi 1/6/11 — pick the
+> one furthest from your AP. At 20 dBm on a congested channel you are mostly just a louder participant in
+> a collision.
+>
+> **Then move the dongle off the Pi.** USB 3.0 ports and their cabling radiate broadband noise across
+> 2.4 GHz, and this dongle's plug sits centimetres from the board. **A short USB extension cable getting it
+> 30 cm clear is the single highest-value range fix — worth more than the PA.** Prefer a USB 2.0 port.
+
+#### Step 4 — Pair the sensor and capture its real payload
+
+```bash
+mosquitto_pub -h localhost -t zigbee2mqtt/bridge/request/permit_join -m '{"time":120}'
+mosquitto_sub -h localhost -t 'zigbee2mqtt/#' -v      # trigger the sensor and watch
+```
+
+**Don't skip this.** Rename the device to something stable in the frontend (e.g. `pir_hallway`) so the topic
+isn't a MAC address, and confirm you actually see `{"occupancy":true}`. Most sensors publish exactly that;
+some use `occupancy_state`. The robot handles both, but you want to have *seen* the message before you
+configure anything to listen for it.
+
+Note its **`occupancy_timeout`** while you're here — most battery PIRs latch `true`, then send `false` 60–90 s
+later, and won't send another `true` until they re-arm. That blind window is the sensor's own and no software
+fixes it. It is the main reason this **complements** the wired PIR rather than replacing it.
+
+#### Step 5 — Point the robot at it
+
+```bash
+cd ~/LocalAiRobot
+./scripts/patches/common/6_wake_zigbee_pir.sh zigbee2mqtt/pir_hallway   # your topic from Step 4
+./scripts/run_me.sh --reload
+```
+
+That sets the keys and installs `paho-mqtt` into `brain/.venv` (it is deliberately **not** in
+`requirements.txt` — dead weight on every build without a dongle). Turn it back off with `--off`, which
+leaves every `ROBOT_PIR_*` key untouched.
+
+#### Step 6 — Verify
+
+```bash
+journalctl -u robot.service -n 40 | grep -E 'wake sources:|zigbee wake:'
+```
+
+```
+wake sources: gpio-pir OR zigbee-pir (dedupe 2.0s)
+zigbee wake: MQTT connected, subscribed to 'zigbee2mqtt/pir_hallway'
+```
+
+| Symptom | Cause |
+|---|---|
+| No `wake sources:` line | `ROBOT_ZIGBEE_WAKE` isn't `1` — the robot took the plain single-sensor path |
+| `[single source]` on that line | One side isn't available; the next log line names which |
+| `paho-mqtt not installed` | Re-run the patch, or `brain/.venv/bin/pip install 'paho-mqtt>=2.0'` |
+| Connected but never wakes | Wrong topic, or you're watching the falling edge. Confirm with `mosquitto_sub` on that exact topic |
+| `sensor went OFFLINE` warning | Flat battery. The wired PIR carries on alone — that's the warning's whole point |
+
+Then the behavioural checks:
+
+```bash
+# 1. Cover the wired PIR, trigger only the Zigbee one -> robot wakes
+# 2. Trigger both together                            -> exactly ONE greeting
+# 3. Unplug the dongle, walk past the wired PIR       -> still wakes (graceful degradation)
+journalctl -u robot.service | grep 'wake wins:'       # 4. after a week
+```
+
+**Check 4 is the one that matters.** `wake wins: gpio-pir=142, zigbee-pir=0` means the wireless sensor is
+covering ground the wired one already sees — move it, or drop it.
 
 ## 8. The update loop
 

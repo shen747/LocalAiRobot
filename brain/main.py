@@ -656,8 +656,23 @@ def main():
     _sensor_kind = (os.environ.get("ROBOT_WAKE_SENSOR", "") or "pir").strip().lower()
     if _sensor_kind != "pir":
         log.warning("unknown ROBOT_WAKE_SENSOR=%r -- using 'pir'", _sensor_kind)
-    motion_wake = MotionWake(
-        os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None, _wake_cb)
+    _pir_pin = os.environ.get("ROBOT_PIR_PIN") if concierge.enabled() else None
+    if concierge.enabled() and os.environ.get("ROBOT_ZIGBEE_WAKE", "0") == "1":
+        # OR MODE: a wireless Zigbee sensor wakes the robot as well as the wired PIR, whichever fires
+        # first. Deliberately ADDITIVE rather than another ROBOT_WAKE_SENSOR value -- the Zigbee sensor
+        # COMPLEMENTS the wired one (it covers ground the wired one cannot see) rather than replacing it,
+        # and every combination has to work: wired only, both, or Zigbee only with ROBOT_PIR_PIN empty.
+        # Each source independently degrades to available=False, so an unplugged dongle, a dead broker or
+        # a flat sensor battery leaves the wired PIR running exactly as it does today.
+        from wake_sources import CompositeWake
+        from zigbee_wake import ZigbeeWake
+        _composite = CompositeWake(_wake_cb)
+        _composite.add(MotionWake(_pir_pin, _composite.make_callback(MotionWake.source_name)))
+        _composite.add(ZigbeeWake(_composite.make_callback(ZigbeeWake.source_name)))
+        _composite.log_ready()
+        motion_wake = _composite
+    else:
+        motion_wake = MotionWake(_pir_pin, _wake_cb)
     if concierge.enabled():
         # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
         # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import
