@@ -1469,6 +1469,19 @@ def main():
                             motion_wake.arm_cooldown(
                                 _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
                             concierge_stats["probe_silent"] += 1
+                            if probe.get("capped"):
+                                # We did NOT stop because the sensor said the room was empty -- it never
+                                # released, and the safety watchdog fired. That is a hardware symptom, not a
+                                # tuning problem, and it must not look like an ordinary early give-up or you
+                                # will spend the evening raising the wrong number.
+                                log.warning(
+                                    "concierge: wake sensor STILL asserting after %.0fs and %d frames with "
+                                    "no face -- stopped by the ROBOT_CONCIERGE_PROBE_MAX_S watchdog. The "
+                                    "sensor is holding HIGH at something the camera cannot see: aimed at a "
+                                    "heat source / sunlit window / the Pi's own exhaust, or a failed part. "
+                                    "Check ~/detect-captures and where it is pointed -- raising the cap "
+                                    "would only make the camera run longer at the same empty view.",
+                                    _concierge_probe_max_s(), probe["attempts"])
                             log.debug("concierge: motion but nobody there (%d probe frame(s), %.2fs since "
                                       "the PIR fired) -> back to %r",
                                       probe["attempts"], _since_wake(), idle["face"])

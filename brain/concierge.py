@@ -191,6 +191,7 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
     cap_s = max(0.0, float(max_s or 0.0))
     started = clock()
     last = None
+    capped = False
     i = 0
     while True:
         jpeg = None
@@ -203,7 +204,7 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
             last = jpeg
             try:
                 if detect(jpeg):
-                    return {"present": True, "attempts": i, "jpeg": jpeg}
+                    return {"present": True, "attempts": i, "jpeg": jpeg, "capped": False}
             except Exception:
                 pass
         # Past the floor? Only keep going while the sensor still asserts AND we are inside the ceiling.
@@ -211,6 +212,10 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
             if not (still_present and cap_s > 0):
                 break
             if (clock() - started) >= cap_s:
+                # The SENSOR never released -- we stopped because the watchdog fired, not because the
+                # sensor said the room was empty. Reported so the caller can say so out loud: a cap that
+                # binds silently just looks like "gave up too early" and sends you tuning the wrong knob.
+                capped = True
                 break
             try:
                 if not still_present():
@@ -221,7 +226,7 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
         delay = gap if jpeg else max(gap, 0.1)
         if delay > 0:
             sleep(delay)
-    return {"present": False, "attempts": i, "jpeg": last}
+    return {"present": False, "attempts": i, "jpeg": last, "capped": capped}
 
 
 def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,
@@ -300,7 +305,7 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
                 best, best_jpeg = score, jpeg
             if name:
                 return {"name": name, "face_seen": True, "attempts": attempts, "best_score": best,
-                        "face_hits": hits + 1, "jpeg": jpeg}
+                        "face_hits": hits + 1, "jpeg": jpeg, "capped": False}
             if score > 0.0 or saw_face:
                 hits += 1                        # identify() saw a face -> no second detector pass needed
                 if best_jpeg is None:
@@ -328,7 +333,8 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
                     keep = False        # can't read the sensor -> stop. Never spin on a broken reader.
             if not keep:
                 return {"name": None, "face_seen": hits >= need, "attempts": attempts, "best_score": best,
-                        "face_hits": hits, "jpeg": best_jpeg or last_jpeg}
+                        "face_hits": hits, "jpeg": best_jpeg or last_jpeg,
+                        "capped": bool(still_present and cap_s > 0 and (now - started) >= cap_s)}
         # Pace the loop. A failed capture always backs off at least 100ms (slow / broken camera -> don't spin
         # the CPU while we wait out the window); a good capture waits `interval_s`.
         delay = gap if jpeg else max(gap, 0.1)
