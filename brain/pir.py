@@ -99,6 +99,11 @@ class MotionWake:
         self.rejected_warmup = 0
         self._warmup_s = max(0.0, _envf("ROBOT_PIR_WARMUP_S", 0))
         self._ready_at = 0.0        # monotonic deadline; 0 = no warm-up window
+        # Presence stickiness for is_active() -- see its docstring. Must comfortably exceed the GAP between
+        # a PIR's output pulses (not the pulse itself): the SEN0171 latches ~2.3-3s and re-triggers, so 5s
+        # spans a missed pulse without keeping a departed visitor "present" for long.
+        self._last_high = 0.0
+        self._presence_hold_s = max(0.0, _envf("ROBOT_PIR_PRESENCE_HOLD_S", 5))
         if not pin:
             return
         try:
@@ -158,17 +163,34 @@ class MotionWake:
 
     @property
     def is_active(self):
-        """Is the sensor asserting RIGHT NOW? (Not 'did it fire' -- the live pin level.)
+        """Is somebody STILL THERE according to the sensor? Used by the concierge to keep looking rather
+        than stopping at a fixed frame budget.
 
-        Concierge Stage A uses this to keep looking while a PIR still holds its output HIGH, instead of
-        guessing a fixed number of frames: the sensor already knows whether it is still seeing something,
-        and asking is free. False on any error or when unavailable, so a caller can never hang on it."""
+        *** THIS IS NOT A BARE PIN READ, AND IT MUST NOT BE. ***  A PIR's output is a PULSE TRAIN, not a
+        level: this build's SEN0171 latches HIGH for ~2.3-3s per trigger, then drops LOW, then re-triggers
+        if the person is still moving. The indicator LED follows it, and the gaps are far too short to see
+        -- so the human watching it reads "solidly on" while a bare `self._sensor.value` sampled inside one
+        of those gaps reads False.
+
+        That mismatch is exactly what made the concierge give up with the sensor apparently still lit: a
+        41-give-up field log showed EVERY Stage A loop ending on a pin read (never on the safety watchdog),
+        at 4.1-12.1s -- i.e. landing in the LOW gaps of a pulse train that was still running.
+
+        So presence is STICKY: HIGH now, or HIGH within the last ROBOT_PIR_PRESENCE_HOLD_S. That window
+        only has to outlast the gap BETWEEN pulses, not the whole visit -- each new pulse re-stamps it, so
+        genuine presence extends indefinitely while a person who has actually left expires one window after
+        their last pulse. False on any error or when unavailable, so a caller can never hang on it."""
         if self._sensor is None:
             return False
         try:
-            return bool(self._sensor.value)
+            live = bool(self._sensor.value)
         except Exception:
             return False
+        now = time.monotonic()
+        if live:
+            self._last_high = now
+            return True
+        return bool(self._last_high) and (now - self._last_high) < self._presence_hold_s
 
     # -- trigger filters ---------------------------------------------------------------------------------
     def _is_spike(self):
