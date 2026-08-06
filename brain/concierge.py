@@ -225,7 +225,7 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
 
 
 def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,
-                     interval_s=0.0, need_hits=1):
+                     interval_s=0.0, need_hits=1, still_present=None, max_s=0.0):
     """Keep capturing + identifying until an enrolled face MATCHES or `window_s` seconds elapse -- so a
     single bad frame (pose / motion-blur / lighting) doesn't mean a missed greeting. Runs at LEAST once
     (window_s <= 0 == a single shot, i.e. the old behavior). Pure/stdlib and dependency-injected so it can
@@ -259,8 +259,20 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
     one-hit gate a single fluke in the burst was enough to make the robot greet an empty room. A MATCH is
     still authoritative and returns immediately: `need_hits` only gates the un-recognised "someone's there"
     path. `jpeg` is the decisive frame (the match, else the best-scoring / last one) so the caller can keep it
-    for review -- see brain/captures.py. clock/sleep are injectable for deterministic tests."""
+    for review -- see brain/captures.py. clock/sleep are injectable for deterministic tests.
+
+    `still_present` + `max_s`: WHICHEVER LASTS LONGER WINS. Keep going while EITHER the fixed `window_s` has
+    not expired OR the wake sensor still says somebody is there -- bounded by `max_s`. A fixed window has to
+    guess how long a visitor lingers; the sensor knows, and someone standing in front of a PIR keeps it
+    asserting. Giving up while the sensor is still lit is the one outcome that is never right: it is the
+    robot deciding nobody is there while its own sensor disagrees.
+
+    `max_s` is the safety stop, and it is what makes this safe to run open-ended: a sensor stuck HIGH (failed
+    part, a heat source parked in frame) would otherwise hold the camera and the recogniser at 100% forever.
+    still_present=None or max_s=0 -> plain `window_s`, exactly the old behaviour."""
     deadline = clock() + max(0.0, float(window_s or 0.0))
+    started = clock()
+    cap_s = max(0.0, float(max_s or 0.0))
     need = max(1, int(need_hits or 1))
     gap = max(0.0, float(interval_s or 0.0))
     hits, attempts, best = 0, 0, 0.0
@@ -303,9 +315,20 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
                             best_jpeg = jpeg
                 except Exception:
                     pass
-        if clock() >= deadline:
-            return {"name": None, "face_seen": hits >= need, "attempts": attempts, "best_score": best,
-                    "face_hits": hits, "jpeg": best_jpeg or last_jpeg}
+        now = clock()
+        if now >= deadline:
+            # The fixed window is up -- but WHICHEVER LASTS LONGER WINS, so carry on while the sensor still
+            # says somebody is there. Bounded by max_s so a stuck-HIGH sensor cannot hold the recogniser
+            # open indefinitely; that cap is the only thing that makes running past the window safe.
+            keep = False
+            if still_present and cap_s > 0 and (now - started) < cap_s:
+                try:
+                    keep = bool(still_present())
+                except Exception:
+                    keep = False        # can't read the sensor -> stop. Never spin on a broken reader.
+            if not keep:
+                return {"name": None, "face_seen": hits >= need, "attempts": attempts, "best_score": best,
+                        "face_hits": hits, "jpeg": best_jpeg or last_jpeg}
         # Pace the loop. A failed capture always backs off at least 100ms (slow / broken camera -> don't spin
         # the CPU while we wait out the window); a good capture waits `interval_s`.
         delay = gap if jpeg else max(gap, 0.1)

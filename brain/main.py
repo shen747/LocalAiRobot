@@ -945,13 +945,27 @@ def main():
         PIR holds its output HIGH while it keeps re-triggering, so Stage A can just keep asking. The floor
         (probe tries) is still always taken, because the output can fall while a visitor is still walking in.
 
-        The ceiling is what stops a stuck-HIGH sensor -- a failed part, or a heat source parked in frame --
-        pinning the camera at 100% indefinitely. 6s comfortably covers a hallway approach while bounding the
-        worst case to one window per wake, after which the outcome cooldown takes over."""
+        The ceiling is a SAFETY STOP, not a tuning knob: a sensor stuck HIGH (failed part, a heat source
+        parked in frame) would otherwise pin the camera at 100% indefinitely. Set it well past a realistic
+        approach so the SENSOR decides when to stop, not the clock -- giving up while the sensor is still
+        asserting is the one outcome that is never right."""
         try:
-            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_MAX_S", "6") or 0))
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_MAX_S", "20") or 0))
         except ValueError:
-            return 6.0
+            return 20.0
+
+    def _concierge_recognize_max_s():
+        """STAGE B safety stop for the same 'whichever lasts longer wins' rule
+        (ROBOT_CONCIERGE_RECOGNIZE_MAX_S, default 45s; 0 = fixed window only).
+
+        ROBOT_CONCIERGE_RECOGNIZE_S is the FLOOR -- always run at least that long, because a visitor can
+        step out of the sensor's zones while still walking toward the camera. Past it, keep recognising for
+        as long as the sensor says somebody is there. The cap bounds a stuck sensor to one long window per
+        wake, after which the outcome cooldown takes over."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_MAX_S", "45") or 0))
+        except ValueError:
+            return 45.0
 
     def _concierge_cooldown_s(key, default):
         """One of the OUTCOME cooldowns (silent / greeted) armed on the PIR after a look -- see brain/pir.py.
@@ -1464,10 +1478,16 @@ def main():
                         concierge_stats["probe_hit"] += 1
                     if not smile_now:
                         fc.set_expression("happy")   # deferred smile: somebody IS there, so greet the face now
+                    # WHICHEVER LASTS LONGER WINS: run the fixed window, then keep going for as long as the
+                    # wake sensor still says somebody is there. Stopping while the sensor is still asserting
+                    # is the one outcome that is never right -- it is the robot concluding nobody is present
+                    # while its own sensor disagrees. Bounded by _concierge_recognize_max_s().
                     res = concierge.recognize_within(
                         grab, face_identifier.identify, face_identifier.detect, _concierge_recognize_s(),
                         interval_s=_concierge_recognize_interval_s(),
-                        need_hits=_concierge_face_hits())
+                        need_hits=_concierge_face_hits(),
+                        still_present=(lambda: getattr(motion_wake, "is_active", False)),
+                        max_s=_concierge_recognize_max_s())
                     name = res["name"]
                     if not name and not res["face_seen"]:
                         # Stage A saw somebody but the window couldn't confirm them -- they walked past, or
