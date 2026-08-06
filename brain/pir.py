@@ -180,17 +180,35 @@ class MotionWake:
         only has to outlast the gap BETWEEN pulses, not the whole visit -- each new pulse re-stamps it, so
         genuine presence extends indefinitely while a person who has actually left expires one window after
         their last pulse. False on any error or when unavailable, so a caller can never hang on it."""
+        # getattr rather than a bare attribute: is_active is called from a lambda inside the concierge's
+        # look, so an AttributeError here would abort the whole look rather than just misreport presence.
+        return self.presence_age() < getattr(self, "_presence_hold_s", 5.0)
+
+    def presence_age(self):
+        """SECONDS SINCE THE SENSOR WAS LAST HIGH -- the single source of truth about presence, so callers
+        that need different patience can each pick their own window off one reading.
+
+        Two callers want very different things from the same pulse train:
+          * the FACE wants to stop smiling promptly once you walk away (a short window, ~1.5s -- just enough
+            to bridge the gap between pulses so it doesn't flicker);
+          * the RETRY LOOP wants to keep hunting for a face for a good while longer (~5s), because the
+            camera may still catch someone the instant before they leave.
+        Returning the AGE rather than a bool is what lets both read the same sensor and disagree usefully.
+
+        Reading this also STAMPS the clock when the pin is high, so it doubles as the sampler: callers poll
+        it every few hundred ms during a look, which is far faster than the ~2.3-3s pulses it has to track.
+        Returns float('inf') when unavailable or unreadable, so every comparison is safely False."""
         if self._sensor is None:
-            return False
+            return float("inf")
         try:
             live = bool(self._sensor.value)
         except Exception:
-            return False
+            return float("inf")
         now = time.monotonic()
         if live:
             self._last_high = now
-            return True
-        return bool(self._last_high) and (now - self._last_high) < self._presence_hold_s
+            return 0.0
+        return (now - self._last_high) if self._last_high else float("inf")
 
     # -- trigger filters ---------------------------------------------------------------------------------
     def _is_spike(self):

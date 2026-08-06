@@ -154,7 +154,7 @@ def greeting_unknown():
 
 
 def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep,
-                   still_present=None, max_s=0.0, clock=time.monotonic):
+                   still_present=None, max_s=0.0, clock=time.monotonic, on_tick=None):
     """STAGE A -- the cheap "is anyone actually there?" look taken the moment motion fires, BEFORE the
     expensive recognition window. Returns {"present": bool, "attempts": int, "jpeg": bytes|None}.
 
@@ -194,6 +194,14 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
     capped = False
     i = 0
     while True:
+        # on_tick fires ONCE PER FRAME so the caller can drive the face from the LIVE sensor instead of
+        # holding one expression for the whole look. Without it the smile is set on the first frame and
+        # cleared on the last, so a 15s look means 15s of smiling -- long after the visitor walked off.
+        if on_tick is not None:
+            try:
+                on_tick()
+            except Exception:
+                pass          # the face is cosmetic; it must never break the look
         jpeg = None
         try:
             jpeg = capture()
@@ -230,7 +238,7 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
 
 
 def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,
-                     interval_s=0.0, need_hits=1, still_present=None, max_s=0.0):
+                     interval_s=0.0, need_hits=1, still_present=None, max_s=0.0, on_tick=None):
     """Keep capturing + identifying until an enrolled face MATCHES or `window_s` seconds elapse -- so a
     single bad frame (pose / motion-blur / lighting) doesn't mean a missed greeting. Runs at LEAST once
     (window_s <= 0 == a single shot, i.e. the old behavior). Pure/stdlib and dependency-injected so it can
@@ -283,6 +291,11 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
     hits, attempts, best = 0, 0, 0.0
     best_jpeg = last_jpeg = None
     while True:
+        if on_tick is not None:
+            try:
+                on_tick()      # drive the face from the live sensor, once per frame (see presence_probe)
+            except Exception:
+                pass
         attempts += 1
         jpeg = None
         try:

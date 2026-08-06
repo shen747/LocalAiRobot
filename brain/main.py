@@ -954,6 +954,19 @@ def main():
         except ValueError:
             return 20.0
 
+    def _concierge_smile_hold_s():
+        """How long the SMILE outlasts the sensor's last pulse (ROBOT_CONCIERGE_SMILE_HOLD_S, default 1.5s).
+
+        Deliberately much shorter than ROBOT_PIR_PRESENCE_HOLD_S, which governs how long we keep LOOKING.
+        It only has to bridge the gap between a PIR's output pulses so the face cannot flicker mid-visit;
+        past that, a smiling face with nobody in front of it is just wrong, and the field log showed a
+        median 9.6s of it per look. Raise it if the face flickers while you stand there; lower it if the
+        smile lingers after you have gone."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SMILE_HOLD_S", "1.5") or 1.5))
+        except ValueError:
+            return 1.5
+
     def _concierge_recognize_max_s():
         """STAGE B safety stop for the same 'whichever lasts longer wins' rule
         (ROBOT_CONCIERGE_RECOGNIZE_MAX_S, default 45s; 0 = fixed window only).
@@ -1439,6 +1452,10 @@ def main():
                     # probe" tells you exactly which knob to turn. 0 when the PIR isn't the trigger source.
                     _woke_at = getattr(motion_wake, "last_wake_at", 0.0) or 0.0
                     _since_wake = (lambda: (time.monotonic() - _woke_at) if _woke_at else 0.0)
+                    # Seconds since the wake sensor last asserted. One reading, two windows: the face uses a
+                    # short one, the retry loop a long one (see _face_tick below). inf when unsupported, so
+                    # a source without presence_age() simply never keeps the smile up.
+                    _presence_age = (lambda: getattr(motion_wake, "presence_age", lambda: float("inf"))())
                     grab = (lambda: cam.capture_jpeg() if getattr(cam, "available", False) else None)
                     # Smile the INSTANT motion fires (default), held through the whole look -- a greeter that
                     # waits to be sure before acknowledging you feels broken. The trade-off is new: the PIR is
@@ -1447,8 +1464,37 @@ def main():
                     # ROBOT_CONCIERGE_SMILE_ON_MOTION=0 to hold the smile until Stage A has actually seen
                     # somebody -- ~0.3s later, and then only for real visitors.
                     smile_now = os.environ.get("ROBOT_CONCIERGE_SMILE_ON_MOTION", "1") != "0"
+                    # THE FACE FOLLOWS THE SENSOR, NOT THE LOOK. Presence is now sticky enough to keep
+                    # hunting for a face well after the pin last pulsed, and holding one expression across
+                    # the whole look meant a median 9.6s (max 15.6s) of smiling -- most of it at an empty
+                    # hallway, because the visitor had already walked off. So the smile gets its OWN, much
+                    # shorter window off the same reading: bridge the ~2.3-3s pulse gaps so it cannot
+                    # flicker, then drop within ~0.5s of the sensor genuinely going quiet. The retry loop
+                    # keeps running on the longer window regardless -- looking a little longer than we smile
+                    # is free, and is what catches someone the instant before they leave.
+                    _smile_hold_s = _concierge_smile_hold_s()
+
+                    def _face_tick(_last=[None]):
+                        want = "happy" if _presence_age() < _smile_hold_s else idle["face"]
+                        if want != _last[0]:      # only redraw on CHANGE; the panel is serial and slow
+                            _last[0] = want
+                            fc.set_expression(want)
                     if smile_now:
                         fc.set_expression("happy")
+                    # DROP A STALE QUEUED WAKE. Motion that fires DURING a look is held by the event and
+                    # handled the moment that look ends -- so a long look is immediately followed by a
+                    # second one for an edge that is already many seconds old. The field log shows it as a
+                    # look whose pacing is impossible: 4 frames spread over 8.77s, against 0.42-0.64s per
+                    # frame everywhere else. On screen it is the face dropping to sleeping and instantly
+                    # smiling again at nobody. If the edge is old AND the sensor is no longer asserting,
+                    # that visitor has been and gone; the one we just finished was theirs.
+                    if (_woke_at and _since_wake() > _smile_hold_s
+                            and _presence_age() >= _concierge_probe_max_s()):
+                        log.debug("concierge: dropping a stale motion wake (%.1fs old, sensor quiet for "
+                                  "%.1fs) -- it was queued behind the look that just finished",
+                                  _since_wake(), _presence_age())
+                        fc.set_expression(idle["face"])
+                        continue
                     probe_tries = _concierge_probe_tries()
                     if probe_tries:
                         # still_present: keep looking while the sensor ITSELF still says someone is there,
@@ -1461,7 +1507,7 @@ def main():
                             grab, face_identifier.detect, attempts=probe_tries,
                             interval_s=_concierge_probe_interval_s(),
                             still_present=(lambda: getattr(motion_wake, "is_active", False)),
-                            max_s=_concierge_probe_max_s())
+                            max_s=_concierge_probe_max_s(), on_tick=_face_tick)
                         if not probe["present"]:
                             # Nobody there. This is the overwhelmingly common case (98.8% of wakes in the
                             # field log), so it logs at DEBUG -- at INFO it produced 3,741 lines a day and
@@ -1500,7 +1546,7 @@ def main():
                         interval_s=_concierge_recognize_interval_s(),
                         need_hits=_concierge_face_hits(),
                         still_present=(lambda: getattr(motion_wake, "is_active", False)),
-                        max_s=_concierge_recognize_max_s())
+                        max_s=_concierge_recognize_max_s(), on_tick=_face_tick)
                     name = res["name"]
                     if not name and not res["face_seen"]:
                         # Stage A saw somebody but the window couldn't confirm them -- they walked past, or

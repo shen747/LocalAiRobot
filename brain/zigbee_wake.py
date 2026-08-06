@@ -171,6 +171,13 @@ class ZigbeeWake:
         A's max_s ceiling matters more here than on the wired pin."""
         return bool(self._occupied) if self.available else False
 
+    def presence_age(self):
+        """Seconds since this sensor last reported presence -- mirrors pir.MotionWake.presence_age so the
+        face and the retry loop can apply their own windows to either source. A Zigbee sensor only speaks on
+        change, so this is 0.0 while occupied and inf otherwise: there is no pulse train to age out, and its
+        own occupancy_timeout is what eventually publishes the clear."""
+        return 0.0 if self.is_active else float("inf")
+
     # -- the same filter chain as pir.MotionWake -------------------------------------------------------
     def _fire(self):
         edge_at = time.monotonic()

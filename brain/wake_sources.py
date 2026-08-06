@@ -127,6 +127,19 @@ class CompositeWake:
                 pass
         return False
 
+    def presence_age(self):
+        """FRESHEST presence across all sources -- the OR, applied to 'how recently'. Whichever sensor saw
+        somebody most recently wins, so one source going quiet never ages out presence another still sees."""
+        best = float("inf")
+        for _, s in self._all_sources():
+            try:
+                age = s.presence_age()
+            except Exception:
+                continue
+            if age < best:
+                best = age
+        return best
+
     def arm_cooldown(self, seconds, reason=""):
         """*** THE LOAD-BEARING METHOD. ***
 
