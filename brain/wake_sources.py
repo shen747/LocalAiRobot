@@ -115,6 +115,18 @@ class CompositeWake:
         """True while ANY source is usable. One dead sensor must not disable motion wake."""
         return any(getattr(s, "available", False) for s in self._sources)
 
+    @property
+    def is_active(self):
+        """True while ANY source still asserts presence -- the OR again, now for 'are they still there?'
+        rather than 'did someone arrive?'. Stage A keeps looking while this holds."""
+        for _, s in self._all_sources():
+            try:
+                if getattr(s, "is_active", False):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def arm_cooldown(self, seconds, reason=""):
         """*** THE LOAD-BEARING METHOD. ***
 

@@ -156,6 +156,20 @@ class MotionWake:
             log.warning("PIR motion sensor init failed on pin %s (%s) -- motion wake disabled "
                         "(the wake word still works)", pin, e)
 
+    @property
+    def is_active(self):
+        """Is the sensor asserting RIGHT NOW? (Not 'did it fire' -- the live pin level.)
+
+        Concierge Stage A uses this to keep looking while a PIR still holds its output HIGH, instead of
+        guessing a fixed number of frames: the sensor already knows whether it is still seeing something,
+        and asking is free. False on any error or when unavailable, so a caller can never hang on it."""
+        if self._sensor is None:
+            return False
+        try:
+            return bool(self._sensor.value)
+        except Exception:
+            return False
+
     # -- trigger filters ---------------------------------------------------------------------------------
     def _is_spike(self):
         """True when the edge had already fallen again by the end of the hold window -- i.e. electrical noise,

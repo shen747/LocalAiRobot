@@ -162,6 +162,15 @@ class ZigbeeWake:
                             "relies on the GPIO PIR alone.", self._topic)
         self._online = online
 
+    @property
+    def is_active(self):
+        """Is the sensor reporting occupancy RIGHT NOW? Mirrors pir.MotionWake.is_active so Stage A can keep
+        looking while presence holds. This is the LAST STATE PUBLISHED, not a live read -- a Zigbee sensor
+        only speaks when something changes -- so it stays True until the sensor's own occupancy_timeout
+        expires (typically 60-90s). That is far longer than a PIR's ~3s latch, which is precisely why Stage
+        A's max_s ceiling matters more here than on the wired pin."""
+        return bool(self._occupied) if self.available else False
+
     # -- the same filter chain as pir.MotionWake -------------------------------------------------------
     def _fire(self):
         edge_at = time.monotonic()

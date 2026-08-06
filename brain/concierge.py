@@ -153,7 +153,8 @@ def greeting_unknown():
     return random.choice(UNKNOWN_GREETINGS)
 
 
-def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep):
+def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep,
+                   still_present=None, max_s=0.0, clock=time.monotonic):
     """STAGE A -- the cheap "is anyone actually there?" look taken the moment motion fires, BEFORE the
     expensive recognition window. Returns {"present": bool, "attempts": int, "jpeg": bytes|None}.
 
@@ -170,29 +171,57 @@ def presence_probe(capture, detect, attempts=1, interval_s=0.0, sleep=time.sleep
 
     `attempts` > 1 takes a couple of looks `interval_s` apart before giving up, for a visitor caught
     mid-stride; it returns EARLY on the first hit, so the extra look costs nothing when someone is there.
-    Pure/stdlib and dependency-injected (same contract as recognize_within) so it needs no camera to test."""
+    Pure/stdlib and dependency-injected (same contract as recognize_within) so it needs no camera to test.
+
+    KEEP LOOKING WHILE THE SENSOR STILL SAYS SOMEONE IS THERE (`still_present`). A fixed budget has to
+    guess how long a person takes to walk into frame, and it guesses the same for a visitor already at the
+    door and one who tripped the beam 4m out. The sensor already knows: a PIR holds its output HIGH while it
+    keeps re-triggering (this build's SEN0171 latches ~2.3-3s per trigger), so "still asserting" is a free,
+    live answer to "is it worth another frame?". So `attempts` becomes the FLOOR -- always taken, because
+    the output may fall while the visitor is still approaching -- and looking CONTINUES past it for as long
+    as the sensor holds, up to the `max_s` ceiling.
+
+    `max_s` is not optional paranoia. A PIR stuck HIGH (failed part, a heat source parked in frame) would
+    otherwise pin the camera at 100% forever, which is exactly the runaway the two-stage design exists to
+    prevent. It bounds the damage to one window per wake, after which the outcome cooldown takes over.
+
+    still_present=None or max_s=0 restores the old fixed-budget behaviour exactly."""
     tries = max(1, int(attempts or 1))
     gap = max(0.0, float(interval_s or 0.0))
+    cap_s = max(0.0, float(max_s or 0.0))
+    started = clock()
     last = None
-    for i in range(tries):
+    i = 0
+    while True:
         jpeg = None
         try:
             jpeg = capture()
         except Exception:
             jpeg = None
+        i += 1
         if jpeg:
             last = jpeg
             try:
                 if detect(jpeg):
-                    return {"present": True, "attempts": i + 1, "jpeg": jpeg}
+                    return {"present": True, "attempts": i, "jpeg": jpeg}
             except Exception:
                 pass
-        if i + 1 < tries:
-            # A failed capture always backs off at least 100ms, so a broken camera can't spin the CPU.
-            delay = gap if jpeg else max(gap, 0.1)
-            if delay > 0:
-                sleep(delay)
-    return {"present": False, "attempts": tries, "jpeg": last}
+        # Past the floor? Only keep going while the sensor still asserts AND we are inside the ceiling.
+        if i >= tries:
+            if not (still_present and cap_s > 0):
+                break
+            if (clock() - started) >= cap_s:
+                break
+            try:
+                if not still_present():
+                    break
+            except Exception:
+                break            # can't tell -> stop. Never spin on a broken reader.
+        # A failed capture always backs off at least 100ms, so a broken camera can't spin the CPU.
+        delay = gap if jpeg else max(gap, 0.1)
+        if delay > 0:
+            sleep(delay)
+    return {"present": False, "attempts": i, "jpeg": last}
 
 
 def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, sleep=time.sleep,

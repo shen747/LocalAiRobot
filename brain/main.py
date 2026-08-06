@@ -936,6 +936,23 @@ def main():
         except ValueError:
             return 0.15
 
+    def _concierge_probe_max_s():
+        """CEILING for 'keep looking while the sensor still asserts' (ROBOT_CONCIERGE_PROBE_MAX_S, default
+        6s; 0 disables the whole behaviour and restores the fixed _concierge_probe_tries() budget).
+
+        A fixed budget has to GUESS how long someone takes to walk into frame, and it guesses identically
+        for a visitor already at the door and one who tripped the sensor 4m out. The sensor knows better: a
+        PIR holds its output HIGH while it keeps re-triggering, so Stage A can just keep asking. The floor
+        (probe tries) is still always taken, because the output can fall while a visitor is still walking in.
+
+        The ceiling is what stops a stuck-HIGH sensor -- a failed part, or a heat source parked in frame --
+        pinning the camera at 100% indefinitely. 6s comfortably covers a hallway approach while bounding the
+        worst case to one window per wake, after which the outcome cooldown takes over."""
+        try:
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_MAX_S", "6") or 0))
+        except ValueError:
+            return 6.0
+
     def _concierge_cooldown_s(key, default):
         """One of the OUTCOME cooldowns (silent / greeted) armed on the PIR after a look -- see brain/pir.py.
         0 disables that one, restoring 'react to every accepted edge'."""
@@ -1420,9 +1437,17 @@ def main():
                         fc.set_expression("happy")
                     probe_tries = _concierge_probe_tries()
                     if probe_tries:
+                        # still_present: keep looking while the sensor ITSELF still says someone is there,
+                        # rather than stopping at a fixed frame budget that has to guess how long an
+                        # approach takes. probe_tries stays the FLOOR (the output can fall while a visitor
+                        # is still walking in) and _concierge_probe_max_s() the ceiling that stops a
+                        # stuck-HIGH sensor pinning the camera. Both degrade: a source without is_active
+                        # reads False and Stage A behaves exactly as it did before.
                         probe = concierge.presence_probe(
                             grab, face_identifier.detect, attempts=probe_tries,
-                            interval_s=_concierge_probe_interval_s())
+                            interval_s=_concierge_probe_interval_s(),
+                            still_present=(lambda: getattr(motion_wake, "is_active", False)),
+                            max_s=_concierge_probe_max_s())
                         if not probe["present"]:
                             # Nobody there. This is the overwhelmingly common case (98.8% of wakes in the
                             # field log), so it logs at DEBUG -- at INFO it produced 3,741 lines a day and
