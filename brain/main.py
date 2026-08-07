@@ -1473,9 +1473,24 @@ def main():
                     # keeps running on the longer window regardless -- looking a little longer than we smile
                     # is free, and is what catches someone the instant before they leave.
                     _smile_hold_s = _concierge_smile_hold_s()
+                    _verbose_sensors = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
+                    try:
+                        _presence_hold_cfg = float(os.environ.get("ROBOT_PIR_PRESENCE_HOLD_S", "5") or 5)
+                    except ValueError:
+                        _presence_hold_cfg = 5.0
 
-                    def _face_tick(_last=[None]):
-                        want = "happy" if _presence_age() < _smile_hold_s else idle["face"]
+                    def _face_tick(_last=[None], _n=[0]):
+                        age = _presence_age()
+                        _n[0] += 1
+                        # Per-frame sensor trace. This is THE line to read when the robot and the sensor
+                        # LED appear to disagree: it prints what the code actually sees, once per capture,
+                        # so "the light was on but it gave up" becomes a number instead of an impression.
+                        # DEBUG-only -- it is one line per frame, ~2/second during a look.
+                        if _verbose_sensors:
+                            log.debug("PIR tick %d: presence_age=%.2fs (%s) -- looking=%s, face=%s",
+                                      _n[0], age, "HIGH" if age == 0.0 else "low",
+                                      age < _presence_hold_cfg, "happy" if age < _smile_hold_s else "idle")
+                        want = "happy" if age < _smile_hold_s else idle["face"]
                         if want != _last[0]:      # only redraw on CHANGE; the panel is serial and slow
                             _last[0] = want
                             fc.set_expression(want)
