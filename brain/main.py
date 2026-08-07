@@ -972,15 +972,17 @@ def main():
     def _concierge_smile_hold_s():
         """How long the SMILE outlasts the sensor's last pulse (ROBOT_CONCIERGE_SMILE_HOLD_S, default 1.5s).
 
-        Deliberately much shorter than ROBOT_PIR_PRESENCE_HOLD_S, which governs how long we keep LOOKING.
-        It only has to bridge the gap between a PIR's output pulses so the face cannot flicker mid-visit;
-        past that, a smiling face with nobody in front of it is just wrong, and the field log showed a
-        median 9.6s of it per look. Raise it if the face flickers while you stand there; lower it if the
-        smile lingers after you have gone."""
+        Defaults to the SAME window as ROBOT_PIR_PRESENCE_HOLD_S, i.e. the face is up exactly while the
+        robot is still looking. This started at 1.5s on the theory that it only had to bridge the gap
+        between output pulses -- but 2,576 measured ticks say those gaps are far longer than assumed
+        (p75 2.69s, p90 4.48s, p95 5.08s), so 1.5s left the face showing idle on 28.6% of ticks WHILE a
+        look was still running: exactly the "green face goes off while the blue LED is on" complaint, now
+        measured. At 5s that is 0%. Lower it if the smile lingers too long after people leave; the cost of
+        lowering is measurable in the PIR tick trace (ROBOT_SENSOR_VERBOSE=1)."""
         try:
-            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SMILE_HOLD_S", "1.5") or 1.5))
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SMILE_HOLD_S", "5") or 5))
         except ValueError:
-            return 1.5
+            return 5.0
 
     def _concierge_recognize_max_s():
         """STAGE B safety stop for the same 'whichever lasts longer wins' rule
@@ -1008,16 +1010,28 @@ def main():
     # how many edges the PIR offered, how many died in the cheap probe, and how many became a greeting. That
     # single line is what makes the next tuning round possible -- without it you are back to guessing whether
     # the sensor or the recogniser is at fault.
-    concierge_stats = {"probe_silent": 0, "probe_hit": 0, "window_lost": 0, "greeted": 0, "by_name": 0}
+    # The disposal counters exist because the ledger did not balance: a 5-hour field log showed 79 accepted
+    # wakes against 72 accounted outcomes -- 7 (9%) simply vanished, with nothing in the log saying where.
+    # Those are the wakes the owner sees as "the sensor fired and nothing happened", and they die BEFORE any
+    # look starts, so the per-frame PIR tick trace never covers them. Each disposal path now has a bucket,
+    # and whatever is left over is Event coalescing (several accepted edges collapsing into one
+    # threading.Event, which by design services them as a single look).
+    concierge_stats = {"probe_silent": 0, "probe_hit": 0, "window_lost": 0, "greeted": 0, "by_name": 0,
+                       "dropped_stale": 0, "discarded_chat": 0}
 
     def _concierge_summary_loop(period_s):
+        # MONOTONIC counters + deltas, never copy-then-zero. The old code snapshotted the dict and then
+        # zeroed it; a `+= 1` from the MOTION branch landing between those two steps was erased outright,
+        # so the ledger could not balance even in principle. The motion counters beside it already used
+        # the delta-against-base pattern correctly -- this just applies the same discipline to the rest.
         base = {"woke": 0, "outcome": 0, "debounce": 0, "spike": 0}
+        cbase = {k: 0 for k in concierge_stats}
         while True:
             time.sleep(period_s)
             try:
-                seen = dict(concierge_stats)
-                for k in concierge_stats:
-                    concierge_stats[k] = 0
+                snap = dict(concierge_stats)
+                seen = {k: snap[k] - cbase.get(k, 0) for k in snap}
+                cbase.update(snap)
                 woke = motion_wake.accepted - base["woke"]
                 out = motion_wake.rejected_outcome - base["outcome"]
                 deb = motion_wake.rejected_cooldown - base["debounce"]
@@ -1026,11 +1040,19 @@ def main():
                              "debounce": motion_wake.rejected_cooldown, "spike": motion_wake.rejected_spike})
                 if not (woke or out or deb or spk or any(seen.values())):
                     continue          # a genuinely quiet hour stays quiet in the log
+                # THE LEDGER MUST BALANCE. Every accepted wake ends in exactly one bucket: a terminal look
+                # outcome (silent probe / lost window / greeting -- probe_hit is a stage, not an ending), an
+                # explicit disposal, or Event coalescing. `collapsed` is derived rather than counted, so it
+                # can never drift from the identity; a big number there is normal on a busy sensor (several
+                # edges during one look) but a big number with few wakes means edges are being lost.
+                serviced = seen["probe_silent"] + seen["window_lost"] + seen["greeted"]
+                collapsed = woke - serviced - seen["dropped_stale"] - seen["discarded_chat"]
                 log.info("concierge: last %.0f min -- PIR %d wake(s) (+%d held by cooldown, +%d debounce, "
                          "+%d noise) | %d silent (probe), %d looked at, %d lost in the window, "
-                         "%d greeting(s) (%d by name)",
+                         "%d greeting(s) (%d by name) | disposal: %d stale, %d mid-chat, %d coalesced",
                          period_s / 60.0, woke, out, deb, spk, seen["probe_silent"], seen["probe_hit"],
-                         seen["window_lost"], seen["greeted"], seen["by_name"])
+                         seen["window_lost"], seen["greeted"], seen["by_name"],
+                         seen["dropped_stale"], seen["discarded_chat"], collapsed)
             except Exception as e:
                 log.debug("concierge summary error: %s", e)
 
@@ -1527,7 +1549,8 @@ def main():
                     # that visitor has been and gone; the one we just finished was theirs.
                     if (_woke_at and _since_wake() > _smile_hold_s
                             and _presence_age() >= _concierge_probe_max_s()):
-                        log.debug("concierge: dropping a stale motion wake (%.1fs old, sensor quiet for "
+                        concierge_stats["dropped_stale"] += 1
+                        log.info("concierge: dropping a stale motion wake (%.1fs old, sensor quiet for "
                                   "%.1fs) -- it was queued behind the look that just finished",
                                   _since_wake(), _presence_age())
                         fc.set_expression(idle["face"])
@@ -1706,8 +1729,9 @@ def main():
                         # there, so the next edge -- or their next movement -- wakes it normally.)
                         if motion_event is not None and motion_event.is_set():
                             motion_event.clear()
-                            log.debug("concierge: discarded a motion wake that arrived during the "
-                                      "conversation (almost certainly the person we were talking to)")
+                            concierge_stats["discarded_chat"] += 1
+                            log.info("concierge: discarded a motion wake that arrived during the "
+                                     "conversation (almost certainly the person we were talking to)")
                         motion_wake.arm_cooldown(
                             _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
                         break
