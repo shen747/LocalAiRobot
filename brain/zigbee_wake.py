@@ -53,6 +53,8 @@ class ZigbeeWake:
         self._suppress_reason = ""
         self._occupied = False        # so only false->true counts as an arrival
         self._online = None           # from the Z2M availability topic; None = not heard from yet
+        self._last_release = 0.0      # when occupancy last went FALSE -- see the departure check in _fire()
+        self.cleared_on_departure = 0
         self._topic = ""
         self._cooldown_s = max(0.0, _envf("ROBOT_ZIGBEE_COOLDOWN_S", 2))
 
@@ -147,6 +149,10 @@ class ZigbeeWake:
         if occ and not was:
             self._fire()
         elif not occ:
+            # Not a wake, but the timestamp matters: it is how _fire() later tells 'still here' from
+            # 'left and someone new arrived'. Z2M publishes this when the sensor's occupancy_timeout
+            # expires, so it is a genuine departure signal rather than a gap in a pulse train.
+            self._last_release = time.monotonic()
             self.rejected_falling += 1
 
     def _note_availability(self, payload):
@@ -185,8 +191,16 @@ class ZigbeeWake:
             # Outcome cooldown FIRST: it is the deliberate one, armed by main.py from what the camera
             # actually found, so it should be what the counters attribute the rejection to.
             if self._suppress_until and edge_at < self._suppress_until:
-                self.rejected_outcome += 1
-                return
+                # Same rule as the wired PIR: a cooldown suppresses the person we just dealt with, so once
+                # they leave it has nothing to suppress and is only making the robot deaf to the next
+                # arrival. Occupancy going FALSE is this sensor's departure signal.
+                hold = max(0.0, _envf('ROBOT_PIR_PRESENCE_HOLD_S', 5))
+                if hold > 0 and self._last_release and (edge_at - self._last_release) > hold:
+                    self._suppress_until = 0.0
+                    self.cleared_on_departure += 1
+                else:
+                    self.rejected_outcome += 1
+                    return
             if self._last_accepted and (edge_at - self._last_accepted) < self._cooldown_s:
                 self.rejected_cooldown += 1
                 return
@@ -213,9 +227,10 @@ class ZigbeeWake:
         if not self.available:
             return ""
         flag = " [SENSOR OFFLINE]" if self._online is False else ""
+        left = f", {self.cleared_on_departure} cooldown(s) cut short (they left)" if self.cleared_on_departure else ""
         return (f"Zigbee {self._topic}: woke {self.accepted}x, suppressed {self.rejected_outcome} "
                 f"(outcome cooldown) + {self.rejected_cooldown} (debounce), ignored "
-                f"{self.rejected_retained} retained + {self.rejected_falling} clear(s){flag}")
+                f"{self.rejected_retained} retained + {self.rejected_falling} clear(s){left}{flag}")
 
     def close(self):
         try:

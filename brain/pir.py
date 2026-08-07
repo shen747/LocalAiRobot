@@ -104,6 +104,9 @@ class MotionWake:
         # spans a missed pulse without keeping a departed visitor "present" for long.
         self._last_high = 0.0
         self._presence_hold_s = max(0.0, _envf("ROBOT_PIR_PRESENCE_HOLD_S", 5))
+        # Monotonic stamp of the last FALLING edge -- see _note_release() and the departure check in _fire().
+        self._last_release = 0.0
+        self.cleared_on_departure = 0      # how many outcome cooldowns we cut short because they left
         if not pin:
             return
         try:
@@ -142,6 +145,11 @@ class MotionWake:
             else:
                 self._sensor = DigitalInputDevice(int(pin))
             self._sensor.when_activated = self._fire   # gpiozero fires this on its own thread
+            # FALLING edge too -- not to wake anything, purely to timestamp when the sensor let go. That
+            # timestamp is what lets _fire() tell "the same person is still here, re-triggering" from "they
+            # left and somebody new arrived", which is the difference between a cooldown that is doing its
+            # job and one that is making the robot deaf. Event-driven, so no polling thread.
+            self._sensor.when_deactivated = self._note_release
             self.available = True
             # WARM-UP. A PIR's output is UNDEFINED while its pyroelectric front-end settles, and the datasheet
             # figure is not small: Panasonic PaPIRs specifies up to 30 SECONDS, during which the pin may toggle
@@ -262,6 +270,22 @@ class MotionWake:
                 "_is_spike(); it will start discarding real visitors instead.",
                 self._window_count, elapsed_txt, self._pin)
 
+    def _note_release(self):
+        """Falling edge: the sensor stopped asserting. Timestamp only -- nothing is woken by a release."""
+        self._last_release = time.monotonic()
+
+    def _departed_since(self, now):
+        """True when the pin was LOW for longer than the presence window immediately before this edge --
+        i.e. whoever we were suppressing for has GONE, and this rising edge is somebody new.
+
+        This is exact and free because it is edge-driven: a rising edge can only happen after a falling one,
+        so `now - _last_release` IS the length of the low gap that just ended. A visitor still standing there
+        re-triggers within a second or two (the SEN0171 latches ~2.3-3s, then re-fires while they move), so
+        their gaps are always short; somebody who actually walked away leaves a long one."""
+        if self._presence_hold_s <= 0 or not self._last_release:
+            return False
+        return (now - self._last_release) > self._presence_hold_s
+
     def arm_cooldown(self, seconds, reason=""):
         """Suppress motion wakes for the next `seconds` -- called by main.py AFTER a look, with a duration
         chosen from what the camera actually found (nobody there = short, greeted them = long). This is the
@@ -300,11 +324,25 @@ class MotionWake:
             # Outcome cooldown FIRST: it is the deliberate one (the last look decided how long to wait),
             # so it should be what the counters and the verbose log attribute the rejection to.
             if self._suppress_until and now < self._suppress_until:
-                self.rejected_outcome += 1
-                if self._verbose:
-                    log.info("PIR: motion on GPIO %s ignored -- %s cooldown, %.1fs left",
-                             self._pin, self._suppress_reason or "outcome", self._suppress_until - now)
-                return
+                # THE COOLDOWN IS FOR THE PERSON WE JUST DEALT WITH -- not for the room. Its whole purpose
+                # is "don't re-greet someone who is still standing here", so the moment they LEAVE it has
+                # nothing left to suppress and every second it keeps running is the robot deaf to whoever
+                # arrives next. A 44-minute field window lost 215s -- 47% of it -- to exactly this: a 60s
+                # greet cooldown, re-armed to 60s again when the conversation ended, blocking every wake in
+                # between with no smile and (outside verbose) no log line at all.
+                if self._departed_since(now):
+                    self._suppress_until = 0.0
+                    self.cleared_on_departure += 1
+                    if self._verbose:
+                        log.info("PIR: %s cooldown CLEARED on GPIO %s -- sensor was quiet %.1fs, so they "
+                                 "left; this is a new arrival",
+                                 self._suppress_reason or "outcome", self._pin, now - self._last_release)
+                else:
+                    self.rejected_outcome += 1
+                    if self._verbose:
+                        log.info("PIR: motion on GPIO %s ignored -- %s cooldown, %.1fs left",
+                                 self._pin, self._suppress_reason or "outcome", self._suppress_until - now)
+                    return
             if self._last_accepted and (now - self._last_accepted) < self._cooldown_s:
                 self.rejected_cooldown += 1
                 if self._verbose:
@@ -330,9 +368,13 @@ class MotionWake:
         if not self.available:
             return ""
         warm = f" + {self.rejected_warmup} (warm-up)" if self.rejected_warmup else ""
+        # Worth its own field: a high count means visitors ARE arriving during cooldowns and being served
+        # anyway. A zero count next to a big `outcome` number means the opposite -- the cooldown is only
+        # ever firing at the person it was armed for, which is what it is supposed to do.
+        left = f", {self.cleared_on_departure} cooldown(s) cut short (they left)" if self.cleared_on_departure else ""
         return (f"PIR GPIO {self._pin}: woke {self.accepted}x, suppressed {self.rejected_outcome} "
                 f"(outcome cooldown) + {self.rejected_cooldown} (debounce) + {self.rejected_spike} "
-                f"(noise spikes){warm}")
+                f"(noise spikes){warm}{left}")
 
     def close(self):
         try:

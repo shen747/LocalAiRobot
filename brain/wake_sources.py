@@ -178,6 +178,10 @@ class CompositeWake:
     def rejected_warmup(self):
         return self._sum("rejected_warmup")
 
+    @property
+    def cleared_on_departure(self):
+        return self._sum("cleared_on_departure")
+
     def stats_line(self):
         lines = []
         for s in self._sources:
