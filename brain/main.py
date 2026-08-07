@@ -674,21 +674,6 @@ def main():
     else:
         motion_wake = MotionWake(_pir_pin, _wake_cb)
     if concierge.enabled():
-        # Sanity-check the two "whichever lasts longer" pairs ONCE at startup. recognize_within only
-        # consults the sensor while inside its ceiling, so a floor >= ceiling means it never asks at all:
-        # the loop runs to the fixed window and reports capped=True every time, firing the stuck-HIGH
-        # warning above on every ordinary miss. Same shape for Stage A. Cheap to check, confusing to debug.
-        for _floor, _ceil, _fk, _ck in (
-                (_concierge_recognize_s(), _concierge_recognize_max_s(),
-                 "ROBOT_CONCIERGE_RECOGNIZE_S", "ROBOT_CONCIERGE_RECOGNIZE_MAX_S"),
-                (_concierge_probe_tries() * _concierge_probe_interval_s(), _concierge_probe_max_s(),
-                 "ROBOT_CONCIERGE_PROBE_TRIES x _INTERVAL_S", "ROBOT_CONCIERGE_PROBE_MAX_S")):
-            if _ceil > 0 and _floor >= _ceil:
-                log.warning("concierge: %s (%.1fs) >= %s (%.1fs) -- the ceiling is reached before the "
-                            "sensor is ever consulted, so 'keep looking while present' is inert and the "
-                            "stuck-sensor warning will fire on every miss. Raise the ceiling.",
-                            _fk, _floor, _ck, _ceil)
-    if concierge.enabled():
         # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
         # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import
         # used to eat most of the 5s we had to recognise them -- making the very first visitor of a run the one
@@ -1055,6 +1040,25 @@ def main():
                          seen["dropped_stale"], seen["discarded_chat"], collapsed)
             except Exception as e:
                 log.debug("concierge summary error: %s", e)
+
+    # Sanity-check the two "whichever lasts longer" pairs ONCE at startup. recognize_within only consults
+    # the sensor while inside its ceiling, so a floor >= ceiling means it never asks at all: the loop runs
+    # to the fixed window and reports capped=True every time, firing the stuck-sensor warning on every
+    # ordinary miss. Same shape for Stage A.
+    # PLACED HERE, not beside the sensor construction, for the same reason as the summary loop below: these
+    # helpers are defined further down this scope, so calling them earlier in main() is an UnboundLocalError
+    # that kills the run at startup. (It did exactly that once -- the robot never left idle.)
+    if concierge.enabled():
+        for _floor, _ceil, _fk, _ck in (
+                (_concierge_recognize_s(), _concierge_recognize_max_s(),
+                 "ROBOT_CONCIERGE_RECOGNIZE_S", "ROBOT_CONCIERGE_RECOGNIZE_MAX_S"),
+                (_concierge_probe_tries() * _concierge_probe_interval_s(), _concierge_probe_max_s(),
+                 "ROBOT_CONCIERGE_PROBE_TRIES x _INTERVAL_S", "ROBOT_CONCIERGE_PROBE_MAX_S")):
+            if _ceil > 0 and _floor >= _ceil:
+                log.warning("concierge: %s (%.1fs) >= %s (%.1fs) -- the ceiling is reached before the "
+                            "sensor is ever consulted, so 'keep looking while present' is inert and the "
+                            "stuck-sensor warning will fire on every miss. Raise the ceiling.",
+                            _fk, _floor, _ck, _ceil)
 
     # Started HERE, not up with the other concierge warmups, because it closes over the helpers defined in
     # this scope -- referencing them any earlier in main() is an unbound local. 0 = off; needs a live PIR
