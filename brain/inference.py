@@ -65,7 +65,7 @@ def _num_ctx():
     than the robot's short prompts need, and a big KV cache is slow + RAM-hungry on the Pi. ~4096 is
     plenty for the intent prompt AND a moondream image. 0 / '' / unset -> Ollama's default."""
     try:
-        n = int(os.environ.get("ROBOT_NUM_CTX", "4096") or 0)
+        n = int(os.environ.get("ROBOT_NUM_CTX", "4096") or 4096)
     except ValueError:
         return 0
     return n if n > 0 else 0

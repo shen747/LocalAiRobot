@@ -107,6 +107,7 @@ class MotionWake:
         # Monotonic stamp of the last FALLING edge -- see _note_release() and the departure check in _fire().
         self._last_release = 0.0
         self.cleared_on_departure = 0      # how many outcome cooldowns we cut short because they left
+        self._last_rise_was_spike = False  # so a fall ending a noise spike doesn't stamp presence
         if not pin:
             return
         try:
@@ -271,8 +272,22 @@ class MotionWake:
                 self._window_count, elapsed_txt, self._pin)
 
     def _note_release(self):
-        """Falling edge: the sensor stopped asserting. Timestamp only -- nothing is woken by a release."""
-        self._last_release = time.monotonic()
+        """Falling edge: the sensor stopped asserting. Timestamp only -- nothing is woken by a release.
+
+        A fall is the exact END of a HIGH period, so it also stamps presence -- but ONLY for falls that end
+        a real rise. This callback is wired unconditionally at construction, with no warm-up or spike
+        awareness, so an ungated stamp would resurrect precisely the edges _fire() deliberately refuses:
+        every warm-up toggle and every noise spike also produces a falling edge a moment later, and
+        stamping those would keep presence permanently "fresh" from garbage -- defeating the stale-wake
+        accuracy this stamping exists for. _last_release itself is stamped unconditionally, because
+        _departed_since() needs to know when the pin went quiet regardless of why it was high."""
+        now = time.monotonic()
+        self._last_release = now
+        # getattr, because this runs on gpiozero's callback thread: an AttributeError here would be
+        # swallowed by the dispatcher and presence would silently stop being stamped on falls.
+        warming = bool(getattr(self, "_ready_at", 0.0) and now < self._ready_at)
+        if not warming and not getattr(self, "_last_rise_was_spike", False):
+            self._last_high = now
 
     def _departed_since(self, now):
         """True when the pin was LOW for longer than the presence window immediately before this edge --
@@ -315,11 +330,26 @@ class MotionWake:
             return
         if self._is_spike():                       # sleeps up to hold_s -- fine, this is gpiozero's thread
             self.rejected_spike += 1
+            self._last_rise_was_spike = True       # so _note_release skips the fall that ends this spike
             if self._verbose:
                 log.info("PIR: edge on GPIO %s fell within %.2fs -- ignored as noise, not a visitor",
                          self._pin, self._hold_s)
             return
         now = time.monotonic()
+        # STAMP PRESENCE FROM THE EDGE, not only from polls. presence_age() used to be the ONLY writer of
+        # _last_high, and it only writes while a caller happens to be polling -- which is exclusively during
+        # a look. Between looks nothing polls, so the first COLD read after any gap measured age from the
+        # last poll of the previous look rather than from the last time the pin was actually high, and
+        # over-reported it (never under). Everything that reads presence outside a running look was
+        # therefore working from a stale number: the stale-wake drop, and the first face tick of a queued
+        # look. A rising edge IS the pin going high, so stamp it here and the LOW-branch arithmetic in
+        # presence_age() becomes correct with no polling at all.
+        #
+        # Stamped BEFORE the cooldown and debounce checks on purpose: an edge those reject is still real
+        # evidence that a person is there. Not stamped for warm-up (pin undefined) or spike (noise) edges,
+        # which return above.
+        self._last_rise_was_spike = False
+        self._last_high = now
         with self._lock:
             # Outcome cooldown FIRST: it is the deliberate one (the last look decided how long to wait),
             # so it should be what the counters and the verbose log attribute the rejection to.

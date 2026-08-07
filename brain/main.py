@@ -674,6 +674,21 @@ def main():
     else:
         motion_wake = MotionWake(_pir_pin, _wake_cb)
     if concierge.enabled():
+        # Sanity-check the two "whichever lasts longer" pairs ONCE at startup. recognize_within only
+        # consults the sensor while inside its ceiling, so a floor >= ceiling means it never asks at all:
+        # the loop runs to the fixed window and reports capped=True every time, firing the stuck-HIGH
+        # warning above on every ordinary miss. Same shape for Stage A. Cheap to check, confusing to debug.
+        for _floor, _ceil, _fk, _ck in (
+                (_concierge_recognize_s(), _concierge_recognize_max_s(),
+                 "ROBOT_CONCIERGE_RECOGNIZE_S", "ROBOT_CONCIERGE_RECOGNIZE_MAX_S"),
+                (_concierge_probe_tries() * _concierge_probe_interval_s(), _concierge_probe_max_s(),
+                 "ROBOT_CONCIERGE_PROBE_TRIES x _INTERVAL_S", "ROBOT_CONCIERGE_PROBE_MAX_S")):
+            if _ceil > 0 and _floor >= _ceil:
+                log.warning("concierge: %s (%.1fs) >= %s (%.1fs) -- the ceiling is reached before the "
+                            "sensor is ever consulted, so 'keep looking while present' is inert and the "
+                            "stuck-sensor warning will fire on every miss. Raise the ceiling.",
+                            _fk, _floor, _ck, _ceil)
+    if concierge.enabled():
         # Load the face model NOW, in the background, instead of lazily on the first identify(). That first
         # call happens INSIDE a visitor's recognition window, so the multi-second onnxruntime + ArcFace import
         # used to eat most of the 5s we had to recognise them -- making the very first visitor of a run the one
@@ -924,7 +939,7 @@ def main():
         (default 2, ~0.15s apart -- it returns early the moment one hits, so a real visitor costs one).
         0 = skip Stage A entirely and always run the full recognition window (the old behaviour)."""
         try:
-            return max(0, int(float(os.environ.get("ROBOT_CONCIERGE_PROBE_TRIES", "2") or 0)))
+            return max(0, int(float(os.environ.get("ROBOT_CONCIERGE_PROBE_TRIES", "2") or 2)))
         except ValueError:
             return 2
 
@@ -950,7 +965,7 @@ def main():
         approach so the SENSOR decides when to stop, not the clock -- giving up while the sensor is still
         asserting is the one outcome that is never right."""
         try:
-            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_MAX_S", "20") or 0))
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_PROBE_MAX_S", "20") or 20))
         except ValueError:
             return 20.0
 
@@ -976,7 +991,7 @@ def main():
         as long as the sensor says somebody is there. The cap bounds a stuck sensor to one long window per
         wake, after which the outcome cooldown takes over."""
         try:
-            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_MAX_S", "45") or 0))
+            return max(0.0, float(os.environ.get("ROBOT_CONCIERGE_RECOGNIZE_MAX_S", "45") or 45))
         except ValueError:
             return 45.0
 
@@ -1024,7 +1039,7 @@ def main():
     # (with no motion sensor there is nothing for it to summarise).
     if concierge.enabled() and motion_wake.available:
         try:
-            _summary_s = max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SUMMARY_S", "3600") or 0))
+            _summary_s = max(0.0, float(os.environ.get("ROBOT_CONCIERGE_SUMMARY_S", "3600") or 3600))
         except ValueError:
             _summary_s = 3600.0
         if _summary_s > 0:
@@ -1479,21 +1494,28 @@ def main():
                     except ValueError:
                         _presence_hold_cfg = 5.0
 
-                    def _face_tick(_last=[None], _n=[0]):
+                    def _face_tick(_n=[0]):
                         age = _presence_age()
                         _n[0] += 1
+                        want = "happy" if age < _smile_hold_s else idle["face"]
                         # Per-frame sensor trace. This is THE line to read when the robot and the sensor
                         # LED appear to disagree: it prints what the code actually sees, once per capture,
                         # so "the light was on but it gave up" becomes a number instead of an impression.
                         # DEBUG-only -- it is one line per frame, ~2/second during a look.
                         if _verbose_sensors:
+                            # Print the REAL want, not a guessed label: idle["face"] is "sleeping" after a
+                            # drowse, so a hard-coded "idle" here would name a state never actually sent --
+                            # in the one line you read when the face and the sensor appear to disagree.
                             log.debug("PIR tick %d: presence_age=%.2fs (%s) -- looking=%s, face=%s",
                                       _n[0], age, "HIGH" if age == 0.0 else "low",
-                                      age < _presence_hold_cfg, "happy" if age < _smile_hold_s else "idle")
-                        want = "happy" if age < _smile_hold_s else idle["face"]
-                        if want != _last[0]:      # only redraw on CHANGE; the panel is serial and slow
-                            _last[0] = want
-                            fc.set_expression(want)
+                                      age < _presence_hold_cfg, want)
+                        # Re-assert EVERY tick rather than caching the last value here. Face.set_expression
+                        # already dedupes under its own lock (brain/face.py) and never touches the panel on
+                        # this thread, so a local cache saves nothing -- and it actively breaks recovery:
+                        # the drowse Timer can set 'sleeping' from another thread after a tick cached
+                        # "happy", and a cache would then never re-send happy, leaving the face asleep for
+                        # the whole look with a visitor standing there. Re-asserting self-heals in one tick.
+                        fc.set_expression(want)
                     if smile_now:
                         fc.set_expression("happy")
                     # DROP A STALE QUEUED WAKE. Motion that fires DURING a look is held by the event and
@@ -1573,6 +1595,19 @@ def main():
                         motion_wake.arm_cooldown(
                             _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
                         concierge_stats["window_lost"] += 1
+                        if res.get("capped"):
+                            # Stage B ran to its ceiling with the sensor STILL asserting. Same hardware
+                            # symptom Stage A warns about -- but Stage A is skipped entirely when
+                            # ROBOT_CONCIERGE_PROBE_TRIES=0, which is the field setting, so without this
+                            # the only stuck-HIGH warning in the codebase is unreachable and a pinned
+                            # sensor burns the full window every wake looking like an ordinary miss.
+                            log.warning(
+                                "concierge: wake sensor STILL asserting after %.0fs and %d recognition "
+                                "frames with no match -- stopped by the ROBOT_CONCIERGE_RECOGNIZE_MAX_S "
+                                "watchdog. The sensor is holding HIGH at something the camera cannot "
+                                "resolve: check ~/detect-captures and where it is aimed. Raising the cap "
+                                "would only run the recogniser longer at the same view.",
+                                _concierge_recognize_max_s(), res["attempts"])
                         log.info("concierge: motion but no face in %d try(s) (%d face hit(s), need %d) "
                                  "-> back to %r (silent)",
                                  res["attempts"], res["face_hits"], _concierge_face_hits(), idle["face"])
