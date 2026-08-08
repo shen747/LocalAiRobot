@@ -38,10 +38,24 @@ CARD_FRAMES = 8
 
 COL_LABELS = ("TODAY", "TOMORROW", "DAY AFTER")
 
+# What each condition is CALLED on the card. Deliberately separate from weather._CONDITION_WORDS, which is
+# spoken prose ("sunny with showers") -- a screen wants one or two words that survive being shrunk to fit a
+# third of a 480px panel. Longest here is "PARTLY CLOUDY"; the fitter handles it.
+CONDITION_LABELS = {
+    "Sunny":            "SUNNY",
+    "PartlyCloudy":     "PARTLY CLOUDY",
+    "Cloudy":           "CLOUDY",
+    "SunnyRain":        "SUNNY SHOWERS",
+    "PartlyCloudyRain": "SHOWERS",
+    "CloudyRain":       "RAIN",
+    "Thunderstorms":    "STORMS",
+}
+
 BG = (16, 18, 24)            # near-black, matching the procedural faces' dark aesthetic
 LABEL_FG = (140, 158, 184)
 TMAX_FG = (236, 244, 255)
 TMIN_FG = (124, 146, 174)
+CONDITION_FG = (255, 255, 255)
 DIVIDER = (34, 38, 48)
 
 # Fonts: this repo commits none, and face.py hand-draws its "Zzz" strokes specifically to avoid the
@@ -54,27 +68,60 @@ _FONT_CANDIDATES = (
 )
 
 _icon_cache = {}             # (condition, side, n) -> [RGBA frames], bounded by 7 conditions x 1 layout
+_font_cache = {}             # px -> font; the shrink-to-fit loop asks for many sizes, so don't re-open the
+                             # TTF each time (it runs once per poll, but a file open per candidate px adds up)
 _warned_icons = set()
 _warned_font = [False]
 
 
 def _font(size):
-    """A bold font at `size` px, or PIL's default. Never raises."""
+    """A bold font at `size` px, or PIL's default. Memoised. Never raises."""
     from PIL import ImageFont
+    size = max(1, int(size))
+    if size in _font_cache:
+        return _font_cache[size]
+    font = None
     for path in _FONT_CANDIDATES:
         try:
             if os.path.exists(path):
-                return ImageFont.truetype(path, int(size))
+                font = ImageFont.truetype(path, size)
+                break
         except Exception:
             continue
-    if not _warned_font[0]:
-        _warned_font[0] = True
-        log.warning("weather: no TrueType font found (looked for DejaVu/Liberation/Noto) -- the forecast "
-                    "card falls back to the built-in bitmap font, which looks cruder but works")
+    if font is None:
+        if not _warned_font[0]:
+            _warned_font[0] = True
+            log.warning("weather: no TrueType font found (looked for DejaVu/Liberation/Noto) -- the "
+                        "forecast card falls back to the built-in bitmap font, which looks cruder but works")
+        try:
+            font = ImageFont.load_default(size=size)      # Pillow >= 10.1 scales the built-in font
+        except TypeError:
+            font = ImageFont.load_default()               # older Pillow: fixed-size only
+    _font_cache[size] = font
+    return font
+
+
+def _text_w(draw, text, font):
     try:
-        return ImageFont.load_default(size=int(size))     # Pillow >= 10.1 scales the built-in font
-    except TypeError:
-        return ImageFont.load_default()                   # older Pillow: fixed-size only
+        l, _t, r, _b = draw.textbbox((0, 0), text, font=font)
+        return r - l
+    except Exception:
+        return len(text) * 6                              # last-resort estimate; never raise over a label
+
+
+def _fit_font(draw, text, max_w, start_px, min_px=6):
+    """The largest font at or below start_px whose rendered `text` fits inside max_w.
+
+    This is what makes the condition label's "always one line" promise true rather than hopeful. The labels
+    range from "RAIN" to "PARTLY CLOUDY" -- more than 3x in width -- across panels from a 160px column to a
+    267px one, so no single fixed size can be both readable on the short labels and safe on the long ones.
+    Measure and shrink instead. Falls back to min_px rather than ever wrapping or overflowing."""
+    size = max(int(min_px), int(start_px))
+    while size > min_px:
+        if _text_w(draw, text, _font(size)) <= max_w:
+            return _font(size)
+        size -= 1
+    return _font(min_px)
 
 
 def _layout(width, height):
@@ -83,14 +130,19 @@ def _layout(width, height):
     Never hardcode 480x320: the Turing landscape canvas is that, but a DSI framebuffer auto-sizes itself to
     whatever the panel reports (e.g. 800x480) and ignores the size env keys entirely."""
     col_w = width / 3.0
-    side = int(min(col_w * 0.72, height * 0.40))          # icon box, square, fits both aspect ratios
-    label_px = max(9, int(height * 0.075))
-    tmax_px = max(14, int(height * 0.165))
-    tmin_px = max(10, int(height * 0.085))
-    icon_top = int(height * 0.17)
+    side = int(min(col_w * 0.72, height * 0.37))          # icon box, square, fits both aspect ratios
+    label_px = max(9, int(height * 0.072))
+    tmax_px = max(14, int(height * 0.155))
+    tmin_px = max(10, int(height * 0.080))
+    cond_px = max(8, int(height * 0.062))                 # the STARTING size; _fit_font shrinks to fit
+    icon_top = int(height * 0.155)
+    tmax_y = icon_top + side + int(height * 0.030)
+    tmin_y = tmax_y + int(tmax_px * 1.02)
     return {"col_w": col_w, "side": side, "label_px": label_px, "tmax_px": tmax_px,
-            "tmin_px": tmin_px, "icon_top": icon_top,
-            "label_y": int(height * 0.045), "tmax_y": icon_top + side + int(height * 0.035)}
+            "tmin_px": tmin_px, "cond_px": cond_px, "icon_top": icon_top,
+            "label_y": int(height * 0.040), "tmax_y": tmax_y, "tmin_y": tmin_y,
+            "cond_y": tmin_y + int(tmin_px * 1.25),
+            "cond_max_w": col_w * 0.92}                   # leave a gutter so labels never touch the divider
 
 
 def icon_boxes(width, height):
@@ -220,12 +272,25 @@ def build_frames(snapshot, width, height, n=CARD_FRAMES):
         f_label, f_max, f_min = _font(L["label_px"]), _font(L["tmax_px"]), _font(L["tmin_px"])
         for i in range(1, 3):                                    # column dividers
             x = int(i * L["col_w"])
-            d.line([(x, int(height * 0.10)), (x, int(height * 0.90))], fill=DIVIDER, width=1)
+            d.line([(x, int(height * 0.08)), (x, int(height * 0.94))], fill=DIVIDER, width=1)
+        # The condition labels are sized ONCE, from the widest of the three, and that one size is used for
+        # all three columns. Sizing each independently would fit just as well but look wrong -- "RAIN" would
+        # render half again as large as "PARTLY CLOUDY" beside it. One size reads as a row.
+        conditions = [CONDITION_LABELS.get(day.get("condition")) or str(day.get("condition") or "").upper()
+                      for day in days[:3]]
+        f_cond = _font(L["cond_px"])
+        for text in conditions:
+            if text:
+                f_cond = min(f_cond, _fit_font(d, text, L["cond_max_w"], L["cond_px"]),
+                             key=lambda f: getattr(f, "size", 0))
+
         for i, day in enumerate(days[:3]):
             cx = (i + 0.5) * L["col_w"]
             _centred(d, cx, L["label_y"], COL_LABELS[i], f_label, LABEL_FG)
             _centred(d, cx, L["tmax_y"], _temp(day.get("tmax")), f_max, TMAX_FG)
-            _centred(d, cx, L["tmax_y"] + L["tmax_px"] * 1.05, _temp(day.get("tmin")), f_min, TMIN_FG)
+            _centred(d, cx, L["tmin_y"], _temp(day.get("tmin")), f_min, TMIN_FG)
+            if conditions[i]:
+                _centred(d, cx, L["cond_y"], conditions[i], f_cond, CONDITION_FG)
 
         # --- the animated half: three icon strips, each already resampled to n frames ---
         strips = []

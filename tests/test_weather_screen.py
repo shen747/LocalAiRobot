@@ -140,6 +140,59 @@ for name, bad in (("None", None), ("no days", {}), ("empty days", {"days": []}),
     except Exception as e:
         ck(f"{name} must not raise", f"raised {e!r}", "[]")
 
+print("\n=== the condition label: every condition named, one or two words, ALWAYS one line ===")
+ck("every canonical condition has a label",
+   sorted(ws.CONDITION_LABELS), sorted(weather.CONDITIONS))
+ck("no label exceeds two words",
+   max(len(v.split()) for v in ws.CONDITION_LABELS.values()), 2)
+ck("labels are white", ws.CONDITION_FG, (255, 255, 255))
+ck("no label contains a line break",
+   any(("\n" in v) for v in ws.CONDITION_LABELS.values()), False)
+
+# EXHAUSTIVE: the promise is "always fits on one line", so check it for every combination of three
+# conditions at every panel geometry -- 343 combinations x 4 sizes. A fixed font size cannot keep this
+# promise ("RAIN" vs "PARTLY CLOUDY" is more than 3x in width), which is why _fit_font measures and shrinks.
+import itertools
+overflow, clipped = [], []
+for (w, h) in ((480, 320), (800, 480), (320, 480), (240, 320)):
+    L = ws._layout(w, h)
+    probe = ImageDraw.Draw(Image.new("RGB", (w, h)))
+    for combo in itertools.product(weather.CONDITIONS, repeat=3):
+        texts = [ws.CONDITION_LABELS[c] for c in combo]
+        f = ws._font(L["cond_px"])
+        for t in texts:                                  # the row shares ONE size: the smallest that fits
+            f = min(f, ws._fit_font(probe, t, L["cond_max_w"], L["cond_px"]),
+                    key=lambda x: getattr(x, "size", 0))
+        for t in texts:
+            if ws._text_w(probe, t, f) > L["cond_max_w"]:
+                overflow.append((w, h, t))
+        if L["cond_y"] + getattr(f, "size", 0) > h:
+            clipped.append((w, h, combo))
+ck(f"no label overflows its column ({7 ** 3} combos x 4 sizes)", overflow, [])
+ck("no label falls off the bottom of the panel", clipped, [])
+
+# One size for the whole row -- sizing columns independently fits equally well but reads as a mistake.
+probe = ImageDraw.Draw(Image.new("RGB", (320, 480)))
+L = ws._layout(320, 480)
+solo = {t: getattr(ws._fit_font(probe, t, L["cond_max_w"], L["cond_px"]), "size", 0)
+        for t in ("RAIN", "PARTLY CLOUDY")}
+ck("a short and a long label WOULD size differently on their own", solo["RAIN"] != solo["PARTLY CLOUDY"],
+   True)
+mixed = ws.build_frames(snap("CloudyRain", "PartlyCloudy", "Sunny"), 320, 480)
+ck("...but the row still renders (one shared size)", len(mixed), ws.CARD_FRAMES)
+
+# The label is CHROME: it must not move between frames, or the panel repaints on every tick.
+for (w, h) in SIZES:
+    frames = ws.build_frames(snap("PartlyCloudy", "SunnyRain", "Thunderstorms"), w, h)
+    boxes = ws.icon_boxes(w, h)
+    base = pixels(masked(frames[0], boxes))
+    ck(f"{w}x{h}: labels stay pixel-identical across frames",
+       all(pixels(masked(f, boxes)) == base for f in frames), True)
+
+# An unmapped condition still gets a legible line rather than a blank gap.
+odd = ws.build_frames(snap("Sunny", "NoSuchCondition", "Cloudy"), 480, 320)
+ck("an unmapped condition still renders a card", len(odd), ws.CARD_FRAMES)
+
 print("\n=== icon_boxes() is a pure function of the canvas, so the mask can never drift ===")
 ck("stable across calls", ws.icon_boxes(480, 320), ws.icon_boxes(480, 320))
 ck("differs by canvas", ws.icon_boxes(480, 320) != ws.icon_boxes(800, 480), True)

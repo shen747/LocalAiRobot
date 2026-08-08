@@ -57,6 +57,25 @@ exactly as it did before the feature existed.
 
 ### The forecast card (sleep screen only)
 
+Each column shows the day label, an animated icon, the high and low, and the condition in a word or two:
+
+| Condition | Card label |
+|---|---|
+| `Sunny` | `SUNNY` |
+| `PartlyCloudy` | `PARTLY CLOUDY` |
+| `Cloudy` | `CLOUDY` |
+| `SunnyRain` | `SUNNY SHOWERS` |
+| `PartlyCloudyRain` | `SHOWERS` |
+| `CloudyRain` | `RAIN` |
+| `Thunderstorms` | `STORMS` |
+
+Those labels are **always one line**. No fixed font size can promise that — `RAIN` and `PARTLY CLOUDY`
+differ by more than 3× in width, across columns from 160 px to 267 px — so the compositor measures the text
+and shrinks until it fits, then applies **that one size to all three columns** so the row reads evenly.
+Edit `CONDITION_LABELS` in [`brain/weather_screen.py`](../brain/weather_screen.py) to reword them; the
+fitter will cope with whatever length you choose.
+
+
 The `sleeping` face is the robot's long-duration idle surface, which makes it the natural home for a
 forecast — you glance at the hallway panel and the weather is simply *there*. So the card **replaces** the
 Zzz face whenever weather is enabled and a forecast is in hand, and appears **nowhere else**: greetings keep
