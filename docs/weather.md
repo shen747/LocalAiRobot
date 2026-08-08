@@ -16,29 +16,40 @@ Nothing in the greeting path, the command loop or startup ever waits on the netw
 
 ## Quick start
 
+**It is already on.** `config/robot.env` ships `ROBOT_WEATHER_ENABLE=1` pointed at the **Melbourne city
+centre** (`-37.81, 144.96`), so a fresh robot shows a real forecast without being configured. Confirm it:
+
 ```bash
-# 1. Your coordinates. Right-click your house in any map app -- the two numbers are lat, lon.
-#    2 decimal places (~1 km) is plenty for a forecast grid cell and leaks less.
-sed -i -e 's|^ROBOT_WEATHER_ENABLE=.*|ROBOT_WEATHER_ENABLE=1|' \
-       -e 's|^ROBOT_WEATHER_LAT=.*|ROBOT_WEATHER_LAT=-37.81|' \
-       -e 's|^ROBOT_WEATHER_LON=.*|ROBOT_WEATHER_LON=144.96|' \
-       -e 's|^ROBOT_WEATHER_TZ=.*|ROBOT_WEATHER_TZ=Australia/Melbourne|' \
-       config/robot.env
-
-# 2. Reload
-./scripts/run_me.sh --reload
-
-# 3. Confirm
 journalctl -u robot.service -n 40 | grep -a 'weather'
 # want: weather: open-meteo forecast for -37.81,144.96 (Australia/Melbourne) -- refresh 1800s, ...
 ```
 
-> **Privacy.** `ROBOT_WEATHER_LAT/LON` are your home address to within a street, and `config/robot.env` is
-> **tracked by git**. The template ships them blank on purpose — put your real values in your local-only
-> commit, alongside the API key. See the git workflow in `BENCH_SCRIPTS.md`.
+To point it at **your** location:
+
+```bash
+# Right-click your house in any map app -- the two numbers are lat, lon.
+# 2 decimal places (~1 km) is plenty for a forecast grid cell, and leaks less.
+sed -i -e 's|^ROBOT_WEATHER_LAT=.*|ROBOT_WEATHER_LAT=-37.87|' \
+       -e 's|^ROBOT_WEATHER_LON=.*|ROBOT_WEATHER_LON=145.09|' \
+       config/robot.env
+./scripts/run_me.sh --reload
+```
+
+Worth doing for a suburb well away from the CBD: temperature and especially **rain** genuinely differ
+across a metro area, and the greeting is telling people whether to take an umbrella.
+
+> **Privacy.** The shipped coordinates are a landmark on purpose. `config/robot.env` is **tracked by git**,
+> so a real house coordinate committed there publishes where you live. Put your own numbers in your
+> local-only commit, alongside the API key — see the git workflow in `BENCH_SCRIPTS.md`.
+
+Outside Australia, also set `ROBOT_WEATHER_TZ` (blank means `Australia/Melbourne`), or the card will roll
+"Today" over at the wrong hour and the robot will say "good evening" at breakfast.
 
 No API key and no account: [Open-Meteo](https://open-meteo.com) is keyless. One robot polling every 30
 minutes uses 48 requests a day against a fair-use budget of roughly 10,000.
+
+To turn the whole thing off: `ROBOT_WEATHER_ENABLE=0`. Every face, greeting and command path then behaves
+exactly as it did before the feature existed.
 
 ---
 
@@ -129,8 +140,11 @@ The whole design is this ladder, walked in order:
 | Fresh forecast | shown | opener + advice | exact 3-day answer |
 | Network down, cache < `STALE_S` (6 h) | shown | opener + advice | answered from cache |
 | Cache older than `STALE_S` | **Zzz face** | opener only | *"I can't reach the weather service right now."* |
-| `LAT`/`LON` never set | Zzz face | plain concierge greeting | (gate is off) |
+| `LAT`/`LON` blanked out | Zzz face | plain concierge greeting | (gate is off) |
 | `ROBOT_WEATHER_ENABLE=0` | Zzz face | plain concierge greeting | (gate is off) |
+
+A robot that has **never** reached the internet since boot has no cache to fall back on, so it starts at
+row 3 and stays there — enabled, harmless, and saying so once in the log.
 
 A stale forecast is **dropped rather than shown**, because the robot speaks these numbers out loud to
 people who then dress for them — being confidently wrong about tomorrow is worse than saying nothing.
