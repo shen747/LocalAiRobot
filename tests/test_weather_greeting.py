@@ -44,12 +44,18 @@ BANDS = {0: "evening", 4: "evening", 5: "morning", 11: "morning",
 for hour, want in sorted(BANDS.items()):
     ck(f"hour {hour:2d}", weather._band(hour), want)
 
-print("\n=== the opener matches the band, named and nameless ===")
-for hour, word in ((8, "morning"), (14, "afternoon"), (20, "evening")):
+print("\n=== the opener matches the band, named and nameless -- checked over EVERY line, not a sample ===")
+for hour, word, named_arr, unk_arr in (
+        (8,  "morning",   weather.MORNING_OPENERS,   weather.MORNING_OPENERS_UNKNOWN),
+        (14, "afternoon", weather.AFTERNOON_OPENERS, weather.AFTERNOON_OPENERS_UNKNOWN),
+        (20, "evening",   weather.EVENING_OPENERS,   weather.EVENING_OPENERS_UNKNOWN)):
+    ck(f"all {len(named_arr)} named openers for h={hour} say '{word}'",
+       all(word in s.lower() for s in named_arr), True)
+    ck(f"all {len(unk_arr)} nameless openers for h={hour} say '{word}'",
+       all(word in s.lower() for s in unk_arr), True)
     for named in (True, False):
-        # Every variant of a band contains its band word, so one sample is enough to prove the wiring.
         got = weather.opener(named=named, clock=at(hour))
-        ck(f"h={hour} named={named} says '{word}'", word in got.lower(), True)
+        ck(f"h={hour} named={named} picks from the right band", word in got.lower(), True)
         ck(f"h={hour} named={named} placeholder present", ("[Name]" in got), named)
 
 print("\n=== advice bands, on TODAY's max ===")
@@ -59,14 +65,27 @@ ck("pleasant (20)", weather.advice(snap(tmax=20.0)) in weather.ADVICE_PLEASANT, 
 ck("hot boundary (exactly 30)", weather.advice(snap(tmax=30.0)) in weather.ADVICE_HOT, True)
 ck("hot (34)", weather.advice(snap(tmax=34.0)) in weather.ADVICE_HOT, True)
 
-print("\n=== wet outranks BOTH temperature bands -- being rained on is what changes plans ===")
-for cond in ("SunnyRain", "PartlyCloudyRain", "CloudyRain"):
-    ck(f"{cond} on a hot day -> umbrella",
-       weather.advice(snap(condition=cond, tmax=34.0)) in weather.ADVICE_RAIN, True)
-    ck(f"{cond} on a cold day -> umbrella",
-       weather.advice(snap(condition=cond, tmax=5.0)) in weather.ADVICE_RAIN, True)
-ck("Thunderstorms -> storm advice, not rain advice",
-   weather.advice(snap(condition="Thunderstorms", tmax=34.0)) in weather.ADVICE_STORM, True)
+print("\n=== each WET condition has its OWN voice -- three different days, three different sentences ===")
+WET = {"SunnyRain": weather.ADVICE_SUNNY_RAIN,       # a sun-shower you walk through
+       "PartlyCloudyRain": weather.ADVICE_SHOWERS,   # dodgeable
+       "CloudyRain": weather.ADVICE_RAIN,            # wet start to finish
+       "Thunderstorms": weather.ADVICE_STORM}        # shelter, not an umbrella
+for cond, arr in WET.items():
+    ck(f"{cond} -> its own array", weather.advice(snap(condition=cond)) in arr, True)
+ck("the four wet arrays share no line",
+   len({s for a in WET.values() for s in a}), sum(len(a) for a in WET.values()))
+
+print("\n=== ...and wet outranks BOTH temperature bands -- being rained on is what changes plans ===")
+for cond, arr in WET.items():
+    ck(f"{cond} on a 34C day still says {cond}",
+       weather.advice(snap(condition=cond, tmax=34.0)) in arr, True)
+    ck(f"{cond} on a 5C day still says {cond}",
+       weather.advice(snap(condition=cond, tmax=5.0)) in arr, True)
+
+print("\n=== every one of the 7 CONDITIONS resolves to advice, so no forecast is ever speechless ===")
+for cond in weather.CONDITIONS:
+    got = weather.advice(snap(condition=cond, tmax=20.0))
+    ck(f"{cond} -> a sentence", bool(got) and got.strip().endswith((".", "!", "?")), True)
 
 print("\n=== the temperature band uses the UNROUNDED max ===")
 # 15.4 displays as "15" but must NOT be talked into the chilly band by the display rounding.
@@ -87,8 +106,7 @@ for maker in (lambda: weather.greeting("Ramesh", None, snapshot=None, clock=at(8
     got = maker()
     ck("advice omitted", got, got.strip())
     ck("no double space", "  " in got, False)
-    ck("still greets", got.lower().startswith(("good morning", "morning", "a very good", "well, good", "ah")),
-       True)
+    ck("still greets, and still names the time of day", "morning" in got.lower(), True)
 ck("advice(None) is empty", weather.advice(None), "")
 ck("advice({}) is empty", weather.advice({}), "")
 
@@ -121,18 +139,41 @@ g = weather.greeting("Ramesh", None, snapshot=snap(tmax=10.0), clock=at(8))
 ck("has the opener", "morning" in g.lower(), True)
 ck("has the advice", any(a in g for a in weather.ADVICE_CHILLY), True)
 
-print("\n=== every phrase array is populated and placeholder-correct ===")
-NAMED = (weather.MORNING_OPENERS, weather.AFTERNOON_OPENERS, weather.EVENING_OPENERS)
-NAMELESS = (weather.MORNING_OPENERS_UNKNOWN, weather.AFTERNOON_OPENERS_UNKNOWN,
-            weather.EVENING_OPENERS_UNKNOWN)
-ADVICE = (weather.ADVICE_CHILLY, weather.ADVICE_HOT, weather.ADVICE_PLEASANT,
-          weather.ADVICE_RAIN, weather.ADVICE_STORM)
-for arr in NAMED + NAMELESS + ADVICE:
-    ck(f"array of {len(arr)} has entries", len(arr) >= 8, True)
-ck("every named opener has a [Name]", all("[Name]" in s for a in NAMED for s in a), True)
-ck("no nameless opener has a [Name]", any("[Name]" in s for a in NAMELESS for s in a), False)
-ck("no advice line has a [Name]", any("[Name]" in s for a in ADVICE for s in a), False)
-ck("advice lines are sentences", all(s.strip().endswith((".", "!", "?")) for a in ADVICE for s in a), True)
+print("\n=== every phrase array is 50-strong, placeholder-correct and duplicate-free ===")
+# A hallway greeter says these to the same handful of people daily, so array SIZE is a product
+# requirement, not a style note -- 8 lines is heard out inside a fortnight.
+MIN = 50
+NAMED = {"MORNING_OPENERS": weather.MORNING_OPENERS,
+         "AFTERNOON_OPENERS": weather.AFTERNOON_OPENERS,
+         "EVENING_OPENERS": weather.EVENING_OPENERS}
+NAMELESS = {"MORNING_OPENERS_UNKNOWN": weather.MORNING_OPENERS_UNKNOWN,
+            "AFTERNOON_OPENERS_UNKNOWN": weather.AFTERNOON_OPENERS_UNKNOWN,
+            "EVENING_OPENERS_UNKNOWN": weather.EVENING_OPENERS_UNKNOWN}
+ADVICE = {"ADVICE_CHILLY": weather.ADVICE_CHILLY, "ADVICE_PLEASANT": weather.ADVICE_PLEASANT,
+          "ADVICE_HOT": weather.ADVICE_HOT, "ADVICE_SUNNY_RAIN": weather.ADVICE_SUNNY_RAIN,
+          "ADVICE_SHOWERS": weather.ADVICE_SHOWERS, "ADVICE_RAIN": weather.ADVICE_RAIN,
+          "ADVICE_STORM": weather.ADVICE_STORM}
+ALL = {**NAMED, **NAMELESS, **ADVICE}
+ck("there are 7 advice sets, one per weather type", len(ADVICE), 7)
+ck("every advice set is reachable from _ADVICE_BY_CONDITION or a temperature band",
+   set(map(id, weather._ADVICE_BY_CONDITION.values()))
+   | {id(weather.ADVICE_CHILLY), id(weather.ADVICE_PLEASANT), id(weather.ADVICE_HOT)},
+   set(map(id, ADVICE.values())))
+for name, arr in ALL.items():
+    ck(f"{name}: >= {MIN} lines", len(arr) >= MIN, True)
+    ck(f"{name}: no duplicates", len(set(arr)), len(arr))
+    ck(f"{name}: no blank lines", all(s.strip() for s in arr), True)
+ck("every named opener has a [Name]", all("[Name]" in s for a in NAMED.values() for s in a), True)
+ck("no nameless opener has a [Name]", any("[Name]" in s for a in NAMELESS.values() for s in a), False)
+ck("no advice line has a [Name]", any("[Name]" in s for a in ADVICE.values() for s in a), False)
+ck("advice lines are sentences",
+   all(s.strip().endswith((".", "!", "?")) for a in ADVICE.values() for s in a), True)
+ck("openers are sentences",
+   all(s.strip().endswith((".", "!", "?")) for a in {**NAMED, **NAMELESS}.values() for s in a), True)
+combos = len(weather.MORNING_OPENERS) * min(len(a) for a in ADVICE.values())
+print(f"      -> {sum(len(a) for a in ALL.values())} authored lines; "
+      f"{combos} distinct greetings per weather type per time band")
+ck("at least 2000 greetings per weather type per time band", combos >= 2000, True)
 
 print("\n=== summary_note(): exactly ONE sentence, and never a raise ===")
 

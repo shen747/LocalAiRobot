@@ -72,22 +72,49 @@ is pixel-identical between frames by construction. `ROBOT_FACE_FPS` remains the 
 
 ### Weather-aware greetings
 
-A greeting becomes a **time-of-day opener** plus **one** advice sentence:
+A greeting is a **time-of-day opener** plus **one** advice sentence. There are **seven advice sets, 50
+lines each**:
 
-| Today's forecast | What it says |
-|---|---|
-| Thunderstorms | *"Storms are forecast today, so maybe keep the outdoor plans flexible."* |
-| Any rain condition | *"There's rain in the forecast today, so do take an umbrella."* |
-| max ≤ `ROBOT_WEATHER_CHILLY_C` (15) | *"It's a very chilly day today, isn't it? Make sure to pack your jumper."* |
-| max ≥ `ROBOT_WEATHER_HOT_C` (30) | *"It's going to be a hot one today, so keep your water bottle handy."* |
-| anything else | *"It's looking like a lovely day out there."* |
-| **no usable forecast** | the opener alone — no padding, no delay |
+| Today's forecast | Set | Example |
+|---|---|---|
+| `Thunderstorms` | `ADVICE_STORM` | *"Storms are forecast today, so maybe keep the outdoor plans flexible."* |
+| `SunnyRain` (sun-shower) | `ADVICE_SUNNY_RAIN` | *"Sunshine and showers today — take the umbrella anyway."* |
+| `PartlyCloudyRain` (dodgeable) | `ADVICE_SHOWERS` | *"Passing showers today — you'll dodge most of them, but take a brolly."* |
+| `CloudyRain` (wet all day) | `ADVICE_RAIN` | *"Steady rain all day today. A raincoat, not just a brolly."* |
+| dry, max ≤ `ROBOT_WEATHER_CHILLY_C` (15) | `ADVICE_CHILLY` | *"It's a very chilly day today, isn't it? Make sure to pack your jumper."* |
+| dry, max ≥ `ROBOT_WEATHER_HOT_C` (30) | `ADVICE_HOT` | *"It's going to be a hot one today, so keep your water bottle handy."* |
+| dry, in between | `ADVICE_PLEASANT` | *"It's looking like a lovely day out there."* |
+| **no usable forecast** | — | the opener alone — no padding, no delay |
 
-Rain outranks both temperature bands, because being rained on is the thing a person would actually have
-changed their mind about. The band uses today's **max** — the "how should I dress" number — unrounded, so a
-15.4° day isn't talked into the chilly band by display rounding.
+**Why seven sets and not seven conditions.** The seven `CONDITIONS` are *icon* types, chosen for what a
+picture can show. Advice answers a different question — *what should I do about it?* — and the two don't
+line up. The three **dry** conditions are useless as advice on their own (*"it's cloudy"* tells nobody
+whether to wear a coat), so they split by **temperature** instead. The three **wet** ones genuinely are
+three different days, so they each keep their own voice. Storms stand alone, because the advice is shelter,
+not an umbrella.
+
+A wet condition always outranks temperature — being rained on is the thing a person would actually have
+changed their mind about. The temperature band uses today's **max**, the "how should I dress" number,
+**unrounded**, so a 15.4° day isn't talked into the chilly band by display rounding.
 
 Time bands are **5–11 morning, 12–16 afternoon, 17–4 evening**, in `ROBOT_WEATHER_TZ`.
+
+### How much variety
+
+| | Count |
+|---|---|
+| Openers | 50 × 3 time bands × (named / nameless) = **300** |
+| Advice | 50 × 7 sets = **350** |
+| **Authored lines** | **650** |
+| Distinct greetings, per weather type per time band | 50 × 50 = **2,500** |
+
+Array size is a product requirement, not a style note: a hallway greeter says these to the same handful of
+people every day, so a small array is heard out fast. `tests/test_weather_greeting.py` enforces the ≥50
+floor, rejects duplicates within a set, and checks no line leaks between the wet sets.
+
+To add your own, edit the arrays in [`brain/weather.py`](../brain/weather.py) — they follow the same
+convention as `concierge.py`'s greeting arrays (module-level list, one `random.choice` per use, `[Name]`
+substituted with the person's say-as respelling).
 
 `ROBOT_WEATHER_GREETING=0` turns just this surface off; the card and the spoken answer keep working.
 **Halloween Mode outranks it** — on Halloween the spooky greeting wins and no weather line is added.
