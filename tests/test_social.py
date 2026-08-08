@@ -242,6 +242,20 @@ ck("a nonsense flood is capped", len(social.parse_extraction(
 ck("quotes and trailing stops are cleaned",
    social.parse_extraction({"notes": [{"kind": "job", "text": '"drives a bus".'}]})[0][1], "drives a bus")
 
+print("\n=== a model call is only spent on a conversation that could teach something ===")
+# Cost gate: every extraction is a model call, billable under a remote text backend. A greeting followed
+# by "hello" cannot have taught us anything.
+ck("nothing said at all", social.worth_extracting([]), False)
+ck("None", social.worth_extracting(None), False)
+ck("one 'hello' only", social.worth_extracting([("user", "hello"), ("robot", "Hi!")]), False)
+ck("robot chatter alone doesn't count",
+   social.worth_extracting([("robot", "a"), ("robot", "b"), ("robot", "c")]), False)
+ck("blank user turns don't count",
+   social.worth_extracting([("user", "  "), ("user", ""), ("user", "\n")]), False)
+ck("a real exchange does",
+   social.worth_extracting([("user", "hello"), ("robot", "Hi!"), ("user", "i drive a bus")]), True)
+ck("junk turns don't raise", social.worth_extracting([(None, None), 42]), False)
+
 print("\n=== the transcript handed to the extractor is bounded at both ends ===")
 turns = [("user" if i % 2 == 0 else "robot", f"line {i}") for i in range(40)]
 t = social.format_transcript(turns)
@@ -253,6 +267,79 @@ ck("empty buffer -> empty string", social.format_transcript([]), "")
 ck("junk turns don't raise", isinstance(social.format_transcript([(None, None), ("user", "")]), str), True)
 long_turns = [("user", "x" * 3000)]
 ck("a huge turn is truncated", len(social.format_transcript(long_turns)) <= 1200, True)
+
+print("\n=== ROBOT_WEATHER_GREETING=0 still suppresses weather, now that social sits in front of it ===")
+# REGRESSION. That key used to be checked at the call site, on the branch social now takes first -- so
+# turning weather greetings off left the weather line showing up inside social greetings instead. The call
+# site fixes it by WITHHOLDING the snapshot, which is why this is testable here: social composes its
+# follow-on from what it is given, so no snapshot means no weather clause and nothing else changes.
+FIRST_LEN = len(social.OPENERS_FIRST)
+with_snap = [social.greeting(f"P{i}", None, snapshot=SNAP, last_seen=None, notes=[])
+             for i in range(FIRST_LEN)]
+without = [social.greeting(f"P{i}", None, snapshot=None, last_seen=None, notes=[])
+           for i in range(FIRST_LEN)]
+ck("a snapshot yields weather advice",
+   all(any(a in g for a in weather.ADVICE_RAIN) for g in with_snap), True)
+ck("no snapshot yields none at all",
+   any(any(a in g for a in weather.ADVICE_RAIN) for g in without), False)
+ck("...and the opener still comes through",
+   all(g.replace(f"P{i}", "[Name]") in social.OPENERS_FIRST for i, g in enumerate(without)), True)
+# The plan callback must survive the withheld snapshot -- it is not weather, and turning weather greetings
+# off should not cost you "how was school?".
+plan = [("plan", "school", NOW - 6 * 3600)]
+ck("the plan callback is unaffected",
+   "school" in social.greeting("P", None, snapshot=None, last_seen=(days_ago(1), True), notes=plan), True)
+
+print("\n=== the extractor's generation guard: keep this chat's result, drop a superseded one ===")
+# REGRESSION. `gen` used to be bumped when a conversation ENDED, which is the same moment the extractor
+# was spawned -- so its own guard rejected its own result every single time. The feature ran, made its
+# model call, and threw the answer away, silently and forever. `gen` marks a conversation STARTING.
+import threading
+
+
+class Flow:
+    """main.py's present_person lifecycle, reduced to the parts the guard depends on."""
+
+    def __init__(self):
+        self.pp = {"name": "", "gen": 0, "turns": []}
+        self.stored = []
+
+    def greet(self, name):                       # a by-name greeting starts a conversation
+        self.pp.update(name=name, turns=[], gen=self.pp["gen"] + 1)
+
+    def finish(self):                            # conversation over: spawn, then forget the person
+        gen, name = self.pp["gen"], self.pp["name"]
+        self.pp.update(name="", turns=[])        # NOTE: does not touch gen
+        return gen, name
+
+    def extract(self, gen, name):                # what the daemon thread does when the model returns
+        if self.pp["gen"] != gen:
+            return False
+        self.stored.append(name)
+        return True
+
+
+f = Flow()
+f.greet("Ramesh")
+f.pp["turns"].append(("user", "hello"))
+g, n = f.finish()
+ck("a normal conversation's result IS stored", f.extract(g, n), True)
+ck("...under the right name", f.stored, ["Ramesh"])
+
+f2 = Flow()
+f2.greet("Ramesh")
+g, n = f2.finish()
+f2.greet("Shanika")                              # a new visitor arrives while the model is still thinking
+ck("a superseded extraction is dropped", f2.extract(g, n), False)
+ck("...and nothing was filed under the wrong person", f2.stored, [])
+
+f3 = Flow()
+f3.greet("Ramesh")
+g1, n1 = f3.finish()
+f3.greet("Ramesh")                               # the SAME person, back for a second chat
+ck("even the same person's later chat supersedes", f3.extract(g1, n1), False)
+g2, n2 = f3.finish()
+ck("...but that second chat stores normally", f3.extract(g2, n2), True)
 
 print("\n=== ZERO REGRESSION: with the flag off, the greeting is the weather one ===")
 # The call site branches on social.enabled(); with it off nothing here is reached, and the text must come

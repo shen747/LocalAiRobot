@@ -56,7 +56,10 @@ _CONDITION_WORDS = {
 }
 
 # Conditions that mean "you will get wet" -- they outrank the temperature bands in advice selection.
-_WET = ("SunnyRain", "PartlyCloudyRain", "CloudyRain")
+# PUBLIC: brain/social.py composes job-aware advice off the same distinction, and a module reaching into
+# another's underscore names is a rename away from breaking silently.
+WET_CONDITIONS = ("SunnyRain", "PartlyCloudyRain", "CloudyRain")
+_WET = WET_CONDITIONS          # legacy alias, used inside this module
 
 DEFAULT_TZ = "Australia/Melbourne"
 
@@ -114,8 +117,11 @@ def greeting_enabled():
 _tz_warned = [False]
 
 
-def _tzinfo(tz=None):
-    """ZoneInfo for the configured zone, or None to mean 'use naive local time'. Warns ONCE."""
+def tzinfo(tz=None):
+    """ZoneInfo for the configured zone, or None to mean 'use naive local time'. Warns ONCE.
+
+    PUBLIC because brain/social.py buckets sightings on CALENDAR DAYS in this same zone -- one clock for
+    "is it morning?" and "was that today?" or the two features disagree about when a day starts."""
     name = (tz or _env("ROBOT_WEATHER_TZ") or DEFAULT_TZ)
     try:
         from zoneinfo import ZoneInfo
@@ -126,6 +132,9 @@ def _tzinfo(tz=None):
             log.warning("weather: timezone %r unusable (%s) -- falling back to this machine's local clock, "
                         "so greetings and the day rollover follow the system timezone instead", name, e)
         return None
+
+
+_tzinfo = tzinfo               # legacy alias, used inside this module
 
 
 def _now_local(tz=None):

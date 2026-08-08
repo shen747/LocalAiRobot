@@ -77,7 +77,7 @@ def bucket(last_seen_ts, now_ts=None, tz=None):
     if not last_seen_ts:
         return FIRST
     try:
-        zone = weather._tzinfo(tz)
+        zone = weather.tzinfo(tz)
         now_dt = datetime.fromtimestamp(now_ts if now_ts else time.time(), zone)
         then_dt = datetime.fromtimestamp(float(last_seen_ts), zone)
         days = (now_dt.date() - then_dt.date()).days
@@ -97,7 +97,7 @@ def end_of_day_ts(now_ts=None, tz=None):
     A plan is about TODAY. Expiring it at the day boundary is what stops "how was school?" surfacing on a
     Sunday in July because somebody mentioned school once in March."""
     try:
-        zone = weather._tzinfo(tz)
+        zone = weather.tzinfo(tz)
         now_dt = datetime.fromtimestamp(now_ts if now_ts else time.time(), zone)
         midnight = datetime.combine(now_dt.date() + timedelta(days=1),
                                     datetime.min.time(), tzinfo=zone)
@@ -292,7 +292,7 @@ def _weather_band(snapshot):
     try:
         day = snapshot["days"][0]
         cond = day.get("condition")
-        if cond == "Thunderstorms" or cond in weather._WET:
+        if cond == "Thunderstorms" or cond in weather.WET_CONDITIONS:
             return "wet"
         tmax = float(day["tmax"])
         if tmax >= _envf("ROBOT_WEATHER_HOT_C", 30):
@@ -434,6 +434,21 @@ EXTRACT_PROMPT = (
 )
 
 _MAX_TEXT_WORDS = 8
+
+# How many things the PERSON must have said before a conversation is worth extracting from. A single
+# "hello Jarvis" cannot teach anything, but it would still cost a full model call -- and under a remote
+# text backend that call is billable, per greeting, forever. Two is the floor at which somebody has
+# actually told us something.
+MIN_USER_TURNS_TO_LEARN = 2
+
+
+def worth_extracting(turns):
+    """True when a conversation contained enough of the person's own words to be worth a model call."""
+    try:
+        return sum(1 for role, text in (turns or []) if role == "user" and str(text or "").strip()) \
+            >= MIN_USER_TURNS_TO_LEARN
+    except Exception:
+        return False
 
 
 def parse_extraction(obj, kinds=None):

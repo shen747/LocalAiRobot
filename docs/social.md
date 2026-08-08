@@ -9,8 +9,11 @@ asked how it went. A job learned in an earlier chat composes with today's foreca
 and every prompt exactly as it was before this feature existed.
 
 > **Two things to know before leaving it on.**
-> 1. **One extra model call per conversation** with a *recognised* person, at the end, on a daemon thread.
->    Under `ROBOT_AI_BACKEND=mixed` that call goes to Gemini, so it is billable. Nothing waits on it.
+> 1. **One extra model call** at the end of a conversation where the person actually said something
+>    (two turns or more — a greeting plus "hello" is skipped, so a passer-by costs nothing). It runs on a
+>    daemon thread; nothing waits on it. **It routes exactly like conversation does**: `gemini` or `mixed`
+>    *with* a `ROBOT_GEMINI_API_KEY` go remote and are billable; **no key, or `local`, stays on the local
+>    model.** Under `mixed`, a remote failure falls back to local rather than losing the chat.
 > 2. **It remembers what people tell you** — their job, today's plans — as short notes in the local RAG db.
 >    Nothing leaves the robot except that one extraction prompt. [Reading and deleting](#inspecting-and-forgetting)
 >    what it has learned is two `sqlite3` commands.
@@ -83,7 +86,8 @@ cannot occur by construction. Both are capped by the existing prune pass.
 
 ### Learning
 
-At conversation end, the in-RAM transcript goes to one model call that returns JSON:
+At conversation end — and only if the person said something in **two or more turns**, so a greeting plus
+*"hello"* never costs a call — the in-RAM transcript goes to one model call that returns JSON:
 
 ```json
 {"notes": [{"kind": "job", "text": "drives a bus", "transient": false},
@@ -113,10 +117,10 @@ is a bigger behavioural step than remembering.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `ROBOT_SOCIAL_MEMORY` | `0` | Master switch. Off = today's behaviour, byte for byte. |
+| `ROBOT_SOCIAL_MEMORY` | `1` | Master switch. `0` = the behaviour before this feature existed, byte for byte. |
 | `ROBOT_SOCIAL_LONG_GAP_D` | `14` | Days before the *"it's been a while!"* opener. |
 | `ROBOT_SOCIAL_PLAN_MIN_AGE_S` | `7200` | How long a plan must sit before it's asked about. Someone who said *"I'm off to school"* 90 seconds ago hasn't been yet. |
-| `ROBOT_SOCIAL_CURIOSITY` | `0` | The ask-their-job loop. |
+| `ROBOT_SOCIAL_CURIOSITY` | `1` | The ask-their-job loop. Its own key because it makes the robot **initiate**. |
 | `ROBOT_SOCIAL_CURIOSITY_AFTER` | `3` | Exchanges to wait first. `1` would make it an interview. |
 | `ROBOT_SOCIAL_CURIOSITY_COOLDOWN_D` | `30` | Days before re-asking an unanswered question. |
 | `ROBOT_MEMORY_RETAIN_SIGHTINGS` | `2000` | Count-based, swept by the existing prune. |

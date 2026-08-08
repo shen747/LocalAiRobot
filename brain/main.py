@@ -932,8 +932,14 @@ def main():
     present_person = {"name": "", "gen": 0, "turns": [], "exchanges": 0, "asked": False, "notes": []}
 
     def _social_reset():
+        """Forget who we were talking to. Deliberately does NOT touch `gen`.
+
+        `gen` marks a conversation STARTING, not ending. It used to be bumped here, which meant
+        _social_finish -- spawn the extractor with gen=N, then reset to N+1 -- guaranteed the extractor's
+        own guard rejected its result every single time: the feature ran, made its model call, and threw
+        the answer away, silently and forever. The guard exists to stop a SLOW extraction being filed under
+        the NEXT visitor, so the only thing that may invalidate it is a new person being greeted."""
         present_person.update(name="", turns=[], exchanges=0, asked=False, notes=[], last_seen=None)
-        present_person["gen"] += 1
 
     def _social_curiosity_after():
         """Exchanges to wait before the curiosity nudge. Not on the first turn: asking someone what they do
@@ -1172,7 +1178,27 @@ def main():
         try:
             payload = {"model": cfg["model"], "format": "json", "stream": False,
                        "prompt": social.EXTRACT_PROMPT.format(name=name, transcript=transcript)}
-            obj = inference.ollama_generate(cfg, payload, _as_int(cfg.get("llm_timeout_s"), 60))
+            # ROUTED LIKE EVERY OTHER TEXT CALL, and explicitly rather than by accident. Passing the raw
+            # cfg to ollama_generate would compare ai_backend against the literal "gemini", so a 'mixed'
+            # rig silently always went local -- right answer, wrong reason, and it would have flipped the
+            # day someone set ROBOT_AI_BACKEND=gemini. inference.text_backend() is the one place that
+            # knows the product rule: gemini AND mixed go remote WHEN a key is present, everything else
+            # stays on the local model. No key -> local, exactly like conversation.
+            #
+            # This is background enrichment on a daemon thread, so unlike a turn it has no deadline worth
+            # defending: under 'mixed' a remote failure just falls through to the local model, and if that
+            # fails too the chat simply taught us nothing.
+            if inference.text_backend(cfg) == "gemini":
+                try:
+                    obj = inference.ollama_generate({**cfg, "ai_backend": "gemini"}, payload,
+                                                    _llm_timeout())
+                except Exception as e:
+                    if (cfg.get("ai_backend") or "").strip().lower() != "mixed":
+                        raise
+                    log.debug("social: remote extraction unavailable (%s) -> local model", e)
+                    obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload, _llm_timeout())
+            else:
+                obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload, _llm_timeout())
             rows = social.parse_extraction(obj)
             if present_person["gen"] != gen:
                 log.debug("social: extraction finished after the conversation moved on -- discarding")
@@ -1191,7 +1217,12 @@ def main():
     def _social_finish():
         """Called once at conversation end: hand the transcript to the extractor, then forget the person."""
         try:
-            if social.enabled() and present_person.get("name") and present_person.get("turns"):
+            # The turn floor is a COST gate, not a quality one: every extraction is a model call, and under
+            # a remote text backend it is billable. A visitor who was greeted and said "hello" once cannot
+            # have taught us anything, so paying for that call every single time somebody walks past is
+            # pure waste. See social.worth_extracting.
+            if (social.enabled() and present_person.get("name")
+                    and social.worth_extracting(present_person.get("turns"))):
                 transcript = social.format_transcript(present_person["turns"])
                 if transcript:
                     threading.Thread(target=_social_extract,
@@ -1617,14 +1648,23 @@ def main():
         greet path is synchronous (say() blocks through Piper + aplay), so it must never wait on weather,
         and a half-built weather sentence is worse than none. Text only -- the faces are unchanged, because
         the forecast card belongs on the sleep screen and nowhere else."""
-        snap = weather_svc.get() if weather_svc is not None else None
+        # ROBOT_WEATHER_GREETING=0 has to keep meaning "no weather in my greetings" now that Social Memory
+        # sits IN FRONT of the weather branch. Withholding the snapshot is how: social composes its own
+        # follow-on clause from whatever it is given, so a None snapshot removes the weather line (and the
+        # job-aware variant of it) while leaving the sighting openers and the plan callback untouched.
+        # Reading the flag once here also keeps the two branches below telling the same story.
+        want_weather = weather_svc is not None and weather.greeting_enabled()
+        snap = weather_svc.get() if want_weather else None
         if name and social.enabled():
             try:
                 last_seen = mem.last_sighting(name)          # BEFORE recording -- see the docstring
                 notes = mem.notes_for(name)
                 mem.record_sighting(name, score, greeted=True)
+                # Bump gen HERE, where a new conversation begins: any extraction still in flight from the
+                # previous one now belongs to a chat that is over and must not be filed under this person.
                 present_person.update(name=name, notes=notes, last_seen=last_seen,
-                                      turns=[], exchanges=0, asked=False)
+                                      turns=[], exchanges=0, asked=False,
+                                      gen=present_person["gen"] + 1)
                 if weather_svc is not None:
                     weather_svc.note_greeting(had_advice=snap is not None)
                 text = social.greeting(name, pron, snapshot=snap, last_seen=last_seen, notes=notes)
@@ -1636,7 +1676,7 @@ def main():
             except Exception as e:
                 # Social Memory exists to make the hello nicer. It must never be the reason there isn't one.
                 log.warning("social: greeting failed (%s) -- falling back to the plain greeting", e)
-        if weather_svc is not None and weather.greeting_enabled():
+        if want_weather:
             weather_svc.note_greeting(had_advice=snap is not None)
             return (weather.greeting(name, pron, snapshot=snap) if name
                     else weather.greeting_unknown(snapshot=snap))
