@@ -57,11 +57,12 @@ default.** No LLM on the greet path — the one model call is a post-conversatio
 thread. Two new capped tables; the RAG's `facts` table is untouched. Full flow, and how to read or delete
 what it has learned: [docs/social.md](../docs/social.md).
 
-> **Two consequences of leaving it on.** Each conversation with a *recognised* person costs **one extra
-> model call** at the end — under `ROBOT_AI_BACKEND=mixed` that goes to Gemini, so it is billable. And it
-> stores short notes about what people tell you (job, today's plans) in the local RAG db. Nothing leaves
-> the robot except that one extraction prompt. `ROBOT_SOCIAL_MEMORY=0` restores the previous behaviour
-> byte for byte.
+> **Two consequences of leaving it on.** A conversation where the person actually said something (2+ turns
+> — a greeting plus *"hello"* is skipped) costs **one extra model call** at the end, **routed exactly like
+> conversation is**: `gemini`/`mixed` *with* a `ROBOT_GEMINI_API_KEY` go remote and are billable; **no key,
+> or `local`, stays on the local model.** And it stores short notes about what people tell you (job,
+> today's plans) in the local RAG db — inspect or delete them with `./scripts/rag.sh --notes <name>` /
+> `--forget-notes <name>`. `ROBOT_SOCIAL_MEMORY=0` restores the previous behaviour byte for byte.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -71,6 +72,7 @@ what it has learned: [docs/social.md](../docs/social.md).
 | `ROBOT_SOCIAL_CURIOSITY` | `1` | After a few exchanges with someone whose job it doesn't know, nudge the model to ask — in its own words, not a canned interjection. Its own key because it makes the robot **initiate** rather than respond. |
 | `ROBOT_SOCIAL_CURIOSITY_AFTER` | `3` | Exchanges to wait first. `1` would make it an interview. |
 | `ROBOT_SOCIAL_CURIOSITY_COOLDOWN_D` | `30` | Days before re-asking. The marker is written whether or not they answer. |
+| `ROBOT_SOCIAL_EXTRACT_TIMEOUT_S` | `25` | Per-attempt cap (s) on the learning call. Far below `ROBOT_LLM_TIMEOUT_S` because the extractor holds the same model lock a live turn needs — a slow extraction is worth abandoning. Floored at 5, never above the global LLM budget. |
 | `ROBOT_MEMORY_RETAIN_SIGHTINGS` | `2000` | Sighting rows kept (count-based, existing prune pass). |
 | `ROBOT_MEMORY_RETAIN_NOTES` | `50` | Stable notes **per person** — one chatty visitor can't evict everyone else's. |
 

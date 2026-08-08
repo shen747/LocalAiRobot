@@ -941,14 +941,6 @@ def main():
         the NEXT visitor, so the only thing that may invalidate it is a new person being greeted."""
         present_person.update(name="", turns=[], exchanges=0, asked=False, notes=[], last_seen=None)
 
-    def _social_curiosity_after():
-        """Exchanges to wait before the curiosity nudge. Not on the first turn: asking someone what they do
-        for a living before they have said two sentences is an interview, not a conversation."""
-        try:
-            return max(1, int(float(os.environ.get("ROBOT_SOCIAL_CURIOSITY_AFTER", "") or 3)))
-        except (TypeError, ValueError):
-            return 3
-
     def _person_check_enabled():
         v = os.environ.get("ROBOT_WAKE_PERSON_CHECK", "auto").strip().lower()
         if v in ("0", "off", "no", "false"):
@@ -1069,7 +1061,13 @@ def main():
                        "dropped_stale": 0, "discarded_chat": 0}
     # Social Memory telemetry, same monotonic-counter discipline. Two numbers are enough to answer the only
     # questions a soak asks: is it actually using the history, and is it actually learning anything?
+    # LOCKED, unlike concierge_stats: `learned` is incremented from the social-extract DAEMON THREADS, and
+    # two chats ending close together can interleave a non-atomic `+=` and lose a count. `greetings` is
+    # main-thread-only and would be safe bare -- it takes the lock anyway so nobody has to remember which
+    # is which. The summary loop READS without the lock: single int reads, and the delta-vs-base pattern
+    # simply attributes a late count to the next hour.
     social_stats = {"greetings": 0, "learned": 0}
+    social_stats_lock = threading.Lock()
 
     def _concierge_summary_loop(period_s):
         # MONOTONIC counters + deltas, never copy-then-zero. The old code snapshotted the dict and then
@@ -1166,6 +1164,11 @@ def main():
             log.info("concierge: kept the deciding frame -> %s", path)
         return path
 
+    def _extract_timeout():
+        """Per-attempt budget for the learning call: the social cap, but never MORE than the global LLM
+        budget (lowering ROBOT_LLM_TIMEOUT_S must not be silently overridden by a background task)."""
+        return min(social.extract_timeout_s(), _llm_timeout())
+
     def _social_extract(gen, name, transcript):
         """Learn from a finished conversation. Daemon thread, post-conversation, never inside a turn.
 
@@ -1191,14 +1194,15 @@ def main():
             if inference.text_backend(cfg) == "gemini":
                 try:
                     obj = inference.ollama_generate({**cfg, "ai_backend": "gemini"}, payload,
-                                                    _llm_timeout())
+                                                    _extract_timeout())
                 except Exception as e:
                     if (cfg.get("ai_backend") or "").strip().lower() != "mixed":
                         raise
                     log.debug("social: remote extraction unavailable (%s) -> local model", e)
-                    obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload, _llm_timeout())
+                    obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload,
+                                                    _extract_timeout())
             else:
-                obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload, _llm_timeout())
+                obj = inference.ollama_generate({**cfg, "ai_backend": "local"}, payload, _extract_timeout())
             rows = social.parse_extraction(obj)
             if present_person["gen"] != gen:
                 log.debug("social: extraction finished after the conversation moved on -- discarding")
@@ -1207,7 +1211,8 @@ def main():
                 mem.remember_note(name, kind, text,
                                   expires_ts=social.end_of_day_ts() if transient else None)
             if rows:
-                social_stats["learned"] += len(rows)
+                with social_stats_lock:
+                    social_stats["learned"] += len(rows)
                 log.info("social: learned %s about %r", ", ".join(f"{k}={t!r}" for k, t, _ in rows), name)
             else:
                 log.debug("social: nothing worth remembering from that conversation with %r", name)
@@ -1289,7 +1294,7 @@ def main():
                     # marker is written whether or not they answer, so nobody is interrogated monthly.
                     present_person["exchanges"] += 1
                     if (social.curiosity_enabled() and not present_person["asked"]
-                            and present_person["exchanges"] >= _social_curiosity_after()
+                            and present_person["exchanges"] >= social.curiosity_after()
                             and social.curiosity_due(present_person.get("notes"))):
                         present_person["asked"] = True
                         ctx = (social.curiosity_directive(present_person["name"]) + " " + ctx).strip()
@@ -1668,7 +1673,8 @@ def main():
                 if weather_svc is not None:
                     weather_svc.note_greeting(had_advice=snap is not None)
                 text = social.greeting(name, pron, snapshot=snap, last_seen=last_seen, notes=notes)
-                social_stats["greetings"] += 1
+                with social_stats_lock:
+                    social_stats["greetings"] += 1
                 log.info("social: greeting %r as a %r sighting%s", name,
                          social.bucket(last_seen[0] if last_seen else None),
                          f" ({len(notes)} note(s) known)" if notes else "")

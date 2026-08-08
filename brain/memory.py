@@ -498,17 +498,6 @@ class Memory:
             log.warning("memory: last_sighting failed (%s)", e)
             return None
 
-    def sightings_since(self, name, ts):
-        """How many times `name` has been seen since `ts` (unix epoch). 0 on any error."""
-        try:
-            with self._lock:
-                row = self._db.execute("SELECT COUNT(*) FROM sightings WHERE name=? AND ts>=?",
-                                       ((name or "").strip(), float(ts))).fetchone()
-            return int(row[0]) if row else 0
-        except Exception as e:
-            log.warning("memory: sightings_since failed (%s)", e)
-            return 0
-
     def remember_note(self, name, kind, text, expires_ts=None, replace=True):
         """Store something a person told us. `replace` (the default for stable kinds) drops that person's
         previous rows of the same kind first, so a job note is a CURRENT fact rather than a pile of

@@ -44,6 +44,7 @@ __pycache__/
 # they showed up in every `git status` forever without ever being committed.
 /PLAN.md
 /REVIEW.md
+/CODE_REVIEW.md
 
 # macOS Finder droppings. Harmless, invisible on Linux, and a nuisance in every diff if one ever lands.
 .DS_Store

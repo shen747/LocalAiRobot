@@ -64,6 +64,32 @@ def curiosity_enabled():
     return _env("ROBOT_SOCIAL_CURIOSITY", "1").lower() in _TRUE
 
 
+def curiosity_after():
+    """Exchanges to wait before the curiosity nudge (ROBOT_SOCIAL_CURIOSITY_AFTER, default 3).
+
+    Floor of 1: asking someone what they do for a living before they have said a word is an interview, not
+    a conversation."""
+    try:
+        return max(1, int(float(os.environ.get("ROBOT_SOCIAL_CURIOSITY_AFTER", "") or 3)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def extract_timeout_s():
+    """Per-attempt budget for the post-conversation extraction call (ROBOT_SOCIAL_EXTRACT_TIMEOUT_S).
+
+    Deliberately much smaller than ROBOT_LLM_TIMEOUT_S (120s). Extraction is background enrichment, but it
+    holds the SAME inference.model_lock a live turn needs -- and under ai_backend=mixed a failed remote
+    attempt is followed by a local one, so at the full LLM budget the pathological case pins that lock for
+    minutes. During it, a visitor who starts talking gets their thinking earcon and nothing else. Learning
+    is never worth that: a slow extraction is worth abandoning, because the cost of losing it is one chat's
+    worth of notes."""
+    try:
+        return max(5.0, float(os.environ.get("ROBOT_SOCIAL_EXTRACT_TIMEOUT_S", "") or 25))
+    except (TypeError, ValueError):
+        return 25.0
+
+
 # --- time bucketing --------------------------------------------------------------------------------------
 # Buckets are computed on CALENDAR DAYS in the configured timezone, not on elapsed hours. "Earlier today"
 # has to mean today: seen at 23:00 and again at 00:30 is a new day and a different greeting, even though
@@ -73,7 +99,13 @@ FIRST, TODAY, YESTERDAY, THIS_WEEK, LONG_GAP = "first", "today", "yesterday", "w
 
 
 def bucket(last_seen_ts, now_ts=None, tz=None):
-    """Classify the gap since a previous sighting. `last_seen_ts` is a unix epoch, or None for never."""
+    """Classify the gap since a previous sighting. `last_seen_ts` is a unix epoch, or None for never.
+
+    ON ERROR this returns THIS_WEEK, not FIRST. A corrupt timestamp or a timezone failure would otherwise
+    greet a daily regular with "lovely to finally meet you properly" -- wrong for everyone in the house.
+    "Good to see you again" is the safe wrong answer: it reads correctly for any actual history, and it is
+    only mildly odd for a genuine first-timer. The `return FIRST` above is the real never-seen case and is
+    unaffected."""
     if not last_seen_ts:
         return FIRST
     try:
@@ -87,8 +119,8 @@ def bucket(last_seen_ts, now_ts=None, tz=None):
             return YESTERDAY
         return LONG_GAP if days >= max(1.0, _envf("ROBOT_SOCIAL_LONG_GAP_D", 14)) else THIS_WEEK
     except Exception as e:
-        log.debug("social: bucket failed (%s)", e)
-        return FIRST
+        log.debug("social: bucket failed (%s) -- treating as THIS_WEEK", e)
+        return THIS_WEEK
 
 
 def end_of_day_ts(now_ts=None, tz=None):
@@ -108,22 +140,30 @@ def end_of_day_ts(now_ts=None, tz=None):
 
 
 # --- Array 1: first-ever sighting ([Name]) ---
+# NOTHING HERE MAY CLAIM A LONG WAIT. The sightings table starts empty on the day this feature ships, so
+# the first person through the door is someone the robot has been greeting by name for weeks -- and
+# "lovely to FINALLY meet you", "at last", "I don't think we've met before" are all flatly untrue to them.
+# Day one of the table is not day one of the household. Seeding fake history was considered and rejected
+# (inventing data to make a greeting land is exactly the sort of thing this module must not do), so the
+# wording is simply honest about what it knows: this is the first time I have RECORDED seeing you.
 OPENERS_FIRST = [
-    "Well -- [Name]! Lovely to finally meet you properly.",
-    "[Name]! Good to put a face to the name at last.",
-    "Ah, [Name] -- our first proper hello. Welcome!",
-    "Hello, [Name]! I don't think we've met before.",
-    "[Name]! Delighted to meet you.",
-    "Well hello, [Name] -- a new face. Welcome!",
-    "Ah, so you're [Name]. Lovely to meet you.",
-    "[Name]! Nice to meet you at last.",
-    "Hello there, [Name] -- first time I've seen you. Welcome!",
-    "Well, [Name]! Pleased to meet you properly.",
-    "[Name] -- lovely to meet you. Do make yourself at home.",
-    "Ah, [Name]! A new face around here. Hello!",
-    "Hello, [Name]! I've been looking forward to this.",
-    "[Name]! Good to meet you finally.",
+    "Well -- [Name]! Lovely to greet you properly.",
+    "[Name]! Good to put a face to the name.",
+    "Ah, [Name] -- hello! Lovely to see you.",
+    "Hello, [Name]! Good to see you.",
+    "[Name]! Delighted to see you.",
+    "Well hello, [Name] -- welcome!",
+    "Ah, [Name]. Lovely to see you.",
+    "[Name]! Nice to see you.",
+    "Hello there, [Name] -- welcome!",
+    "Well, [Name]! Pleased to see you.",
+    "[Name] -- lovely to see you. Do make yourself at home.",
+    "Ah, [Name]! Hello there.",
+    "Hello, [Name]! Very good to see you.",
+    "[Name]! Good to see you properly.",
     "Well met, [Name] -- welcome!",
+    "[Name]! A pleasure, as always.",
+    "Hello, [Name] -- lovely to have you here.",
 ]
 
 # --- Array 2: seen earlier the SAME day ([Name]) ---
@@ -210,15 +250,10 @@ _OPENERS = {
     LONG_GAP: OPENERS_LONG_GAP,
 }
 
-# Buckets whose opener ALREADY ends in a question. They must not also get a plan callback or weather advice
-# -- two questions in one greeting is an interrogation, and the composition rule is one follow-on at most.
-_ASKS_ALREADY = {TODAY}
-
 # --- Array 6: asking how a stated plan went ({plan} = a short noun phrase from the extractor) ---
 PLAN_CALLBACKS = [
     "How was {plan}?",
     "How did {plan} go?",
-    "How was your {plan}, then?",
     "So -- how was {plan}?",
     "Tell me, how did {plan} go?",
     "How did you get on at {plan}?",
@@ -364,7 +399,14 @@ def greeting(name, pronunciation=None, snapshot=None, last_seen=None, notes=None
     try:
         b = bucket(last_seen[0] if last_seen else None, now_ts=now_ts, tz=tz)
         line = random.choice(_OPENERS[b]).replace("[Name]", spoken)
-        if b in _ASKS_ALREADY:
+        # ASK THE LINE, NOT THE BUCKET. This used to be a set of buckets assumed to end in a question,
+        # which was only ever an approximation of the string itself: the yesterday / this-week / long-gap
+        # pools also contain "How are you?" and "How have you been?", and those greetings then appended a
+        # plan callback or weather advice on top -- "Long time no see. How have you been? There's rain in
+        # the forecast today, so do take an umbrella." Two questions and a weather report is the checklist
+        # shape the composition rule at the top of this file exists to forbid. Testing the chosen line
+        # stays correct when somebody edits a pool, which a bucket set does not.
+        if line.rstrip().endswith("?"):
             return line
         tail = _plan_callback(notes, now_ts=now_ts, tz=tz)
         if not tail:

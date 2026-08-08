@@ -157,20 +157,35 @@ sed -i 's|^ROBOT_SOCIAL_MEMORY=.*|ROBOT_SOCIAL_MEMORY=0|' config/robot.env      
 
 ## Inspecting and forgetting
 
-Everything it has learned is two queries away:
+Everything it has learned is one command away — these are things the robot will say **out loud to the
+person they are about**, so they need to be easy to read and easy to delete:
+
+| Command | Shows |
+|---|---|
+| `./scripts/rag.sh --sightings Ramesh` | When it last saw them (newest 10): time, match score, whether it greeted |
+| `./scripts/rag.sh --notes Ramesh` | What they've told it — job, likes, today's plans — with when each expires. **Expired rows are hidden**, because a plan from last Tuesday is not something it would still act on |
+| `./scripts/rag.sh --forget-notes Ramesh` | Deletes all of that person's notes |
+| `./scripts/rag.sh --forget-notes Ramesh job` | Deletes just one kind (`job`, `like`, `note`, `plan`, `curiosity`) |
+
+Got something wrong? `--forget-notes <name> job` and it re-learns from the next conversation.
+
+<details>
+<summary>The raw SQL, for everyone at once or for poking around</summary>
 
 ```bash
+# every note the robot holds, about everybody
 sqlite3 ~/.localairobot/memory.db \
   "SELECT name, kind, text, datetime(ts,'unixepoch','localtime') FROM person_notes ORDER BY ts DESC;"
+
+# who it has seen, and how often
 sqlite3 ~/.localairobot/memory.db \
   "SELECT name, COUNT(*), datetime(MAX(ts),'unixepoch','localtime') FROM sightings GROUP BY name;"
-```
 
-Forget something it got wrong:
-
-```bash
+# wipe one person's job note
 sqlite3 ~/.localairobot/memory.db "DELETE FROM person_notes WHERE name='Ramesh' AND kind='job';"
 ```
+
+</details>
 
 ## What degrades, and to what
 

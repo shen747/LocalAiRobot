@@ -5,6 +5,7 @@ prove the feature is invisible when off and degrades to today's behaviour at eve
 against a real SQLite Memory in a temp dir -- the schema is part of what's under test -- but no camera,
 no network and no LLM.
 """
+import contextlib
 import os
 import sys
 import tempfile
@@ -38,6 +39,33 @@ def days_ago(d, h=0):
     return NOW - d * 86400 - h * 3600
 
 
+@contextlib.contextmanager
+def plain_opener(b):
+    """Force a NON-question opener for bucket `b` for the duration of the block.
+
+    Any test that asserts a follow-on clause IS present has to do this. The follow-on is deliberately
+    suppressed after an opener that already asks something, and most pools contain one or two such lines
+    ("Hello again, [Name]! How are you?") -- so leaving it to random.choice makes the test fail roughly one
+    run in fifteen. That flakiness is not a hint of a real bug; it is the composition rule working."""
+    saved = social._OPENERS[b]
+    social._OPENERS[b] = [o for o in saved if not o.rstrip().endswith("?")][:1] or saved
+    try:
+        yield
+    finally:
+        social._OPENERS[b] = saved
+
+
+@contextlib.contextmanager
+def asking_opener(b):
+    """The mirror of plain_opener: force an opener that DOES end in a question."""
+    saved = social._OPENERS[b]
+    social._OPENERS[b] = [o for o in saved if o.rstrip().endswith("?")][:1] or saved
+    try:
+        yield
+    finally:
+        social._OPENERS[b] = saved
+
+
 SNAP = {"days": [{"date": "2026-08-08", "condition": "CloudyRain", "tmax": 14.0, "tmin": 8.0},
                  {"date": "2026-08-09", "condition": "Sunny", "tmax": 20.0, "tmin": 9.0},
                  {"date": "2026-08-10", "condition": "Sunny", "tmax": 21.0, "tmin": 10.0}]}
@@ -60,7 +88,7 @@ ck("...and back on", social.enabled(), True)
 print("\n=== sighting buckets are CALENDAR days, not elapsed hours ===")
 # 23:00 -> 00:30 is 90 minutes but a NEW day; 08:00 -> 20:00 is 12 hours and the SAME day. Bucketing on
 # elapsed time gets both backwards, which is why this is done on dates in the configured zone.
-zone = weather._tzinfo(None)
+zone = weather.tzinfo(None)
 today_8am = datetime.fromtimestamp(NOW, zone).replace(hour=8, minute=0, second=0).timestamp()
 today_8pm = datetime.fromtimestamp(NOW, zone).replace(hour=20, minute=0, second=0).timestamp()
 ck("never seen -> first", social.bucket(None), social.FIRST)
@@ -76,6 +104,29 @@ os.environ["ROBOT_SOCIAL_LONG_GAP_D"] = "3"
 ck("the long-gap threshold is configurable", social.bucket(days_ago(4)), social.LONG_GAP)
 del os.environ["ROBOT_SOCIAL_LONG_GAP_D"]
 
+print("\n=== a bucketing FAILURE reads as 'good to see you again', not as a stranger ===")
+# The except branch used to return FIRST, so a corrupt timestamp or a TZ failure greeted a daily regular
+# with "lovely to finally meet you properly". THIS_WEEK is the safe wrong answer: correct for any real
+# history, and only mildly odd for a genuine first-timer.
+for junk in ("not-a-timestamp", object(), "2026-08-08", [1], {"ts": 1}):
+    ck(f"bucket({junk!r:.22}) -> this week", social.bucket(junk), social.THIS_WEEK)
+# FALSY inputs are not corruption -- they mean "no sighting", which is genuinely FIRST.
+for empty in (None, 0, "", [], {}):
+    ck(f"bucket({empty!r}) -> first (no history, not an error)", social.bucket(empty), social.FIRST)
+
+print("\n=== first-sighting openers must not claim a long wait ===")
+# The sightings table is empty on the day this ships, so the first person through the door is somebody the
+# robot has greeted by name for weeks. "Finally", "at last", "I don't think we've met" are untrue to them.
+ck("pool is at least 15 lines", len(social.OPENERS_FIRST) >= 15, True)
+ck("every line has a [Name]", all("[Name]" in s for s in social.OPENERS_FIRST), True)
+ck("no line claims a wait",
+   [s for s in social.OPENERS_FIRST
+    if any(w in s.lower() for w in ("finally", "at last", "met before", "looking forward",
+                                    "first time"))], [])
+ck("none ends in a question (they'd suppress the follow-on)",
+   [s for s in social.OPENERS_FIRST if s.rstrip().endswith("?")], [])
+ck("no duplicates", len(set(social.OPENERS_FIRST)), len(social.OPENERS_FIRST))
+
 print("\n=== every bucket produces a greeting, with the name substituted ===")
 for b, last in ((social.FIRST, None), (social.TODAY, (days_ago(0, 6), True)),
                 (social.YESTERDAY, (days_ago(1), True)), (social.THIS_WEEK, (days_ago(4), True)),
@@ -86,40 +137,88 @@ for b, last in ((social.FIRST, None), (social.TODAY, (days_ago(0, 6), True)),
     ck(f"{b}: real name not spoken over the respelling", "Ramesh" in g, False)
 
 print("\n=== composition rule: AT MOST one follow-on clause ===")
-# The 'seen earlier today' opener already ends in a question, so it must not also get a plan callback or
-# weather advice -- two questions in one hello is an interrogation.
 notes = [("plan", "school", days_ago(0, 6)), ("job", "drives a bus", days_ago(3))]
-g = social.greeting("Ramesh", None, snapshot=SNAP, last_seen=(days_ago(0, 6), True), notes=notes)
-ck("today-bucket adds nothing", g in [o.replace("[Name]", "Ramesh") for o in social.OPENERS_TODAY], True)
-ck("...so no weather advice is appended", any(a in g for a in weather.ADVICE_RAIN), False)
+with asking_opener(social.TODAY):
+    g = social.greeting("Ramesh", None, snapshot=SNAP, last_seen=(days_ago(0, 6), True), notes=notes)
+    ck("an opener that already asks adds nothing",
+       g in [o.replace("[Name]", "Ramesh") for o in social.OPENERS_TODAY], True)
+    ck("...so no weather advice is appended", any(a in g for a in weather.ADVICE_RAIN), False)
+    ck("...and no plan callback either", "school" in g, False)
+with plain_opener(social.TODAY):
+    # The rule is per-LINE, so a today-bucket opener that does NOT ask something may take a follow-on --
+    # this is the behaviour change from keying on the bucket, and it is the better one: "Nice to see you
+    # again so soon, Ramesh." has room for "How was school?" and used to be denied it.
+    g = social.greeting("Ramesh", None, snapshot=SNAP, last_seen=(days_ago(0, 6), True), notes=notes)
+    ck("a non-asking opener DOES take one", "school" in g, True)
+    ck("...and still only one question", g.count("?"), 1)
+
+print("\n=== ...and that rule keys on THE LINE, not the bucket ===")
+# It used to be a set of buckets assumed to ask questions. But yesterday/this-week/long-gap ALSO contain
+# "How are you?" and "How have you been?" -- those greetings then appended weather on top, producing
+# "Long time no see. How have you been? There's rain in the forecast, so do take an umbrella."
+ADVICE_ALL = (weather.ADVICE_RAIN + weather.ADVICE_CHILLY + weather.ADVICE_HOT + weather.ADVICE_PLEASANT
+              + weather.ADVICE_STORM + weather.ADVICE_SUNNY_RAIN + weather.ADVICE_SHOWERS)
+# A last_seen that lands in each bucket, so forcing a pool actually exercises that pool.
+LAST_FOR = {social.FIRST: None, social.TODAY: (days_ago(0, 6), True),
+            social.YESTERDAY: (days_ago(1), True), social.THIS_WEEK: (days_ago(4), True),
+            social.LONG_GAP: (days_ago(40), True)}
+questioners = 0
+for b, pool in social._OPENERS.items():
+    for opener in pool:
+        if not opener.rstrip().endswith("?"):
+            continue
+        questioners += 1
+        # Force this exact opener for ITS OWN bucket, then hand it every reason to append something.
+        saved = social._OPENERS[b]
+        social._OPENERS[b] = [opener]
+        try:
+            g = social.greeting("R", None, snapshot=SNAP, last_seen=LAST_FOR[b],
+                                notes=[("plan", "school", days_ago(0, 6)),
+                                       ("job", "drives a bus", days_ago(3))])
+        finally:
+            social._OPENERS[b] = saved
+        if g != opener.replace("[Name]", "R"):
+            F.append(f"question-ending opener got a follow-on: {g!r}")
+        if any(a in g for a in ADVICE_ALL) or "school" in g:
+            F.append(f"question-ending opener got advice/callback: {g!r}")
+ck(f"checked {questioners} question-ending openers across all buckets", questioners > 0, True)
+ck("none of them received a follow-on clause",
+   [f for f in F if f.startswith("question-ending")], [])
+ck("no greeting anywhere carries two question marks",
+   max(social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True),
+                       notes=[("plan", "school", days_ago(0, 6))]).count("?")
+       for _ in range(60)) <= 1, True)
 
 print("\n=== follow-on precedence: plan > job-weather > plain weather ===")
-plan_only = [("plan", "school", days_ago(0, 6))]
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=plan_only)
-ck("a plan from earlier today wins", "school" in g, True)
-job_only = [("job", "drives a bus", days_ago(3))]
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=job_only)
-ck("job + wet forecast -> job-aware line", "driving" in g or "wheel" in g, True)
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=[])
-ck("no notes -> plain weather advice", any(a in g for a in weather.ADVICE_RAIN), True)
+with plain_opener(social.YESTERDAY):
+    plan_only = [("plan", "school", days_ago(0, 6))]
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=plan_only)
+    ck("a plan from earlier today wins", "school" in g, True)
+    job_only = [("job", "drives a bus", days_ago(3))]
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=job_only)
+    ck("job + wet forecast -> job-aware line", "driving" in g or "wheel" in g, True)
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=[])
+    ck("no notes -> plain weather advice", any(a in g for a in weather.ADVICE_RAIN), True)
 g = social.greeting("R", None, snapshot=None, last_seen=(days_ago(1), True), notes=[])
 ck("no weather either -> the opener alone, no dangling space", g, g.strip())
 ck("...and no double space", "  " in g, False)
 ck("...and it IS just an opener", g.replace("R", "[Name]") in social.OPENERS_YESTERDAY, True)
 
 print("\n=== a plan is only asked about once it has HAD time to happen ===")
-fresh = [("plan", "school", NOW - 90)]         # said ninety seconds ago -- they haven't been yet
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=fresh)
-ck("a just-stated plan is not asked about", "How was school" in g, False)
-old = [("plan", "school", days_ago(0, 6))]
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=old)
-ck("a morning plan is", "school" in g, True)
+with plain_opener(social.YESTERDAY):
+    fresh = [("plan", "school", NOW - 90)]     # said ninety seconds ago -- they haven't been yet
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=fresh)
+    ck("a just-stated plan is not asked about", "How was school" in g, False)
+    old = [("plan", "school", days_ago(0, 6))]
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=old)
+    ck("a morning plan is", "school" in g, True)
 
 print("\n=== a rambling plan degrades to the generic callback, never mangled grammar ===")
-rambling = [("plan", "I am going to the dentist and then the shops", days_ago(0, 6))]
-g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=rambling)
-ck("no 'How was I am going to...'", "How was I am" in g, False)
-ck("a generic callback instead", any(c in g for c in social.PLAN_CALLBACKS_GENERIC), True)
+with plain_opener(social.YESTERDAY):
+    rambling = [("plan", "I am going to the dentist and then the shops", days_ago(0, 6))]
+    g = social.greeting("R", None, snapshot=SNAP, last_seen=(days_ago(1), True), notes=rambling)
+    ck("no 'How was I am going to...'", "How was I am" in g, False)
+    ck("a generic callback instead", any(c in g for c in social.PLAN_CALLBACKS_GENERIC), True)
 
 print("\n=== never raises, whatever it is handed ===")
 for bad in (None, [], [("plan", None, "x")], [("job", 42, None)], "notanote"):
@@ -166,7 +265,6 @@ ck("greeted flag", got[1], True)
 ck("a different person is unaffected", mem.last_sighting("Nobody"), None)
 ck("blank name is ignored", (mem.record_sighting("", 1.0), mem.last_sighting(""))[1], None)
 mem.record_sighting("Ramesh", 0.5, greeted=False)
-ck("count since", mem.sightings_since("Ramesh", NOW - 60), 2)
 
 print("\n=== memory: notes, expiry and per-kind replace ===")
 mem.remember_note("Ramesh", "job", "drives a bus")
@@ -242,6 +340,27 @@ ck("a nonsense flood is capped", len(social.parse_extraction(
 ck("quotes and trailing stops are cleaned",
    social.parse_extraction({"notes": [{"kind": "job", "text": '"drives a bus".'}]})[0][1], "drives a bus")
 
+print("\n=== the extraction call is capped so it can't hold the model lock against a live turn ===")
+for k in ("ROBOT_SOCIAL_EXTRACT_TIMEOUT_S",):
+    os.environ.pop(k, None)
+ck("unset -> 25", social.extract_timeout_s(), 25.0)
+for bad in ("", "   ", "abc", "None"):
+    os.environ["ROBOT_SOCIAL_EXTRACT_TIMEOUT_S"] = bad
+    ck(f"garbage {bad!r} -> 25", social.extract_timeout_s(), 25.0)
+os.environ["ROBOT_SOCIAL_EXTRACT_TIMEOUT_S"] = "40"
+ck("explicit 40 honoured", social.extract_timeout_s(), 40.0)
+os.environ["ROBOT_SOCIAL_EXTRACT_TIMEOUT_S"] = "1"
+ck("floored at 5 (a 1s budget would never complete)", social.extract_timeout_s(), 5.0)
+del os.environ["ROBOT_SOCIAL_EXTRACT_TIMEOUT_S"]
+
+print("\n=== the curiosity turn-floor getter lives here now, and is blank-tolerant ===")
+os.environ.pop("ROBOT_SOCIAL_CURIOSITY_AFTER", None)
+ck("unset -> 3", social.curiosity_after(), 3)
+for bad, want in (("", 3), ("   ", 3), ("nope", 3), ("5", 5), ("0", 1), ("-4", 1), ("2.9", 2)):
+    os.environ["ROBOT_SOCIAL_CURIOSITY_AFTER"] = bad
+    ck(f"{bad!r} -> {want}", social.curiosity_after(), want)
+del os.environ["ROBOT_SOCIAL_CURIOSITY_AFTER"]
+
 print("\n=== a model call is only spent on a conversation that could teach something ===")
 # Cost gate: every extraction is a model call, billable under a remote text backend. A greeting followed
 # by "hello" cannot have taught us anything.
@@ -287,8 +406,10 @@ ck("...and the opener still comes through",
 # The plan callback must survive the withheld snapshot -- it is not weather, and turning weather greetings
 # off should not cost you "how was school?".
 plan = [("plan", "school", NOW - 6 * 3600)]
-ck("the plan callback is unaffected",
-   "school" in social.greeting("P", None, snapshot=None, last_seen=(days_ago(1), True), notes=plan), True)
+with plain_opener(social.YESTERDAY):        # an asking opener would suppress it -- see the helper
+    ck("the plan callback is unaffected",
+       "school" in social.greeting("P", None, snapshot=None, last_seen=(days_ago(1), True), notes=plan),
+       True)
 
 print("\n=== the extractor's generation guard: keep this chat's result, drop a superseded one ===")
 # REGRESSION. `gen` used to be bumped when a conversation ENDED, which is the same moment the extractor

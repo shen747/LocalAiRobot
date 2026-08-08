@@ -8,6 +8,9 @@
 #   ./scripts/rag.sh --all                           # facts + seen + scenes + faces
 #   ./scripts/rag.sh --search "garage tools"         # RANKED search (FTS5/BM25): the facts + scenes that best match the words
 #   ./scripts/rag.sh --reindex                       # rebuild the FTS search index from the base tables (after raw sqlite edits)
+#   ./scripts/rag.sh --sightings Ramesh              # when Social Memory last saw someone (the 'sightings' table)
+#   ./scripts/rag.sh --notes Ramesh                  # what they've told Jarvis: job, likes, today's plans ('person_notes')
+#   ./scripts/rag.sh --forget-notes Ramesh [kind]    # delete those notes (all, or just one kind: job|like|note|plan|curiosity)
 #   ./scripts/rag.sh --forget Shawn                  # delete a taught person/thing by name
 #   ./scripts/rag.sh --clear-facts                   # wipe all taught facts (they're re-teachable)
 #   ./scripts/rag.sh --clear-scenes                  # wipe stored explore scene descriptions (stale RAG context)
@@ -109,6 +112,15 @@ FACTS="SELECT id, datetime(ts,'unixepoch','localtime') AS taught, name, fact AS 
 SEEN="SELECT id, datetime(ts,'unixepoch','localtime') AS seen, target, visible, horizontal, distance, round(confidence,2) AS conf FROM observations WHERE target IS NOT NULL AND target!='' ORDER BY ts DESC LIMIT 50"
 SCENES="SELECT id, datetime(ts,'unixepoch','localtime') AS explored, substr(notes,1,90) AS scene FROM observations WHERE source='scene' AND notes IS NOT NULL AND notes!='' ORDER BY ts DESC LIMIT 30"
 FACES="SELECT name, COUNT(*) AS photos, datetime(MAX(ts),'unixepoch','localtime') AS last_enrolled FROM faces GROUP BY name ORDER BY last_enrolled DESC"
+# -- Social Memory (brain/social.py). Inspecting what the robot has learned ABOUT PEOPLE should not require
+#    raw sqlite: these are things it will say out loud to them, so they need to be easy to read and easy to
+#    delete. `notes` hides expired rows by default -- a 'plan' from last Tuesday is not something the robot
+#    would still act on, so showing it would misrepresent what it knows.
+SIGHTINGS="SELECT datetime(ts,'unixepoch','localtime') AS seen, round(score,3) AS score, CASE greeted WHEN 1 THEN 'yes' ELSE 'no' END AS greeted FROM sightings WHERE lower(name)=lower(?) ORDER BY ts DESC LIMIT 10"
+# The CAST is explicitness, not a fix: strftime('%s') returns TEXT, and SQLite happens to apply the REAL
+# column's affinity to the other operand so the bare comparison also works. Spelled out because a reader
+# checking "is this comparing a number to a string?" should not have to go and look up affinity rules.
+NOTES="SELECT kind, text, datetime(ts,'unixepoch','localtime') AS learned, CASE WHEN expires_ts IS NULL THEN 'never' ELSE datetime(expires_ts,'unixepoch','localtime') END AS expires FROM person_notes WHERE lower(name)=lower(?) AND (expires_ts IS NULL OR expires_ts > CAST(strftime('%s','now') AS REAL)) ORDER BY ts DESC"
 
 case "${1:---facts}" in
   --facts|-f)               echo "== taught people/things (facts) =="; run "$FACTS" ;;
@@ -122,6 +134,16 @@ case "${1:---facts}" in
   --search|--find)          [ $# -ge 2 ] || { echo "usage: $(basename "$0") --search \"<words>\""; exit 2; }
                             echo "== ranked memory search for: $2 =="; search "$2" ;;
   --reindex)                echo "== rebuilding FTS search index =="; reindex ;;
+  --sightings)              [ $# -ge 2 ] || { echo "usage: $(basename "$0") --sightings <name>"; exit 2; }
+                            echo "== when Social Memory last saw $2 (newest 10) =="; run "$SIGHTINGS" "$2" ;;
+  --notes)                  [ $# -ge 2 ] || { echo "usage: $(basename "$0") --notes <name>"; exit 2; }
+                            echo "== what $2 has told Jarvis (unexpired) =="; run "$NOTES" "$2" ;;
+  --forget-notes)           [ $# -ge 2 ] || { echo "usage: $(basename "$0") --forget-notes <name> [kind]"; exit 2; }
+                            if [ $# -ge 3 ]; then
+                              run "DELETE FROM person_notes WHERE lower(name)=lower(?) AND kind=?" "$2" "$3"
+                            else
+                              run "DELETE FROM person_notes WHERE lower(name)=lower(?)" "$2"
+                            fi ;;
   --forget)                 [ $# -ge 2 ] || { echo "usage: $(basename "$0") --forget <name>"; exit 2; }
                             run "DELETE FROM facts WHERE lower(name)=lower(?)" "$2" ;;
   --clear-facts)            run "DELETE FROM facts" ;;
