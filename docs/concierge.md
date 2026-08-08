@@ -334,7 +334,7 @@ greetings.
 - **Accuracy:** detection uses OpenCV's Haar cascade (a bounding box, not landmark alignment), so matching is
   tuned for a handful of known visitors, not a crowd. Enrol several shots and tune
   `ROBOT_FACE_ID_THRESHOLD` if you get false greetings (raise it) or misses (lower it).
-- **Recognition window:** a motion wake retries recognition for `ROBOT_CONCIERGE_RECOGNIZE_S` (default 5s)
+- **Recognition window:** a motion wake retries recognition for `ROBOT_CONCIERGE_RECOGNIZE_S` (default 7s)
   instead of judging one frame — the fix for *sporadic* greetings that used to "flash" the smile and give
   up. Each wake logs the attempt count and the **best score** seen, so you can tell how close a miss was and
   tune `ROBOT_FACE_ID_THRESHOLD` accordingly (set the window to `0` to return to a single frame).

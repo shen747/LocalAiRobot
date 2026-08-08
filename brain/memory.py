@@ -72,6 +72,7 @@ class Memory:
         self.path = os.path.expanduser(db_path)
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._lock = threading.Lock()
+        self._faces_version = 0         # bumped by add_face/forget_face; see faces_version()
         self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=5.0)
         # Step 13(a): WAL + synchronous=NORMAL -- one fsync per txn instead of per journal phase. MUST run
         # right after connect, before any DDL/DML (journal_mode can't change mid-transaction). journal_mode
@@ -113,7 +114,36 @@ class Memory:
         self._db.execute(
             """CREATE TABLE IF NOT EXISTS faces (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   ts REAL, name TEXT, embedding BLOB)""")
+                   ts REAL, name TEXT, embedding BLOB, provenance TEXT)""")
+        # Migration for a faces table created before provenance existed -- same swallow-the-error shape as
+        # the facts.pronunciation one above. Rows enrolled earlier keep a NULL, which face_provenance()
+        # reports as 'unknown': honest, and exactly the state worth warning about.
+        try:
+            self._db.execute("ALTER TABLE faces ADD COLUMN provenance TEXT")
+        except Exception:
+            pass
+        # ---------- Social Memory (brain/social.py; ROBOT_SOCIAL_MEMORY) ----------
+        # DELIBERATELY NOT IN `facts`, and deliberately NOT FTS-indexed. `facts` retrieval is BM25
+        # relevance-first and is never pruned, so conversation-learned rows would (a) let yesterday's row
+        # outrank today's whenever its wording scored better -- stale data spoken as current -- and (b) grow
+        # without bound. These two tables are looked up by (name, kind) at known moments instead of ranked
+        # against an utterance, so that failure mode cannot occur by construction, and both are capped by
+        # _prune. Creating them unconditionally is free (two empty tables) and keeps the flag purely about
+        # BEHAVIOUR rather than about schema state -- a robot that soaks with the flag on and then off does
+        # not end up with a half-migrated database.
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS sightings (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   ts REAL, name TEXT, score REAL, greeted INTEGER)""")
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_sightings_name_ts ON sightings(name, ts DESC)")
+        # kind: 'plan' (transient -- expires end of day), 'job' / 'like' / 'note' (stable),
+        # 'curiosity' (a marker that we already asked something, so nobody is interrogated twice a month).
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS person_notes (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   ts REAL, name TEXT, kind TEXT, text TEXT, expires_ts REAL)""")
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_name_kind_ts ON person_notes(name, kind, ts DESC)")
         # Step 14: indexes for the per-turn prompt-build queries (after the CREATE TABLEs, before commit).
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_visible_ts ON observations(visible, ts)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_obs_source_ts  ON observations(source, ts)")
@@ -195,6 +225,7 @@ class Memory:
                 self._since_prune = 0
         except Exception as e:
             log.warning("memory: prune failed (%s) -- continuing", e)
+        self._prune_social()   # outside the lock above: _prune_social takes it itself
 
     def _backfill_fts(self, force=False):
         """Populate the FTS tables from the base rows. On init this is a no-op once they're populated;
@@ -356,16 +387,51 @@ class Memory:
             return None
 
     # ---------- enrolled faces (Concierge Mode; brain/face_id.py) ----------
-    def add_face(self, name, embedding_bytes):
+    def faces_version(self):
+        """A counter that changes whenever the enrolment set does.
+
+        Exists so brain/face_id.py can cache the decoded embeddings across the frames of a recognition
+        window (it used to re-SELECT and re-decode every enrolment on EVERY frame) and still notice an
+        enrolment landing mid-run. Reading an int is the cheap check that replaces the query; the cache is
+        rebuilt only when this number moves. Deliberately not a timestamp -- a counter cannot go backwards
+        when the clock does."""
+        return self._faces_version
+
+    def _bump_faces(self):
+        self._faces_version += 1
+
+    def add_face(self, name, embedding_bytes, provenance=""):
         """Store a face embedding (raw float32 bytes) under `name`. Multiple rows per person are fine --
-        each is compared independently, so enrolling several angles improves matching."""
+        each is compared independently, so enrolling several angles improves matching.
+
+        `provenance` records HOW the embedding was made (detector backend + whether the crop was
+        5-point aligned). It exists because an embedding made without alignment and one made with it are
+        not comparable: ArcFace is trained on aligned crops, so mixing them collapses every similarity
+        score into the same narrow band and the 'closest' name becomes a lottery. Without this column that
+        situation is invisible -- the scores merely look bad. With it, the robot can say so at startup."""
         try:
             with self._lock:
-                self._db.execute("INSERT INTO faces (ts, name, embedding) VALUES (?,?,?)",
-                                 (time.time(), (name or "").strip(), sqlite3.Binary(embedding_bytes)))
+                self._db.execute(
+                    "INSERT INTO faces (ts, name, embedding, provenance) VALUES (?,?,?,?)",
+                    (time.time(), (name or "").strip(), sqlite3.Binary(embedding_bytes),
+                     (provenance or "").strip()))
                 self._db.commit()
+            self._bump_faces()
         except Exception as e:
             log.warning("memory: add_face failed (%s) -- continuing", e)
+
+    def face_provenance(self):
+        """{provenance_string: row_count} across every enrolled embedding. Empty on error.
+
+        Read once at startup so a database holding embeddings from two different pipelines is reported
+        rather than silently mis-scored."""
+        try:
+            with self._lock:
+                return {(r[0] or "unknown"): int(r[1]) for r in self._db.execute(
+                    "SELECT provenance, COUNT(*) FROM faces GROUP BY provenance").fetchall()}
+        except Exception as e:
+            log.warning("memory: face_provenance failed (%s)", e)
+            return {}
 
     def all_faces(self):
         """[(name, embedding_bytes), ...] for every enrolled face. Empty if nobody is enrolled."""
@@ -383,10 +449,155 @@ class Memory:
             with self._lock:
                 cur = self._db.execute("DELETE FROM faces WHERE name=?", ((name or "").strip(),))
                 self._db.commit()
-                return cur.rowcount
+                rows = cur.rowcount
+            self._bump_faces()
+            return rows
         except Exception as e:
             log.warning("memory: forget_face failed (%s)", e)
             return 0
+
+    # ---------- Social Memory: who was here, and what they told us ----------
+    # Every method here follows the module's log-and-continue rule: a greeting must never fail because a
+    # SELECT did. Callers treat "no data" and "the query broke" identically, which is also what makes the
+    # ROBOT_SOCIAL_MEMORY=0 path and the something-went-wrong path the same well-tested code.
+
+    def record_sighting(self, name, score=0.0, greeted=True):
+        """Log that `name` was recognised. Call it AFTER reading last_sighting(), or the greeting will
+        compare the visitor against themselves arriving a moment ago."""
+        name = (name or "").strip()
+        if not name:
+            return
+        try:
+            with self._lock:
+                self._db.execute("INSERT INTO sightings (ts, name, score, greeted) VALUES (?,?,?,?)",
+                                 (time.time(), name, float(score or 0.0), 1 if greeted else 0))
+                self._db.commit()
+        except Exception as e:
+            log.warning("memory: record_sighting failed (%s) -- continuing", e)
+
+    def last_sighting(self, name, before_ts=None):
+        """The most recent PREVIOUS sighting of `name` as (ts, greeted), or None if this is the first time.
+
+        `before_ts` exists so a caller that has already recorded today's sighting can still ask about the
+        one before it; the normal call reads first and records second."""
+        name = (name or "").strip()
+        if not name:
+            return None
+        try:
+            with self._lock:
+                if before_ts is None:
+                    row = self._db.execute(
+                        "SELECT ts, greeted FROM sightings WHERE name=? ORDER BY ts DESC LIMIT 1",
+                        (name,)).fetchone()
+                else:
+                    row = self._db.execute(
+                        "SELECT ts, greeted FROM sightings WHERE name=? AND ts<? ORDER BY ts DESC LIMIT 1",
+                        (name, float(before_ts))).fetchone()
+            return (float(row[0]), bool(row[1])) if row else None
+        except Exception as e:
+            log.warning("memory: last_sighting failed (%s)", e)
+            return None
+
+    def sightings_since(self, name, ts):
+        """How many times `name` has been seen since `ts` (unix epoch). 0 on any error."""
+        try:
+            with self._lock:
+                row = self._db.execute("SELECT COUNT(*) FROM sightings WHERE name=? AND ts>=?",
+                                       ((name or "").strip(), float(ts))).fetchone()
+            return int(row[0]) if row else 0
+        except Exception as e:
+            log.warning("memory: sightings_since failed (%s)", e)
+            return 0
+
+    def remember_note(self, name, kind, text, expires_ts=None, replace=True):
+        """Store something a person told us. `replace` (the default for stable kinds) drops that person's
+        previous rows of the same kind first, so a job note is a CURRENT fact rather than a pile of
+        historical guesses -- 'drives a bus' then 'drives a tram' must not both be true."""
+        name, kind, text = (name or "").strip(), (kind or "").strip(), (text or "").strip()
+        if not (name and kind and text):
+            return
+        try:
+            with self._lock:
+                if replace:
+                    self._db.execute("DELETE FROM person_notes WHERE name=? AND kind=?", (name, kind))
+                self._db.execute(
+                    "INSERT INTO person_notes (ts, name, kind, text, expires_ts) VALUES (?,?,?,?,?)",
+                    (time.time(), name, kind, text,
+                     None if expires_ts is None else float(expires_ts)))
+                self._db.commit()
+        except Exception as e:
+            log.warning("memory: remember_note failed (%s) -- continuing", e)
+
+    def notes_for(self, name, kinds=None, include_expired=False, limit=20):
+        """[(kind, text, ts), ...] for `name`, newest first. Expired rows are hidden by default -- a plan
+        for today is deliberately invisible tomorrow, which is what stops 'how was school?' being asked on
+        a Sunday in July."""
+        name = (name or "").strip()
+        if not name:
+            return []
+        sql = "SELECT kind, text, ts FROM person_notes WHERE name=?"
+        args = [name]
+        if kinds:
+            sql += " AND kind IN (%s)" % ",".join("?" * len(kinds))
+            args.extend(kinds)
+        if not include_expired:
+            sql += " AND (expires_ts IS NULL OR expires_ts > ?)"
+            args.append(time.time())
+        sql += " ORDER BY ts DESC LIMIT ?"
+        args.append(int(limit))
+        try:
+            with self._lock:
+                return [(r[0], r[1], float(r[2])) for r in self._db.execute(sql, args).fetchall()]
+        except Exception as e:
+            log.warning("memory: notes_for failed (%s)", e)
+            return []
+
+    def forget_notes(self, name, kinds=None):
+        """Delete a person's notes (all kinds, or just some). Returns rows removed. For rag.sh and tests."""
+        name = (name or "").strip()
+        if not name:
+            return 0
+        sql, args = "DELETE FROM person_notes WHERE name=?", [name]
+        if kinds:
+            sql += " AND kind IN (%s)" % ",".join("?" * len(kinds))
+            args.extend(kinds)
+        try:
+            with self._lock:
+                cur = self._db.execute(sql, args)
+                self._db.commit()
+                return cur.rowcount
+        except Exception as e:
+            log.warning("memory: forget_notes failed (%s)", e)
+            return 0
+
+    def _prune_social(self):
+        """Cap the two Social Memory tables. Called from _prune, so it rides the existing sweep rather than
+        adding a timer. NEVER call while holding self._lock."""
+        try:
+            keep_s = int(os.environ.get("ROBOT_MEMORY_RETAIN_SIGHTINGS", "2000") or 2000)
+        except ValueError:
+            keep_s = 2000
+        try:
+            keep_n = int(os.environ.get("ROBOT_MEMORY_RETAIN_NOTES", "50") or 50)
+        except ValueError:
+            keep_n = 50
+        try:
+            with self._lock:
+                self._db.execute(
+                    "DELETE FROM sightings WHERE id NOT IN "
+                    "(SELECT id FROM sightings ORDER BY ts DESC LIMIT ?)", (keep_s,))
+                # Expired plans are dead weight the moment their day ends.
+                self._db.execute("DELETE FROM person_notes WHERE expires_ts IS NOT NULL AND expires_ts <= ?",
+                                 (time.time(),))
+                # Cap STABLE notes PER PERSON, not globally: one chatty visitor must not evict everyone
+                # else's job. Correlated subquery -- fine at these row counts (tens per person).
+                self._db.execute(
+                    "DELETE FROM person_notes WHERE expires_ts IS NULL AND id NOT IN "
+                    "(SELECT id FROM person_notes p2 WHERE p2.name = person_notes.name "
+                    " AND p2.expires_ts IS NULL ORDER BY p2.ts DESC LIMIT ?)", (keep_n,))
+                self._db.commit()
+        except Exception as e:
+            log.warning("memory: social prune failed (%s) -- continuing", e)
 
     def forget_fact(self, name):
         """Delete all taught facts for `name` (case-insensitive, like rag.sh --forget). Returns rows removed.

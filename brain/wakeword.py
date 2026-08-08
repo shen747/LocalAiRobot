@@ -206,8 +206,11 @@ class WakeWord:
 
     def cancel_listen(self):
         """Break a listen in progress (it returns 'CANCELLED') -- used to stop the background voice-abort
-        listener when a behaviour ends. A fresh _listen() clears this flag at its start, so the normal
-        wake loop is unaffected afterwards."""
+        listener when a behaviour ends, and by the PIR callback so a motion wake pre-empts the wake word.
+
+        A cancel that arrives BETWEEN listens is not lost: the next _listen() sees the flag still set and
+        returns 'CANCELLED' immediately rather than clearing it (see the comment there). That is what makes
+        a single-pulse motion arrival survive the gap while the robot is between listens."""
         self._cancel.set()
 
     # ---------- internals ----------
@@ -216,6 +219,24 @@ class WakeWord:
         import sounddevice as sd
 
         self._model.reset()
+        # HONOUR a cancel that arrived BEFORE this listen started, instead of discarding it.
+        #
+        # cancel_listen() only interrupts a listen that is ALREADY RUNNING, and this clear used to throw away
+        # anything that landed in the gap between the caller deciding to listen and us getting here (model
+        # reset + two imports). For the PIR that gap is a lost visitor: the callback sets motion_event AND
+        # calls cancel_listen(), the cancel is cleared here, and the listen then blocks for minutes with
+        # motion_event set but nobody looking at it. If the operator eventually says the wake word,
+        # wait_for_trigger clears the flag and reports WAKE -- the motion is consumed with no trace at all.
+        # A moving visitor self-heals (their next edge, >2s later, cancels the now-running listen); a
+        # single-pulse arrival is simply lost.
+        #
+        # Returning CANCELLED here hands the decision back to wait_for_trigger, which already knows how to
+        # read it: motion_event set -> MOTION, not set -> the main loop just re-enters the wait. The
+        # worst case is therefore one spare loop iteration after a STALE cancel (e.g. a behaviour's
+        # voice-abort listener shutting down), which costs nothing and self-corrects immediately.
+        if self._cancel.is_set():
+            self._cancel.clear()
+            return "CANCELLED"
         self._cancel.clear()                                 # fresh listen; cancel_listen() sets it to break us out
         if self._cancel.wait(max(0.0, self.cooldown_s)):     # cooldown, but honour cancel_listen()
             return "CANCELLED"                               # behaviour ended mid-cooldown -> stop promptly

@@ -33,6 +33,7 @@ import concierge
 import halloween
 import inference
 import remote
+import social
 import vision
 import weather
 import weather_screen
@@ -922,6 +923,26 @@ def main():
     # consumed the note. Written only from the main thread; the worker just compares + stores (GIL-atomic).
     person_ctx = {"note": "", "gen": 0}
 
+    # SOCIAL MEMORY: who the robot is currently talking to, plus the running transcript of this
+    # conversation. `name` is set at a by-name greeting and cleared when the chat ends or a new trigger
+    # arrives, so a stale identity can never leak into the next visitor's turn. `turns` is capped in RAM and
+    # never written to disk during the chat -- the post-conversation extractor is the only thing that reads
+    # it. `gen` guards that extractor exactly as person_ctx's does the wake person-check: a slow extraction
+    # must never attribute one conversation's contents to the next one.
+    present_person = {"name": "", "gen": 0, "turns": [], "exchanges": 0, "asked": False, "notes": []}
+
+    def _social_reset():
+        present_person.update(name="", turns=[], exchanges=0, asked=False, notes=[], last_seen=None)
+        present_person["gen"] += 1
+
+    def _social_curiosity_after():
+        """Exchanges to wait before the curiosity nudge. Not on the first turn: asking someone what they do
+        for a living before they have said two sentences is an interview, not a conversation."""
+        try:
+            return max(1, int(float(os.environ.get("ROBOT_SOCIAL_CURIOSITY_AFTER", "") or 3)))
+        except (TypeError, ValueError):
+            return 3
+
     def _person_check_enabled():
         v = os.environ.get("ROBOT_WAKE_PERSON_CHECK", "auto").strip().lower()
         if v in ("0", "off", "no", "false"):
@@ -992,7 +1013,7 @@ def main():
             return 20.0
 
     def _concierge_smile_hold_s():
-        """How long the SMILE outlasts the sensor's last pulse (ROBOT_CONCIERGE_SMILE_HOLD_S, default 1.5s).
+        """How long the SMILE outlasts the sensor's last pulse (ROBOT_CONCIERGE_SMILE_HOLD_S, default 5s).
 
         Defaults to the SAME window as ROBOT_PIR_PRESENCE_HOLD_S, i.e. the face is up exactly while the
         robot is still looking. This started at 1.5s on the theory that it only had to bridge the gap
@@ -1040,6 +1061,9 @@ def main():
     # threading.Event, which by design services them as a single look).
     concierge_stats = {"probe_silent": 0, "probe_hit": 0, "window_lost": 0, "greeted": 0, "by_name": 0,
                        "dropped_stale": 0, "discarded_chat": 0}
+    # Social Memory telemetry, same monotonic-counter discipline. Two numbers are enough to answer the only
+    # questions a soak asks: is it actually using the history, and is it actually learning anything?
+    social_stats = {"greetings": 0, "learned": 0}
 
     def _concierge_summary_loop(period_s):
         # MONOTONIC counters + deltas, never copy-then-zero. The old code snapshotted the dict and then
@@ -1048,6 +1072,7 @@ def main():
         # the delta-against-base pattern correctly -- this just applies the same discipline to the rest.
         base = {"woke": 0, "outcome": 0, "debounce": 0, "spike": 0}
         cbase = {k: 0 for k in concierge_stats}
+        sbase = {k: 0 for k in social_stats}
         while True:
             time.sleep(period_s)
             try:
@@ -1069,6 +1094,15 @@ def main():
                 # edges during one look) but a big number with few wakes means edges are being lost.
                 serviced = seen["probe_silent"] + seen["window_lost"] + seen["greeted"]
                 collapsed = woke - serviced - seen["dropped_stale"] - seen["discarded_chat"]
+                if social.enabled():
+                    # Its own clause rather than its own line: it is about the SAME wakes this line is
+                    # already accounting for, and a second hourly log line for four numbers is how a log
+                    # becomes unreadable. Silent when the feature is off.
+                    log.info("social: last %.0f min -- %d greeting(s) placed by sighting history, "
+                             "%d thing(s) learned", period_s / 60.0,
+                             social_stats["greetings"] - sbase["greetings"],
+                             social_stats["learned"] - sbase["learned"])
+                    sbase.update(social_stats)
                 log.info("concierge: last %.0f min -- PIR %d wake(s) (+%d held by cooldown, +%d debounce, "
                          "+%d noise) | %d silent (probe), %d looked at, %d lost in the window, "
                          "%d greeting(s) (%d by name) | disposal: %d stale, %d mid-chat, %d coalesced",
@@ -1126,6 +1160,47 @@ def main():
             log.info("concierge: kept the deciding frame -> %s", path)
         return path
 
+    def _social_extract(gen, name, transcript):
+        """Learn from a finished conversation. Daemon thread, post-conversation, never inside a turn.
+
+        One model call on the idle path -- the robot has already said goodbye and gone back to the wake
+        word, so this competes with nothing. `gen` is the generation guard: if a new visitor arrived while
+        the model was thinking, the result belongs to a conversation that is over and is dropped rather
+        than filed under the wrong person. Every failure mode -- model down, malformed JSON, nothing worth
+        keeping -- ends the same way: nothing is stored, and the feature simply did not learn from that
+        chat. That is the correct outcome, because the alternative is inventing facts about people."""
+        try:
+            payload = {"model": cfg["model"], "format": "json", "stream": False,
+                       "prompt": social.EXTRACT_PROMPT.format(name=name, transcript=transcript)}
+            obj = inference.ollama_generate(cfg, payload, _as_int(cfg.get("llm_timeout_s"), 60))
+            rows = social.parse_extraction(obj)
+            if present_person["gen"] != gen:
+                log.debug("social: extraction finished after the conversation moved on -- discarding")
+                return
+            for kind, text, transient in rows:
+                mem.remember_note(name, kind, text,
+                                  expires_ts=social.end_of_day_ts() if transient else None)
+            if rows:
+                social_stats["learned"] += len(rows)
+                log.info("social: learned %s about %r", ", ".join(f"{k}={t!r}" for k, t, _ in rows), name)
+            else:
+                log.debug("social: nothing worth remembering from that conversation with %r", name)
+        except Exception as e:
+            log.debug("social: extraction failed (%s) -- nothing stored", e)
+
+    def _social_finish():
+        """Called once at conversation end: hand the transcript to the extractor, then forget the person."""
+        try:
+            if social.enabled() and present_person.get("name") and present_person.get("turns"):
+                transcript = social.format_transcript(present_person["turns"])
+                if transcript:
+                    threading.Thread(target=_social_extract,
+                                     args=(present_person["gen"], present_person["name"], transcript),
+                                     daemon=True, name="social-extract").start()
+        except Exception as e:
+            log.debug("social: could not start the extractor (%s)", e)
+        _social_reset()
+
     def _wake_person_check(gen):
         try:
             res = vision.check_person(cfg, cam.capture_jpeg())
@@ -1167,6 +1242,29 @@ def main():
                     note = weather_svc.summary_note()
                     if note:
                         ctx = (note + " " + ctx).strip()
+                # WHO AM I TALKING TO. Voice only -- an HTTP turn has no identified person by definition.
+                # This is the piece that makes memory feel like memory: with it the model asks "how was
+                # school?" or "did you have to drive in this rain?" mid-conversation and unprompted,
+                # because it actually knows. Same rules as the weather note: short, rebuilt each turn from
+                # data already in hand, and strictly never-raise (the except below SPEAKS its argument).
+                if source == "voice" and social.enabled() and present_person.get("name"):
+                    who = social.context_note(present_person["name"],
+                                              present_person.get("last_seen"),
+                                              present_person.get("notes"))
+                    if who:
+                        ctx = (who + " " + ctx).strip()
+                    # CURIOSITY: after a few exchanges with someone whose job we don't know, nudge the
+                    # model to ask -- in its own words, folded into whatever it was already saying. The
+                    # marker is written whether or not they answer, so nobody is interrogated monthly.
+                    present_person["exchanges"] += 1
+                    if (social.curiosity_enabled() and not present_person["asked"]
+                            and present_person["exchanges"] >= _social_curiosity_after()
+                            and social.curiosity_due(present_person.get("notes"))):
+                        present_person["asked"] = True
+                        ctx = (social.curiosity_directive(present_person["name"]) + " " + ctx).strip()
+                        mem.remember_note(present_person["name"], "curiosity", "asked-job")
+                        log.info("social: nudging the model to ask %r what they do for a living",
+                                 present_person["name"])
                 resp = query_ollama(cfg, text, context=ctx)
             except Exception as e:
                 snd.stop_thinking()
@@ -1502,8 +1600,14 @@ def main():
             return "weather"
         return "sleeping"
 
-    def _greeting_for(name, pron):
+    def _greeting_for(name, pron, score=0.0):
         """The concierge greeting, weather-decorated when enabled and a forecast is in hand.
+
+        SOCIAL MEMORY (ROBOT_SOCIAL_MEMORY=1) sits IN FRONT of that: it knows when it last saw this person
+        and what they told us, so "nice to see you again -- how was school?" replaces a context-free random
+        pick. It reads the previous sighting BEFORE recording this one (otherwise the visitor is compared
+        against themselves arriving a moment ago) and degrades at every step -- no history, no notes, no
+        forecast, a broken query -- back to exactly the weather greeting below.
 
         Weather is a DECORATION, not a persona: PERSONA_CAPS, the refusals and the LLM identity are all
         untouched, which keeps it clear of the "persona precedence must agree at three branch points" trap.
@@ -1513,8 +1617,26 @@ def main():
         greet path is synchronous (say() blocks through Piper + aplay), so it must never wait on weather,
         and a half-built weather sentence is worse than none. Text only -- the faces are unchanged, because
         the forecast card belongs on the sleep screen and nowhere else."""
+        snap = weather_svc.get() if weather_svc is not None else None
+        if name and social.enabled():
+            try:
+                last_seen = mem.last_sighting(name)          # BEFORE recording -- see the docstring
+                notes = mem.notes_for(name)
+                mem.record_sighting(name, score, greeted=True)
+                present_person.update(name=name, notes=notes, last_seen=last_seen,
+                                      turns=[], exchanges=0, asked=False)
+                if weather_svc is not None:
+                    weather_svc.note_greeting(had_advice=snap is not None)
+                text = social.greeting(name, pron, snapshot=snap, last_seen=last_seen, notes=notes)
+                social_stats["greetings"] += 1
+                log.info("social: greeting %r as a %r sighting%s", name,
+                         social.bucket(last_seen[0] if last_seen else None),
+                         f" ({len(notes)} note(s) known)" if notes else "")
+                return text
+            except Exception as e:
+                # Social Memory exists to make the hello nicer. It must never be the reason there isn't one.
+                log.warning("social: greeting failed (%s) -- falling back to the plain greeting", e)
         if weather_svc is not None and weather.greeting_enabled():
-            snap = weather_svc.get()
             weather_svc.note_greeting(had_advice=snap is not None)
             return (weather.greeting(name, pron, snapshot=snap) if name
                     else weather.greeting_unknown(snapshot=snap))
@@ -1777,9 +1899,18 @@ def main():
                                 "resolve: check ~/detect-captures and where it is aimed. Raising the cap "
                                 "would only run the recogniser longer at the same view.",
                                 _concierge_recognize_max_s(), res["attempts"])
-                        log.info("concierge: motion but no face in %d try(s) (%d face hit(s), need %d) "
+                        # Say WHY there was no face when we can. A box rejected by ROBOT_FACE_ID_MIN_FACE_PX
+                        # means somebody WAS there and stood too far back -- a tuning answer. Silence on
+                        # that number means the detector saw nothing at all -- a sensor/aim answer. Both
+                        # used to print as the same "motion but no face", which is why the unexplained
+                        # no-face wakes stayed unexplained.
+                        _rej = getattr(face_identifier, "last_rejected_px", 0)
+                        log.info("concierge: motion but no face in %d try(s) (%d face hit(s), need %d)%s "
                                  "-> back to %r (silent)",
-                                 res["attempts"], res["face_hits"], _concierge_face_hits(), idle["face"])
+                                 res["attempts"], res["face_hits"], _concierge_face_hits(),
+                                 f" -- closest face was {_rej}px, under the "
+                                 f"{getattr(face_identifier, 'min_face', 0)}px floor "
+                                 f"(ROBOT_FACE_ID_MIN_FACE_PX)" if _rej else "", idle["face"])
                         _keep_capture(res.get("jpeg"), "noface")
                         fc.set_expression(idle["face"])
                         continue
@@ -1802,7 +1933,7 @@ def main():
                                  res["best_score"], _since_wake())
                         _keep_capture(res.get("jpeg"), "known", name)
                         snd.play("wake_ack")
-                        say(_greeting_for(name, pron))
+                        say(_greeting_for(name, pron, res["best_score"]))
                     else:
                         # present but unrecognised after the window -> a warm, name-less greeting (still chats).
                         log.info("concierge: person present but unrecognised after %d try(s) (%d face hit(s), "
@@ -1900,7 +2031,19 @@ def main():
                 print(f"Heard: {text!r}")
                 snd.play("ack")                # command-ack: "got it/on it" -- accepted, AFTER the noise filter
                 try:
-                    handle_command(text, source="voice")   # thinking -> LLM intent -> action (shared w/ HTTP)
+                    # SOCIAL MEMORY buffers the exchange IN RAM only -- no DB writes during a conversation.
+                    # The post-conversation extractor is the only reader, and it runs once the chat is over.
+                    # Indexed rather than unpacked on purpose: handle_command returns (action, reply) on
+                    # every path today, but this is the turn loop -- a shape change here would surface to
+                    # the operator as "something went wrong on my end", and transcript capture is not worth
+                    # that risk.
+                    result = handle_command(text, source="voice")
+                    if social.enabled() and present_person.get("name"):
+                        reply_text = (result or ("", ""))[1]
+                        present_person["turns"].append(("user", text))
+                        if reply_text:
+                            present_person["turns"].append(("robot", reply_text))
+                        del present_person["turns"][:-24]   # bounded: the tail is what matters
                 except Exception as e:
                     # A single turn must NEVER crash the whole robot: log the FULL traceback (so we can see
                     # exactly what broke), stop the motors, tell the operator, and keep the conversation alive.
@@ -1913,6 +2056,12 @@ def main():
                 last_voice = time.monotonic()
                 if not followup_enable:
                     break
+            # THE conversation is over -- reached by every exit above (silence, a listen failure, or
+            # follow-ups being disabled), which is why this sits after the loop rather than being repeated
+            # at each break. Hands the transcript to the learning extractor on a daemon thread and forgets
+            # who we were talking to, so the next visitor can never inherit this one's identity or notes.
+            # A no-op unless ROBOT_SOCIAL_MEMORY=1 and somebody was actually recognised.
+            _social_finish()
     except (KeyboardInterrupt, EOFError):
         print()
     finally:

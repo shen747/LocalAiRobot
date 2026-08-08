@@ -118,6 +118,10 @@ class FaceID:
         # Diagnostics: the largest face box (px) seen by the LAST detect()/embed() call, or 0 for none. Logged
         # on a no-match so you can tell a real-but-unrecognised visitor from a tiny Haar fluke on scenery.
         self.last_face_px = 0
+        # The largest box the SIZE FLOOR threw away on the last detect, or 0. Separates "nobody was there"
+        # from "somebody was there but too far back to recognise" -- two outcomes that otherwise log
+        # identically as a silent look. Read by main.py's silent-outcome line.
+        self.last_rejected_px = 0
         # Top-3 [(name, score)] from the LAST identify(), best first. The runner-up's score is what turns a
         # bare "matched 0.398" into something you can act on -- see the ranking note in identify().
         self.last_ranked = []
@@ -126,6 +130,13 @@ class FaceID:
         self._np = None              # numpy (lazy)
         self._ready = None           # None = not tried yet; True/False after _load()
         self._warned = False
+        # Enrolment cache (see _enrollments): the decoded embeddings, valid while mem.faces_version() is
+        # unchanged. Sentinel version is deliberately an object no counter can equal, so the first frame
+        # always builds.
+        self._faces_version = object()
+        self._faces_names = []
+        self._faces_mat = None
+        self._faces_by_name = {}
 
     # -- setup -------------------------------------------------------------------------------------------
     def _load(self):
@@ -163,6 +174,9 @@ class FaceID:
                     "to go unrecognised (a field run matched 6 of 257 face frames this way). Install the "
                     "YuNet detector to fix it:  ./scripts/provision_face_id.sh   then RE-ENROL everyone "
                     "(bash enroll_all.sh) so the stored embeddings are aligned too.")
+            # The other half of that story: the detector says how we make embeddings NOW, this says how the
+            # STORED ones were made. Aligning only the live side is worse than not aligning at all.
+            self.check_enrolment_provenance()
         except Exception as e:
             if not self._warned:
                 log.warning("face_id disabled (%s) -- concierge will smile silently instead of greeting by "
@@ -234,7 +248,13 @@ class FaceID:
             # right eye, left eye, nose tip, right mouth corner, left mouth corner | 14 score.
             bw, bh = float(f[2]), float(f[3])
             if max(bw, bh) < self.min_face:
-                continue                      # same "too far away to recognise" floor as the Haar path
+                # TOO FAR AWAY, not absent -- remember the biggest one we threw away. Without this the two
+                # cases are indistinguishable downstream: an empty hallway and a visitor standing a metre
+                # too far back both arrive as "motion but no face", so the log cannot tell you whether to
+                # lower ROBOT_FACE_ID_MIN_FACE_PX or go looking for a false PIR trigger. This is exactly
+                # the ambiguity behind the unexplained no-face wakes.
+                self.last_rejected_px = max(self.last_rejected_px, int(max(bw, bh)))
+                continue
             pts = np.array(f[4:14], dtype=np.float32).reshape(5, 2)
             out.append((float(f[0]), float(f[1]), bw, bh, pts))
         return out
@@ -246,6 +266,7 @@ class FaceID:
 
         Returns a list of (x, y, w, h, landmarks|None) -- landmarks are present only on the YuNet path."""
         cv2 = self._cv2
+        self.last_rejected_px = 0    # truthful for THIS call, like last_face_px below
         if self._yunet is not None:
             faces = self._boxes_yunet(bgr)
         elif self._cascade is not None:
@@ -367,6 +388,49 @@ class FaceID:
                 return float(np.dot(vec, proto / nrm))        # cosine vs the (re-normalised) prototype
         return max(person_sims)                               # 'max' (default): best-matching enrolled photo wins
 
+    def _enrollments(self):
+        """The enrolment set as `(names, (N, D) matrix, {name: [row, ...]})`, cached across frames.
+
+        WHY. identify() used to call mem.all_faces() on EVERY frame -- a SELECT returning one BLOB per
+        enrolled photo, then np.frombuffer per row, then a python loop of N dot products. A recognition
+        window runs that 2-4 times a second for up to 45s, so a single visitor cost thousands of identical
+        reads of a table that changes only when somebody is enrolled.
+
+        Measured honestly, this is a SMALL win: at 73 enrolments the whole read+decode+score is ~0.18ms
+        against a ~390ms frame (capture + YuNet + ArcFace dominate), so it is ~0.05% of a frame, not the
+        hot-path rescue it looks like. It is here because it is also SIMPLER -- one matmul instead of a
+        loop -- and because the cost grows with the enrolment count while the benefit of re-reading is
+        exactly zero.
+
+        Correctness rests on mem.faces_version(), which add_face/forget_face bump: enrol somebody while the
+        robot is running and the very next frame rebuilds. A Memory without the counter (an older stub, or
+        a test double) falls back to reading every time -- never stale, just slower."""
+        np = self._np
+        try:
+            version = self.mem.faces_version()
+        except AttributeError:
+            version = None                       # no counter -> always rebuild (correct, just not cached)
+        if version is None or version != self._faces_version or self._faces_mat is None:
+            names, rows, by_name = [], [], {}
+            dim = None
+            for name, emb_bytes in self.mem.all_faces():
+                row = np.frombuffer(emb_bytes, dtype=np.float32)
+                if dim is None:
+                    dim = row.shape
+                if row.shape != dim:
+                    continue                     # a row from a different model -- skip, as before
+                names.append(name)
+                rows.append(row)
+                by_name.setdefault(name, []).append(row)
+            self._faces_names = names
+            self._faces_mat = np.stack(rows) if rows else None
+            self._faces_by_name = by_name
+            self._faces_version = version
+            if names:
+                log.debug("face_id: enrolment cache built -- %d embedding(s) for %d person(s)",
+                          len(names), len(by_name))
+        return self._faces_names, self._faces_mat, self._faces_by_name
+
     def identify(self, jpeg_bytes):
         """JPEG bytes -> (name, score, face_seen).
 
@@ -394,14 +458,17 @@ class FaceID:
             return None, 0.0, face_seen
         np = self._np
         # Group every enrolled row by person: their per-photo cosine sims (+ raw embeddings for 'centroid').
+        # The enrolment set is read ONCE and kept as a stacked (N, D) matrix -- see _enrollments() -- so a
+        # frame costs one matmul instead of a SELECT plus a python loop of N dots. Enrol/forget bump
+        # mem.faces_version(), so a person added mid-run is picked up on the very next frame.
+        names, mat, embs_by_name = self._enrollments()
         sims, embs = {}, {}
-        for name, emb_bytes in self.mem.all_faces():
-            other = np.frombuffer(emb_bytes, dtype=np.float32)
-            if other.shape != vec.shape:
-                continue
-            sims.setdefault(name, []).append(float(np.dot(vec, other)))   # both L2-normalised -> dot == cosine
+        if mat is not None and mat.shape[1] == vec.shape[0]:
+            scores = mat @ vec                       # both L2-normalised -> dot == cosine, all rows at once
+            for name, score in zip(names, scores):
+                sims.setdefault(name, []).append(float(score))
             if self._aggregate == "centroid":
-                embs.setdefault(name, []).append(other)
+                embs = embs_by_name
         if not sims:
             # A real face, but nobody enrolled (or every stored row is a different dimension). face_seen is
             # True here -- that is exactly the case the old detect() fallback existed to catch.
@@ -442,6 +509,47 @@ class FaceID:
                  best_name, self._aggregate, max(best, 0.0), self.threshold, self.last_face_px, runner)
         return None, max(best, 0.0), face_seen
 
+    def provenance(self):
+        """How THIS process makes embeddings: 'yunet+aligned', 'haar+unaligned', etc.
+
+        Stamped on every row enroll() writes, and compared against the stored set at startup. The two are
+        not interchangeable: ArcFace is trained on 5-point-aligned crops, so an unaligned embedding scored
+        against an aligned one lands in the same narrow noise band as a total stranger. A field run on the
+        Haar (unaligned) path recognised 6 of 257 face frames with every score squashed into 0.13-0.21 and
+        the 'closest' name spread evenly over all 35 enrolled people -- a lottery that looked exactly like
+        a tuning problem. It was a provenance problem, and nothing in the database could say so."""
+        detector = "yunet" if self._yunet is not None else ("haar" if self._cascade is not None else "none")
+        return f"{detector}+{'aligned' if detector == 'yunet' else 'unaligned'}"
+
+    def check_enrolment_provenance(self):
+        """Log once at startup if the stored embeddings were not all made the way this process makes them.
+
+        Never raises and never blocks anything -- it is a diagnosis, not a gate. Returns True when the set
+        is consistent with this pipeline."""
+        try:
+            counts = self.mem.face_provenance()
+            if not counts:
+                return True
+            mine = self.provenance()
+            foreign = {p: n for p, n in counts.items() if p != mine}
+            if not foreign:
+                log.info("face_id: all %d enrolled embedding(s) match this pipeline (%s)",
+                         sum(counts.values()), mine)
+                return True
+            log.warning(
+                "face_id: %d of %d enrolled embedding(s) were NOT made by this pipeline (%s) -- found %s. "
+                "ArcFace is trained on 5-point ALIGNED crops, so an embedding made without alignment scored "
+                "against an aligned live crop lands in the same noise band as a stranger: scores squash "
+                "together, margins vanish, and the 'closest' name becomes a lottery. This looks exactly "
+                "like a threshold problem and is not one. FIX: re-enrol everyone with the current "
+                "pipeline -- bash enroll_all.sh",
+                sum(foreign.values()), sum(counts.values()), mine,
+                ", ".join(f"{n}x {p}" for p, n in sorted(foreign.items())))
+            return False
+        except Exception as e:
+            log.debug("face_id: provenance check failed (%s)", e)
+            return True
+
     def enroll(self, jpeg_bytes, name):
         """Store a face embedding under `name`. Returns True if a face was found + stored, else False.
         Uses the RELAXED enrolment floor (see min_face_enroll) so a deliberately-chosen photo with a smallish
@@ -458,7 +566,7 @@ class FaceID:
             log.warning("face_id: no usable face in the photo for %r -- NOT enrolled (need a face of at "
                         "least %dpx; use a closer/sharper shot)", name, self.min_face_enroll)
             return False
-        self.mem.add_face(name.strip(), vec.tobytes())
+        self.mem.add_face(name.strip(), vec.tobytes(), provenance=self.provenance())
         if found_px < live_floor:
             log.info("face_id: enrolled %r (face only %dpx, below the live %dpx floor -- this shot will "
                      "help less at a distance; a closer photo would enrol better)", name, found_px, live_floor)

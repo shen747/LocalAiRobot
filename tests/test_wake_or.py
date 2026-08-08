@@ -39,13 +39,18 @@ class FakeSource:
     def bind(self, cb):
         self._cb = cb
 
-    def fire(self):
-        """Simulate a detection, honouring the outcome cooldown like the real sources do."""
+    def fire(self, edge_ago=0.0, stamp=True):
+        """Simulate a detection, honouring the outcome cooldown like the real sources do.
+
+        `edge_ago` models MotionWake's hold sleep: the real source stamps last_wake_at at the moment the
+        PIN went high and only THEN sleeps ROBOT_PIR_HOLD_S before calling back, so by callback time the
+        stamp is already `edge_ago` seconds old. `stamp=False` models a source that never sets it at all."""
         if self._suppress_until and time.monotonic() < self._suppress_until:
             self.rejected_outcome += 1
             return
         self.accepted += 1
-        self.last_wake_at = time.monotonic()
+        if stamp:
+            self.last_wake_at = time.monotonic() - edge_ago
         self._cb()
 
     def arm_cooldown(self, seconds, reason=""):
@@ -154,6 +159,37 @@ check("stats_line empty", z.stats_line(), "")
 check("counters present for the composite", (z.rejected_spike, z.rejected_warmup), (0, 0))
 z.close()
 check("close() on an unconfigured source is safe", True, True)
+
+print("\n=== P6: the composite reports the SOURCE's edge time, not the callback time ===")
+# MotionWake stamps last_wake_at when the PIN went high, BEFORE sleeping ROBOT_PIR_HOLD_S to filter spikes.
+# The composite used to re-stamp at callback time, i.e. AFTER that sleep, silently shaving hold_s off every
+# "[N.NNs from PIR to decision]" line -- the one number used to judge whether the greeter feels quick.
+gpio = FakeSource("gpio-pir")
+c, fired = build([gpio])
+t0 = time.monotonic()
+gpio.fire(edge_ago=0.25)                  # pin went high 250ms ago; the hold sleep has since elapsed
+check("wake accepted", len(fired), 1)
+check("composite adopted the source's edge time", abs(c.last_wake_at - gpio.last_wake_at) < 0.01, True)
+check("...which is EARLIER than the callback time, by the hold", c.last_wake_at < t0 - 0.2, True)
+
+print("\n=== ...and a source with no edge clock still works (falls back to now) ===")
+zig = FakeSource("zigbee-pir", has_spike=False)
+c2, fired2 = build([zig])
+t0 = time.monotonic()
+zig.fire(stamp=False)                     # never stamped -- e.g. an event timed by the broker
+check("wake accepted", len(fired2), 1)
+check("stamped at callback time instead", c2.last_wake_at >= t0, True)
+
+print("\n=== ...and a deduped second source does NOT move the stamp ===")
+a = FakeSource("gpio-pir")
+b = FakeSource("zigbee-pir", has_spike=False)
+c3, fired3 = build([a, b], dedupe_s=5.0)
+a.fire(edge_ago=0.30)
+first_stamp = c3.last_wake_at
+b.fire()                                   # same arrival, inside the dedupe window
+check("one wake only", len(fired3), 1)
+check("deduped", c3.deduped, 1)
+check("stamp unchanged by the dedupe", c3.last_wake_at, first_stamp)
 
 print("\n" + ("=" * 62))
 print(f"  {'ALL PASS' if not FAILS else 'FAILURES: ' + ', '.join(FAILS)}")

@@ -53,10 +53,15 @@ class ZigbeeWake:
         self._suppress_reason = ""
         self._occupied = False        # so only false->true counts as an arrival
         self._online = None           # from the Z2M availability topic; None = not heard from yet
-        self._last_release = 0.0      # when occupancy last went FALSE -- see the departure check in _fire()
+        self._last_release = 0.0      # when the person actually LEFT (back-dated -- see _on_message)
+        self._last_occupied_at = 0.0  # when occupancy was last REPORTED true; presence_age ages from this
         self.cleared_on_departure = 0
         self._topic = ""
         self._cooldown_s = max(0.0, _envf("ROBOT_ZIGBEE_COOLDOWN_S", 2))
+        # The device's own occupancy_timeout, as configured in the Z2M frontend. Used ONLY to back-date the
+        # departure: the `false` message arrives this long after the person actually left, and taking it at
+        # face value makes the next arrival look like the same person for a full minute.
+        self._occupancy_timeout_s = max(0.0, _envf("ROBOT_ZIGBEE_OCCUPANCY_TIMEOUT_S", 90))
 
         topic = (os.environ.get("ROBOT_ZIGBEE_TOPIC", "") or "").strip()
         if not topic:
@@ -120,13 +125,7 @@ class ZigbeeWake:
             if msg.topic == self._avail_topic:
                 self._note_availability(msg.payload)
                 return
-            # RETAINED = the broker replaying the LAST known state to every new subscriber. A retained
-            # `occupancy: true` would wake the camera for someone who walked past an hour ago -- and would
-            # do it again on every single reconnect. Never an arrival.
-            if getattr(msg, "retain", False):
-                self.rejected_retained += 1
-                log.debug("zigbee wake: ignoring RETAINED %s (broker replay, not an arrival)", msg.topic)
-                return
+            retained = bool(getattr(msg, "retain", False))
             data = json.loads(msg.payload.decode("utf-8", "replace"))
         except Exception as e:
             log.debug("zigbee wake: unparsable payload on %s (%s)", getattr(msg, "topic", "?"), e)
@@ -141,19 +140,38 @@ class ZigbeeWake:
         if isinstance(occ, str):
             occ = occ.strip().lower() in ("true", "1", "on", "occupied", "detected")
         occ = bool(occ)
+        now = time.monotonic()
         with self._lock:
             was, self._occupied = self._occupied, occ
+            if occ:
+                self._last_occupied_at = now
+            else:
+                # BACK-DATE THE DEPARTURE. Z2M publishes `false` when the SENSOR's own occupancy_timeout
+                # expires, which is 60-90s after the person actually walked away -- so stamping `now` here
+                # claims they left a minute later than they did, and _fire()'s departure check then spends
+                # that long treating the next arrival as "still the same person". Subtracting the
+                # configured timeout puts the release at roughly the real departure. It is an estimate, and
+                # named as one: set ROBOT_ZIGBEE_OCCUPANCY_TIMEOUT_S to whatever the device is configured
+                # for in the Z2M frontend.
+                self._last_release = now - self._occupancy_timeout_s
+                self.rejected_falling += 1
+        # RETAINED = the broker replaying the LAST known state to every new subscriber. It must still UPDATE
+        # the state above -- it is the truth about what the sensor last said -- but must never TRIGGER.
+        #
+        # Returning before the state update (the old behaviour) is what made this module unsafe to enable:
+        # if the CLEAR arrived retained after a reconnect, _occupied stayed True forever. is_active then
+        # never went false, presence_age() never aged, and -- because a rising edge needs `not was` -- the
+        # sensor could never wake the robot again. One dropped message, permanently deaf.
+        if retained:
+            self.rejected_retained += 1
+            log.debug("zigbee wake: RETAINED %s -> state updated to occupancy=%s, but NOT treated as an "
+                      "arrival (broker replay)", msg.topic, occ)
+            return
         # RISING EDGE ONLY. Z2M publishes `true` on detection and `false` once the sensor's occupancy_timeout
         # expires. Treating every message as a trigger would wake the camera on the CLEAR as well -- i.e.
         # reliably, 60-90s after the person has already left.
         if occ and not was:
             self._fire()
-        elif not occ:
-            # Not a wake, but the timestamp matters: it is how _fire() later tells 'still here' from
-            # 'left and someone new arrived'. Z2M publishes this when the sensor's occupancy_timeout
-            # expires, so it is a genuine departure signal rather than a gap in a pulse train.
-            self._last_release = time.monotonic()
-            self.rejected_falling += 1
 
     def _note_availability(self, payload):
         raw = payload.decode("utf-8", "replace").strip().lower()
@@ -166,6 +184,16 @@ class ZigbeeWake:
             else:
                 log.warning("zigbee wake: sensor %r went OFFLINE -- check its battery. Motion wake now "
                             "relies on the GPIO PIR alone.", self._topic)
+        if not online:
+            # A SENSOR THAT HAS STOPPED TALKING IS NOT REPORTING PRESENCE. Leaving _occupied set would
+            # freeze is_active True and presence_age at whatever it was, for as long as the battery stays
+            # flat -- and in composite mode that min() would hold the whole robot's idea of "someone is
+            # here" open indefinitely. The clear that would normally end it can never arrive, because the
+            # thing that would send it is what went away.
+            with self._lock:
+                if self._occupied:
+                    self._occupied = False
+                    self._last_release = time.monotonic()
         self._online = online
 
     @property
@@ -178,11 +206,20 @@ class ZigbeeWake:
         return bool(self._occupied) if self.available else False
 
     def presence_age(self):
-        """Seconds since this sensor last reported presence -- mirrors pir.MotionWake.presence_age so the
-        face and the retry loop can apply their own windows to either source. A Zigbee sensor only speaks on
-        change, so this is 0.0 while occupied and inf otherwise: there is no pulse train to age out, and its
-        own occupancy_timeout is what eventually publishes the clear."""
-        return 0.0 if self.is_active else float("inf")
+        """Seconds since this sensor last REPORTED presence -- mirrors pir.MotionWake.presence_age.
+
+        It ages. The obvious implementation (0.0 while occupied, inf otherwise) is wrong in composite mode
+        and dangerously so: CompositeWake takes the MIN across sources, so a Zigbee sensor that saw somebody
+        80 seconds ago would report 0.0 and drown out the wired PIR's accurate age. Every consumer keyed on
+        presence -- the 5s presence hold, the smile window, Stage A's still_present, the weather sleep card
+        vs the happy face -- would then behave as though the room were permanently occupied for the whole
+        60-90s occupancy timeout.
+
+        A Zigbee sensor only speaks on change, so the honest answer is "how long since it last said yes",
+        which is exactly what the wired sensor's edge-stamped age means too."""
+        if not self.is_active:
+            return float("inf")
+        return (time.monotonic() - self._last_occupied_at) if self._last_occupied_at else 0.0
 
     # -- the same filter chain as pir.MotionWake -------------------------------------------------------
     def _fire(self):

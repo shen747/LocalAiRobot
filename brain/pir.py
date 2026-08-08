@@ -244,9 +244,13 @@ class MotionWake:
             return False          # can't tell -> trust the edge (fail OPEN: never miss a real visitor)
 
     def _note_chatter(self, now):
-        """Count accepted triggers per window; WARN ONCE when the rate can only be a misbehaving sensor."""
+        """Count accepted triggers per window. Returns `(count, elapsed_text)` when this edge is the one
+        that tips the window over the limit, else None.
+
+        It RETURNS rather than logs because it is called while `_fire` holds `self._lock`, and the warning
+        it produces is ~15 lines to journald -- the caller emits it after releasing the lock (see _fire)."""
         if self._chatter_n <= 0 or self._chatter_window_s <= 0:
-            return
+            return None
         if not self._window_start or now - self._window_start >= self._chatter_window_s:
             self._window_start, self._window_count = now, 0
             self._chatter_warned = False           # a fresh window may warn again if it's still storming
@@ -258,18 +262,23 @@ class MotionWake:
         elapsed_txt = f"{elapsed:.0f}s" if elapsed < 60 else f"{elapsed / 60.0:.1f} min"
         if self._window_count > self._chatter_n and not self._chatter_warned:
             self._chatter_warned = True
-            log.warning(
-                "PIR CHATTER: %d motion triggers in %s on GPIO %s -- that is far more than real "
-                "visitors, so the sensor is almost certainly false-triggering. Each one wakes the camera, so "
-                "this burns CPU + disk all day. Usual causes: VCC on a NOISY rail (a decoupling cap across "
-                "the sensor's VCC/GND is REQUIRED by the PaPIRs datasheet, not optional), the sensor pointed "
-                "at the Pi's own FAN EXHAUST / a heat source / a sunlit window / an HVAC vent, a sensitivity "
-                "pot turned right up, or -- on a source-only output like the PaPIRs -- ROBOT_PIR_PULL=none "
-                "leaving the pin floating when it should be 'down'. Probe it with "
-                "./scripts/pir_sensor_probe.sh, and raise ROBOT_PIR_COOLDOWN_S (or clear ROBOT_PIR_PIN for "
-                "wake-word-only) meanwhile. Do NOT reach for ROBOT_PIR_HOLD_S on a latch-less sensor -- see "
-                "_is_spike(); it will start discarding real visitors instead.",
-                self._window_count, elapsed_txt, self._pin)
+            return (self._window_count, elapsed_txt)
+        return None
+
+    def _warn_chatter(self, count, elapsed_txt):
+        """The chatter WARNING itself -- emitted by _fire once the lock is released."""
+        log.warning(
+            "PIR CHATTER: %d motion triggers in %s on GPIO %s -- that is far more than real "
+            "visitors, so the sensor is almost certainly false-triggering. Each one wakes the camera, so "
+            "this burns CPU + disk all day. Usual causes: VCC on a NOISY rail (a decoupling cap across "
+            "the sensor's VCC/GND is REQUIRED by the PaPIRs datasheet, not optional), the sensor pointed "
+            "at the Pi's own FAN EXHAUST / a heat source / a sunlit window / an HVAC vent, a sensitivity "
+            "pot turned right up, or -- on a source-only output like the PaPIRs -- ROBOT_PIR_PULL=none "
+            "leaving the pin floating when it should be 'down'. Probe it with "
+            "./scripts/pir_sensor_probe.sh, and raise ROBOT_PIR_COOLDOWN_S (or clear ROBOT_PIR_PIN for "
+            "wake-word-only) meanwhile. Do NOT reach for ROBOT_PIR_HOLD_S on a latch-less sensor -- see "
+            "_is_spike(); it will start discarding real visitors instead.",
+            count, elapsed_txt, self._pin)
 
     def _note_release(self):
         """Falling edge: the sensor stopped asserting. Timestamp only -- nothing is woken by a release.
@@ -367,6 +376,16 @@ class MotionWake:
         # which return above.
         self._last_rise_was_spike = False
         self._last_high = now
+        # DECIDE under the lock; LOG and CALL BACK outside it.
+        #
+        # Everything inside the `with` is field reads and integer increments -- nanoseconds. log.info is
+        # not: it goes to journald, which can stall, and the MAIN thread takes this same lock in
+        # arm_cooldown() right after a look decides an outcome. Holding a lock across an I/O call that
+        # another thread's latency depends on is the wrong shape even when it is usually fast, and under
+        # ROBOT_SENSOR_VERBOSE=1 (the setting you use precisely when the sensor is misbehaving, i.e. when
+        # these lines fire most) it was one journald write per edge. So the branch records a verdict and
+        # the logging happens below.
+        verdict, detail, chatter = None, (), None
         with self._lock:
             # Outcome cooldown FIRST: it is the deliberate one (the last look decided how long to wait),
             # so it should be what the counters and the verbose log attribute the rejection to.
@@ -378,28 +397,42 @@ class MotionWake:
                 # greet cooldown, re-armed to 60s again when the conversation ended, blocking every wake in
                 # between with no smile and (outside verbose) no log line at all.
                 if self._departed_since(now):
+                    detail = (self._suppress_reason or "outcome", now - self._last_release)
                     self._suppress_until = 0.0
                     self.cleared_on_departure += 1
-                    if self._verbose:
-                        log.info("PIR: %s cooldown CLEARED on GPIO %s -- sensor was quiet %.1fs, so they "
-                                 "left; this is a new arrival",
-                                 self._suppress_reason or "outcome", self._pin, now - self._last_release)
+                    verdict = "cleared"
                 else:
+                    detail = (self._suppress_reason or "outcome", self._suppress_until - now)
                     self.rejected_outcome += 1
-                    if self._verbose:
-                        log.info("PIR: motion on GPIO %s ignored -- %s cooldown, %.1fs left",
-                                 self._pin, self._suppress_reason or "outcome", self._suppress_until - now)
-                    return
-            if self._last_accepted and (now - self._last_accepted) < self._cooldown_s:
-                self.rejected_cooldown += 1
-                if self._verbose:
-                    log.info("PIR: motion on GPIO %s ignored -- still inside the %.1fs debounce (%.1fs ago)",
-                             self._pin, self._cooldown_s, now - self._last_accepted)
-                return
-            self._last_accepted = now
-            self.last_wake_at = edge_at
-            self.accepted += 1
-            self._note_chatter(now)
+                    verdict = "suppressed"
+            if verdict != "suppressed":
+                if self._last_accepted and (now - self._last_accepted) < self._cooldown_s:
+                    detail = (self._cooldown_s, now - self._last_accepted)
+                    self.rejected_cooldown += 1
+                    verdict = "debounced"
+                else:
+                    self._last_accepted = now
+                    self.last_wake_at = edge_at
+                    self.accepted += 1
+                    chatter = self._note_chatter(now)     # mutates counters only; returns what to warn
+                    if verdict != "cleared":
+                        verdict = "accepted"
+        # ---- nothing below this point holds the lock ----
+        if verdict == "suppressed":
+            if self._verbose:
+                log.info("PIR: motion on GPIO %s ignored -- %s cooldown, %.1fs left",
+                         self._pin, detail[0], detail[1])
+            return
+        if verdict == "debounced":
+            if self._verbose:
+                log.info("PIR: motion on GPIO %s ignored -- still inside the %.1fs debounce (%.1fs ago)",
+                         self._pin, detail[0], detail[1])
+            return
+        if verdict == "cleared" and self._verbose:
+            log.info("PIR: %s cooldown CLEARED on GPIO %s -- sensor was quiet %.1fs, so they left; this "
+                     "is a new arrival", detail[0], self._pin, detail[1])
+        if chatter:
+            self._warn_chatter(*chatter)
         if self._verbose:
             log.info("PIR: motion detected on GPIO %s -> wake", self._pin)
         try:

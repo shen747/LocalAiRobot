@@ -38,8 +38,15 @@ __pycache__/
 # (a deliberate root CLAUDE.md, if ever wanted, can still be added with `git add -f`)
 **/CLAUDE.md
 
-# Scratch implementation plan (working notes; not part of the shipped repo)
+# Scratch planning / review notes at the repo root (working documents, not part of the shipped repo).
+# The pattern: a design doc is drafted here, and whatever survives it ships as an OPERATOR doc under docs/
+# -- e.g. WEATHER.md became docs/weather.md. Leaving these merely untracked was the worst of both worlds:
+# they showed up in every `git status` forever without ever being committed.
 /PLAN.md
+/REVIEW.md
+
+# macOS Finder droppings. Harmless, invisible on Linux, and a nuisance in every diff if one ever lands.
+.DS_Store
 
 # Generated batch enrollment script (scripts/create_enrollments.sh output) -- personal (names + descriptions),
 # regenerated on demand; never committed. The GENERATOR is committed; its OUTPUT is not.

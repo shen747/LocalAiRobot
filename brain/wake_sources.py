@@ -53,6 +53,7 @@ class CompositeWake:
         self._sources = []
         self._on_motion = on_motion
         self._lock = threading.Lock()
+        self._by_name = {}          # source_name -> source, filled by add(); see make_callback
         self._last_fire = 0.0
         self.last_wake_at = 0.0
         self.winner = None          # which source woke us LAST
@@ -64,6 +65,9 @@ class CompositeWake:
     def add(self, source):
         if source is not None:
             self._sources.append(source)
+            # Register by name so make_callback's closure can find its own source at fire time and read
+            # that source's edge timestamp (see the note there). Built after the callback by necessity.
+            self._by_name[getattr(source, "source_name", type(source).__name__)] = source
         return source
 
     def log_ready(self):
@@ -90,19 +94,33 @@ class CompositeWake:
         """Build the on_motion each source is constructed with, so we learn WHO won the race."""
         def _cb():
             now = time.monotonic()
+            # TAKE THE SOURCE'S OWN EDGE TIMESTAMP when it has one, rather than stamping at callback time.
+            # MotionWake deliberately records last_wake_at as the moment the PIN went high, BEFORE it
+            # sleeps ROBOT_PIR_HOLD_S to filter spikes (pir.py: "BEFORE the hold sleep: that sleep is part
+            # of the latency"). Stamping here instead would start the clock after that sleep and silently
+            # shave hold_s off every "[N.NNs from PIR to decision]" line -- the one number used to judge
+            # whether the greeter feels quick, reported as better than it is. Looked up by name at CALL
+            # time because the callback has to be built before the source that owns it exists. Falling
+            # back to `now` keeps sources with no edge clock working unchanged.
+            src = self._by_name.get(name)
+            edge_at = getattr(src, "last_wake_at", 0.0) or now
+            deduped_after = None
             with self._lock:
                 if self._last_fire and (now - self._last_fire) < self._dedupe_s:
                     self.deduped += 1
-                    # Expected and healthy when two sensors cover the same doorway: this IS the OR
-                    # collapsing one arrival into one look. Only a problem if it is ALL you ever see.
-                    log.debug("wake: %s fired %.2fs after %s -- same arrival, deduped",
-                              name, now - self._last_fire, self.winner)
-                    return
-                self._last_fire = now
-                self.last_wake_at = now
-                self.winner = name
-                self.accepted += 1
-                self.wins[name] = self.wins.get(name, 0) + 1
+                    deduped_after = (now - self._last_fire, self.winner)
+                else:
+                    self._last_fire = now
+                    self.last_wake_at = edge_at
+                    self.winner = name
+                    self.accepted += 1
+                    self.wins[name] = self.wins.get(name, 0) + 1
+            if deduped_after is not None:
+                # Expected and healthy when two sensors cover the same doorway: this IS the OR
+                # collapsing one arrival into one look. Only a problem if it is ALL you ever see.
+                log.debug("wake: %s fired %.2fs after %s -- same arrival, deduped",
+                          name, deduped_after[0], deduped_after[1])
+                return
             try:
                 self._on_motion()
             except Exception as e:
