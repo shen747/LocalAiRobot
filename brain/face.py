@@ -58,6 +58,14 @@ _MOODS = {
     # brain/faces/halloween/ are shown ONE-AT-RANDOM per visitor (see _RANDOM_STILL); this procedural entry is
     # only the FALLBACK if those PNGs are missing -- a jack-o'-lantern glow (dark bg, orange eyes, jagged mouth).
     "halloween":   dict(bg=(16, 6, 2),   eye=(255, 140, 20),  look=(0.0, 0.0),    mouth="wavy", wide=True),
+    # weather: the 3-day forecast CARD that stands in for the sleeping face when weather is enabled and a
+    # forecast is in hand (brain/weather_screen.py builds the frames; Face.set_frames registers them). Like
+    # halloween this is registered in _MOODS but NOT in STATES -- STATES drives scripts/generate_faces.sh,
+    # and a procedurally-drawn cartoon "weather face" is not a thing anyone wants on disk. This entry is
+    # purely the whitelist ticket set_expression() demands (an unlisted state is silently coerced to idle)
+    # plus a fallback drawing; it is deliberately the sleeping face's palette, because the only way to see
+    # it is a card that failed to build, and "asleep" is then the honest thing to show.
+    "weather":     dict(bg=(14, 14, 26), eye=(120, 160, 220), look=(0.0, 0.0),    mouth="smile_s", sleep=True),
 }
 
 # Per-state animation timing, used ONLY when a state has >=2 PNG frames: (fps, loop).
@@ -73,6 +81,11 @@ _TIMING = {
     "happy":     (4.0, False),
     "confused":  (3.0, False),
     "alarmed":   (4.0, True),
+    # weather: loop=True is the load-bearing half. An UNLISTED state defaults to loop=False below, which
+    # holds the last frame -- the forecast card would animate once and then freeze for the rest of the
+    # drowse. The fps here is cosmetic: _timing() substitutes the global ROBOT_FACE_FPS for every state
+    # except talking, and the Turing panel clamps that to 10.
+    "weather":   (4.0, True),
 }
 _DEFAULT_TIMING = (2.0, False)
 
@@ -565,6 +578,46 @@ class Face:
         except Exception as e:
             log.warning("face: frame load failed for '%s' (%s) -- using procedural", state, e)
             return []
+
+    def set_frames(self, state, frames):
+        """Register animation frames for `state` IN MEMORY, replacing whatever _load_frames put there.
+        Returns True when they were stored. A no-op (False) on a disabled/backend-less face.
+
+        WHY THIS EXISTS. Every other state's art is static PNGs read from disk ONCE per process and cached
+        forever (_frames_for never invalidates). The weather card is neither: it is generated from live data
+        every poll, so a disk-based route would need cache invalidation AND would write to the SD card every
+        30 minutes for the life of the robot. Registering the frames in memory sidesteps both.
+
+        Frames are converted and resized here, on the CALLER's thread (the weather poller), so the animation
+        loop never pays for it. The write is atomic from the animator's point of view -- it re-reads
+        self._frame_cache[state] each pass and gets either the whole old list or the whole new one."""
+        if not self.enabled or self.backend is None:
+            return False
+        if state not in _MOODS:
+            log.warning("face: set_frames(%r) -- unregistered state, ignored (add it to _MOODS)", state)
+            return False
+        try:
+            w, h = self.backend.width, self.backend.height
+            out = []
+            for img in (frames or []):
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                if img.size != (w, h):
+                    img = img.resize((w, h))
+                out.append(img)
+        except Exception as e:
+            log.warning("face: set_frames(%s) failed (%s) -- keeping the previous frames", state, e)
+            return False
+        if not out:
+            return False
+        with self._anim_lock:
+            self._frame_cache[state] = out
+            showing = (self._state == state)
+            if showing:
+                self._frame_index = 0
+        if showing:
+            self._wake.set()      # on screen right now -> interrupt the frame wait so the new card shows
+        return True
 
     def _show(self, state, img):
         try:

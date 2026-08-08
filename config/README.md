@@ -50,6 +50,27 @@ A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary ass
 
 Enrol people to greet: `./scripts/enroll_person.sh "Ramesh" "my creator" "Ruh-mesh" photo.jpg` — the 3rd field is a **say-as** respelling spoken in the greeting (`""` = greet by the real name); `--camera` captures live webcam shots. Stores a face **embedding** in the RAG db, not an image.
 
+## Weather (forecast card + weather-aware greetings)
+
+The one **online** feature, so it is strictly additive: a daemon thread polls a forecast, everything else reads
+the last snapshot. No network → the cached forecast → after `STALE_S` → time-of-day greetings and the normal Zzz
+sleep face. Nothing in the greeting path, the command loop or startup ever waits on a fetch. Full setup and what
+degrades when the internet is down: [docs/weather.md](../docs/weather.md).
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_WEATHER_ENABLE` | `0` | `1` = weather on: the 3-day forecast card replaces the sleeping face, greetings gain a weather sentence, and *"what's the weather"* is answered from data. `0` = inert (no thread, no network, every existing path byte-for-byte unchanged). |
+| `ROBOT_WEATHER_PROVIDER` | `open-meteo` | Forecast source. `open-meteo` is the only built-in (keyless, no account). The **hot-swap point**: a new source is one class returning the same normalized days plus one registry entry in `brain/weather.py`. An unknown value warns and leaves weather unavailable. |
+| `ROBOT_WEATHER_LAT` / `ROBOT_WEATHER_LON` | *(blank)* | **Required when enabled.** Blank = weather stays off with one explanatory log line. **Privacy: these are your home address** to within a street — `robot.env` is tracked by git, so real values belong in your local-only commit. 2 decimals (~1 km) is plenty for a forecast grid cell. |
+| `ROBOT_WEATHER_TZ` | *(blank)* → `Australia/Melbourne` | IANA zone for the API's day boundaries **and** the morning/afternoon/evening greeting. Explicit because nothing in this repo sets the Pi's timezone — a freshly-imaged card is often UTC. Invalid zone → warns once, falls back to the system clock. |
+| `ROBOT_WEATHER_REFRESH_S` | `1800` | Forecast poll period (s). `0` = fetch once at startup — the thread still ticks hourly regardless, because the card must roll *Today* over at **midnight** without a network call. |
+| `ROBOT_WEATHER_TIMEOUT_S` | `8` | Network budget for one fetch cycle (s), split across retries against an absolute deadline. Bounds the poll thread, never the robot. |
+| `ROBOT_WEATHER_STALE_S` | `21600` | How long a cached forecast stays usable (6 h). Inside it an offline robot keeps showing/speaking the last-good data; past it the card reverts to Zzz and greetings to time-only. Offline-tolerant **without lying**. |
+| `ROBOT_WEATHER_CACHE` | *(blank)* → `~/.localairobot/weather_cache.json` | Disk cache so a reboot during an outage still has a forecast. Disk errors warn once and run from memory. |
+| `ROBOT_WEATHER_GREETING` | `1` | `1` = greetings become time- and weather-aware (opener + one advice sentence). `0` = the plain concierge greeting, unchanged. No forecast → the advice sentence is simply omitted. Halloween Mode outranks it. |
+| `ROBOT_WEATHER_CHILLY_C` / `ROBOT_WEATHER_HOT_C` | `15` / `30` | Advice bands on **today's max** (°C) — the "how should I dress" number. Rain and storms outrank both. |
+| `ROBOT_WEATHER_TRIGGERS` | *(blank)* | **Extra** ask-phrases, comma-separated — these *add to* the built-in list (unlike `ROBOT_LOOK_TRIGGERS`, which replaces it). Substring-matched, so keep entries multi-word. |
+
 ## Robot identity
 
 | Key | Default | What it does |

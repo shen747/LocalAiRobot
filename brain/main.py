@@ -34,6 +34,8 @@ import halloween
 import inference
 import remote
 import vision
+import weather
+import weather_screen
 from camera import Camera
 from driver import RobotDriver, VALID_DRIVE, VALID_STEER
 from face import Face
@@ -147,6 +149,33 @@ def look_triggers():
 def is_look_command(text):
     low = text.lower()
     return any(t in low for t in look_triggers())
+
+
+# --- WEATHER gate: "what's the weather" must be answered from the FORECAST, not from whatever the model
+# feels like saying. Same post-LLM promotion mechanism as the LOOK gate above, and deliberately NOT a new
+# action verb: _ACTION_SCHEMA is shared byte-for-byte between the crawler and concierge personas, its
+# tiebreak tells the model "when in doubt, choose SAY", and an unknown action falls through to DRIVE teleop
+# -- so a half-recognised weather verb would literally drive the car.
+#
+# One deliberate difference from look_triggers(): ROBOT_WEATHER_TRIGGERS *ADDS TO* these defaults rather
+# than replacing them. Adding one phrase should not silently cost you the other thirteen.
+#
+# Matching is bare substring containment, so every entry must be MULTI-WORD. Excluded on purpose:
+# "temperature" (hijacks "what's your CPU temperature"), and bare "weather"/"forecast"/"umbrella". ---
+DEFAULT_WEATHER_TRIGGERS = ("the weather", "weather today", "weather tomorrow", "weather like",
+                            "the forecast", "is it raining", "will it rain", "going to rain",
+                            "need an umbrella", "how hot is it", "how cold is it", "how hot today",
+                            "how cold today")
+
+
+def weather_triggers():
+    extra = [t.strip().lower() for t in env("ROBOT_WEATHER_TRIGGERS", "").split(",") if t.strip()]
+    return list(DEFAULT_WEATHER_TRIGGERS) + extra
+
+
+def is_weather_command(text):
+    low = text.lower()
+    return any(t in low for t in weather_triggers())
 
 
 # Crawl by default: a normal move ("come forward", "follow me") stays SLOW. Speed only climbs when the
@@ -641,6 +670,14 @@ def main():
     # sensor that wakes the robot like the wake word. On motion the callback sets motion_event + cancels the
     # in-progress listen so wait_for_trigger() returns 'MOTION'. Both degrade to no-ops if unconfigured.
     face_identifier = FaceID(mem)
+    # Weather (ROBOT_WEATHER_ENABLE=1; None when off, and every consumer guards on that). CONSTRUCTED HERE
+    # but STARTED much further down, next to the idle dict -- deliberately two steps. Construction is pure:
+    # it reads config and the disk cache, opens no socket and spawns no thread, so it is safe this early.
+    # start() is what touches fc and idle["face"] from the poll thread, so it has to wait until those exist.
+    # The name is bound HERE because handle_command (defined below) closes over it, and the HTTP endpoint
+    # goes live BEFORE the idle dict is built -- a POST /speak landing in that window would otherwise hit an
+    # unbound local, and handle_command's except SPEAKS the error out loud.
+    weather_svc = weather.WeatherService() if weather.enabled() else None
     motion_event = threading.Event()
     # WHICH sensor decides "someone arrived". Only 'pir' ships today -- any digital-pin motion sensor, from a
     # few-pound HC-SR501 to an industrial Panasonic PaPIRs, since brain/pir.py just reads a HIGH/LOW (pick
@@ -1117,6 +1154,19 @@ def main():
                         ctx = (person_ctx["note"] + " " + ctx).strip()
                     person_ctx["note"] = ""
                     person_ctx["gen"] += 1   # consume: invalidate any still-running check for this wake
+                # LIVE WEATHER NOTE. Same mechanism as the person note above, with three deliberate
+                # differences: it is prepended for HTTP too (or phone questions never see the forecast), it
+                # is NOT consumed after one turn (weather stays true), and it is not gated on weather-ish
+                # wording -- so a follow-up the trigger list can't anticipate ("should I take a jacket?")
+                # still answers from data instead of inventing an answer. The forecast is deliberately NOT
+                # written into the RAG store: that store dedupes facts in BM25-rank order and never prunes
+                # them, so yesterday's forecast would outrank today's and be spoken as current.
+                # summary_note() is a dict read and a string build -- one sentence, and never raises (the
+                # except below SPEAKS its argument, so a throwing note would be voiced every single turn).
+                if weather_svc is not None:
+                    note = weather_svc.summary_note()
+                    if note:
+                        ctx = (note + " " + ctx).strip()
                 resp = query_ollama(cfg, text, context=ctx)
             except Exception as e:
                 snd.stop_thinking()
@@ -1157,6 +1207,19 @@ def main():
             if action == "REMEMBER" and not str(target or "").strip():
                 action = "SAY"       # asked to remember but no name -> just reply, store nothing
 
+            # A direct "what's the weather" is answered from the FORECAST, not from the model's paraphrase
+            # of it: SAY replies are capped at ~30 words and served by a small local model, and a 3-day
+            # answer has six numbers in it that have to be right. Placed BEFORE the LOOK promotion and
+            # accepting LOOK as well as SAY, which decides the overlap case on purpose: "what do you see
+            # outside, is it raining" goes to the FORECAST, not the camera -- the camera answer would be a
+            # guess about the sky, and over HTTP with ROBOT_HTTP_ALLOW_CAMERA=0 it would degrade to the
+            # canned camera refusal instead. (Known limit, shared with the LOOK gate: a weather question the
+            # model tags as a movement verb is refused by the concierge branch above before any gate runs.)
+            if weather_svc is not None and action in ("SAY", "LOOK") and is_weather_command(text):
+                print("(gate: a weather question -> WEATHER, answered from the forecast)")
+                log.info("weather gate: promoting %s -> WEATHER (forecast request)", action)
+                action = "WEATHER"
+
             # A live "what do you see / what is this" must LOOK (fresh capture) rather than answer from
             # stored scene memory -- promote SAY -> LOOK on those phrases even if the model chose SAY.
             if action == "SAY" and is_look_command(text):
@@ -1179,6 +1242,16 @@ def main():
                 # Not a movement command -- just speak gemma's conversational reply; don't drive.
                 print(f"action=SAY reply={reply!r}")
                 driver.stop()
+                say(reply)
+            elif action == "WEATHER":
+                # Speak the forecast the poll thread already holds -- the LOOK precedent of speaking a
+                # subsystem-built string and DISCARDING the model's reply. spoken_summary() returns the
+                # graceful "I can't reach the weather service" line itself when there is no usable
+                # forecast, so voice and the HTTP JSON reply carry identical text with no branch here.
+                # Normal talking face; the forecast CARD lives on the sleep screen and only there.
+                driver.stop()
+                reply = weather_svc.spoken_summary()
+                print(f"action=WEATHER reply={reply!r}")
                 say(reply)
             elif action == "REMEMBER":
                 # Teach the robot a person/thing: photograph what the camera sees, describe it with
@@ -1416,16 +1489,85 @@ def main():
     # Timer thread can flip the shared state; a timed-out chat sets it to 'sleeping' in either mode.
     concierge_mode = concierge.enabled()
     idle = {"face": "idle"}
+
+    def _sleep_face():
+        """Which face the SLEEP screen shows: the 3-day forecast card, or the normal Zzz.
+
+        Evaluated at every write rather than latched once, so a robot that drowses while offline gets the
+        honest Zzz and one that recovers its network mid-drowse gets the card. has_screen() is the right
+        predicate here and NOT for the greeting/spoken surfaces -- it also requires the card frames to be
+        registered on the panel, so a robot with ROBOT_FACE_ENABLE=0 still speaks weather-aware greetings
+        while never claiming to display anything."""
+        if weather_svc is not None and weather_svc.has_screen():
+            return "weather"
+        return "sleeping"
+
+    def _greeting_for(name, pron):
+        """The concierge greeting, weather-decorated when enabled and a forecast is in hand.
+
+        Weather is a DECORATION, not a persona: PERSONA_CAPS, the refusals and the LLM identity are all
+        untouched, which keeps it clear of the "persona precedence must agree at three branch points" trap.
+        Precedence is halloween > weather-decorated concierge > plain concierge -- halloween greets from a
+        different call site above and never reaches here, so a spooky greeting is never weather-decorated.
+        No forecast (offline, stale, or ROBOT_WEATHER_GREETING=0) falls back to the plain greeting: the
+        greet path is synchronous (say() blocks through Piper + aplay), so it must never wait on weather,
+        and a half-built weather sentence is worse than none. Text only -- the faces are unchanged, because
+        the forecast card belongs on the sleep screen and nowhere else."""
+        if weather_svc is not None and weather.greeting_enabled():
+            snap = weather_svc.get()
+            weather_svc.note_greeting(had_advice=snap is not None)
+            return (weather.greeting(name, pron, snapshot=snap) if name
+                    else weather.greeting_unknown(snapshot=snap))
+        return concierge.greeting(name, pron) if name else concierge.greeting_unknown()
+
     def _drowse():
-        idle["face"] = "sleeping"
-        fc.set_expression("sleeping")
+        idle["face"] = _sleep_face()
+        fc.set_expression(idle["face"])
+
+    def _weather_changed(snapshot):
+        """Runs on the weather-poll thread after EVERY cycle, with snapshot possibly None.
+
+        Two jobs. (1) Rebuild and register the card frames -- the face's frame cache loads from disk once
+        per process and never invalidates, so an in-memory re-registration is the only way live data reaches
+        the panel. (2) Reconcile the sleep screen in BOTH directions: a drowsed robot can sit on this screen
+        for hours, so an expired forecast must fall back to Zzz (never show yesterday's "Today") and a
+        recovered one must come back. Writing idle["face"] + fc from this thread is the same cross-thread
+        write the drowse Timer already performs, and _face_tick re-asserts every tick, so a look running
+        concurrently self-heals within one tick."""
+        ok = False
+        try:
+            if snapshot is not None and getattr(fc, "enabled", False) and fc.backend is not None:
+                frames = weather_screen.build_frames(snapshot, fc.backend.width, fc.backend.height)
+                ok = bool(frames) and fc.set_frames("weather", frames)
+        except Exception as e:
+            log.warning("weather: could not put the forecast card on the panel (%s) -- the sleep screen "
+                        "stays as it is", e)
+            ok = False
+        weather_svc.set_screen_ready(ok)
+        want = _sleep_face()
+        if idle["face"] in ("sleeping", "weather") and idle["face"] != want:
+            log.info("weather: sleep screen -> %s", want)
+            idle["face"] = want
+            fc.set_expression(want)
+
+    # STARTED HERE, not up where the service was constructed, because this closure writes idle["face"] and
+    # calls fc.* -- and start() kicks the first fetch off immediately, so on a disk-cache hit _weather_changed
+    # can run within milliseconds. Every name it touches has to exist first. Gate is flag + configured only,
+    # deliberately NOT the period-gated shape the other background threads use: the loop must keep ticking
+    # even at ROBOT_WEATHER_REFRESH_S=0 so the card rolls "Today" over at midnight without a network call.
+    if weather_svc is not None:
+        weather_svc.start(on_change=_weather_changed)
+
     try:
         while True:
             fc.set_expression(idle["face"])
             # Concierge Mode ONLY: arm a one-shot drowse to 'sleeping' after the idle timeout (cancelled the
             # instant a trigger arrives). NEVER armed in crawler mode -> normal driving behaviour is untouched.
+            # The guard covers 'weather' as well as 'sleeping' -- both ARE the drowsed state, and without it a
+            # robot drowsed to the forecast card would arm a fresh Timer on every idle-loop pass (including
+            # the CANCELLED/RETRY re-entries below), defeating the point of arming once.
             drowse = None
-            if concierge_mode and idle["face"] != "sleeping":
+            if concierge_mode and idle["face"] not in ("sleeping", "weather"):
                 drowse = threading.Timer(followup_silence_s, _drowse)
                 drowse.daemon = True
                 drowse.start()
@@ -1660,7 +1802,7 @@ def main():
                                  res["best_score"], _since_wake())
                         _keep_capture(res.get("jpeg"), "known", name)
                         snd.play("wake_ack")
-                        say(concierge.greeting(name, pron))
+                        say(_greeting_for(name, pron))
                     else:
                         # present but unrecognised after the window -> a warm, name-less greeting (still chats).
                         log.info("concierge: person present but unrecognised after %d try(s) (%d face hit(s), "
@@ -1669,7 +1811,7 @@ def main():
                                  res["face_hits"], res["best_score"], face_identifier.threshold, _since_wake())
                         _keep_capture(res.get("jpeg"), "unknown")
                         snd.play("wake_ack")
-                        say(concierge.greeting_unknown())
+                        say(_greeting_for(None, None))
             if trigger == "WAKE":
                 driver.resume_sensing()    # the turn may drive/explore -> bring the ultrasonics back up
                 fc.set_expression("inquisitive")   # curious "just woken" face, held through the first record
@@ -1704,9 +1846,9 @@ def main():
                         break
                     silent_for = time.monotonic() - last_voice
                     if silent_for >= followup_silence_s:
-                        log.info("conversation: %.0fs of silence -> sleeping (say the wake word to talk again)",
-                                 silent_for)
-                        fc.set_expression("sleeping")   # peaceful closed-eyes + Zzz
+                        log.info("conversation: %.0fs of silence -> %s (say the wake word to talk again)",
+                                 silent_for, _sleep_face())
+                        fc.set_expression(_sleep_face())   # peaceful closed-eyes + Zzz, or the forecast card
                         # The spoken goodbye ("Okay, chat later." / "Okay, see ya.") is OPTIONAL. It is right
                         # after a real conversation, and wrong for a hallway greeter that people walk past:
                         # there, the follow-up window almost always times out with nobody there, so the clip
@@ -1720,7 +1862,7 @@ def main():
                         else:
                             snd.play_blocking("sleep")  # say goodbye FULLY before we re-enter the wake listen
                                                         # (which then holds audio_lock)
-                        idle["face"] = "sleeping"       # stay "asleep" until the next wake / motion
+                        idle["face"] = _sleep_face()    # stay "asleep" until the next wake / motion
                         # DISCARD any motion that fired DURING the conversation. It is almost always the
                         # person we were just talking to -- they stood in front of the sensor for the whole
                         # exchange -- so servicing it now makes Jarvis smile at the back of someone who has
@@ -1777,6 +1919,11 @@ def main():
         if remote_srv is not None:      # stop accepting phone commands before tearing devices down
             try:
                 remote_srv.stop()
+            except Exception:
+                pass
+        if weather_svc is not None:     # let the poll thread's interruptible sleep return at once
+            try:
+                weather_svc.stop()
             except Exception:
                 pass
         _close_devices()   # P2-3: shared with the early no-trigger return so the two can't drift apart
