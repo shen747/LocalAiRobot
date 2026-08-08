@@ -141,7 +141,11 @@ def _layout(width, height):
     return {"col_w": col_w, "side": side, "label_px": label_px, "tmax_px": tmax_px,
             "tmin_px": tmin_px, "cond_px": cond_px, "icon_top": icon_top,
             "label_y": int(height * 0.040), "tmax_y": tmax_y, "tmin_y": tmin_y,
-            "cond_y": tmin_y + int(tmin_px * 1.25),
+            # Clear the FULL height of the low-temperature text, then add a real gap. Written as
+            # (tmin_y + tmin_px + gap) rather than a multiplier so the gap is a gap and not an accident of
+            # font metrics: the previous 1.25x left about 6px on a 320px panel, so "10 degrees" and "RAIN"
+            # read as one crowded block. There is ~50px of unused space below, so this costs nothing.
+            "cond_y": tmin_y + tmin_px + int(height * 0.030),
             "cond_max_w": col_w * 0.92}                   # leave a gutter so labels never touch the divider
 
 

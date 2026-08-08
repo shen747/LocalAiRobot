@@ -171,6 +171,20 @@ for (w, h) in ((480, 320), (800, 480), (320, 480), (240, 320)):
 ck(f"no label overflows its column ({7 ** 3} combos x 4 sizes)", overflow, [])
 ck("no label falls off the bottom of the panel", clipped, [])
 
+# The label must not crowd the low temperature above it. Measured on real INK extents, not on the nominal
+# font size -- the first version derived cond_y from a multiple of the font size, which left about 6px on a
+# 320px panel and read as one block ("10 degrees RAIN"). Floor is a proportion of height so it holds on
+# every panel; there is ~50px spare below, so the gap costs nothing.
+tight = []
+for (w, h) in ((480, 320), (800, 480), (320, 480), (240, 320)):
+    L = ws._layout(w, h)
+    probe = ImageDraw.Draw(Image.new("RGB", (w, h)))
+    _l, t, _r, b = probe.textbbox((0, 0), "10°", font=ws._font(L["tmin_px"]))
+    gap = L["cond_y"] - (L["tmin_y"] + (b - t))           # ink bottom of the low temp -> top of the label
+    if gap < h * 0.025:
+        tight.append((w, h, gap))
+ck("the condition label clears the low temperature by a visible gap", tight, [])
+
 # One size for the whole row -- sizing columns independently fits equally well but reads as a mistake.
 probe = ImageDraw.Draw(Image.new("RGB", (320, 480)))
 L = ws._layout(320, 480)
