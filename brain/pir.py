@@ -308,14 +308,31 @@ class MotionWake:
         pending suppression (so setting the env keys to 0 restores "look at every accepted edge").
 
         Deliberately ABSOLUTE (a deadline, not a duration counted from the last edge): the look itself takes
-        time, and the cooldown should start when we FINISHED deciding, not when the edge arrived."""
+        time, and the cooldown should start when we FINISHED deciding, not when the edge arrived.
+
+        EXTEND-ONLY. A later call can push the deadline OUT but never pull it in, and the reason follows the
+        deadline that wins. Suppression here means "we have already dealt with whoever is standing there",
+        and that judgement cannot become less true because a second, cheaper look ran afterwards: a 4s
+        `silent` armed on the heels of a 60s `greeted` would otherwise cut the greet cooldown by 56s and
+        re-greet the person mid-conversation. The callers are sequential today, so this is a guard rather
+        than a fix for anything observed -- but it is the invariant the two-stage design already assumes,
+        and it costs one max().
+
+        `seconds` <= 0 still CLEARS outright: that is an explicit "stop suppressing", not a shorter
+        suppression, so it must win over the extend rule or setting the env keys to 0 would stop working."""
         try:
             secs = max(0.0, float(seconds or 0.0))
         except (TypeError, ValueError):
             return
         with self._lock:
-            self._suppress_until = (time.monotonic() + secs) if secs > 0 else 0.0
-            self._suppress_reason = reason or ""
+            if secs <= 0:
+                self._suppress_until = 0.0
+                self._suppress_reason = ""
+                return
+            until = time.monotonic() + secs
+            if until > self._suppress_until:
+                self._suppress_until = until
+                self._suppress_reason = reason or ""
 
     def _fire(self):
         """gpiozero's rising-edge callback (its own thread). Filters the edge, then wakes the brain."""

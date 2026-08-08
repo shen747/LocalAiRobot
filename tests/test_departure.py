@@ -133,6 +133,56 @@ m._fire()
 ck("new visitor served instead of ignored", len(fired), 1)
 print(f"   -> deaf time cut from 60s to {1025.0 - 1000.0:.0f}s for this arrival")
 
+print("\n=== P5: arm_cooldown EXTENDS, never shortens ===")
+# Suppression means "we have already dealt with whoever is standing there". A second, cheaper look running
+# afterwards cannot make that less true, so a short cooldown must not cut a long one short -- otherwise a
+# 4s 'silent' armed on the heels of a 60s 'greeted' re-greets the person mid-conversation.
+fired = []
+m = fresh()
+NOW[0] = 1000.0
+m.arm_cooldown(60, "greeted")
+ck("long cooldown armed", round(m._suppress_until), 1060)
+m.arm_cooldown(4, "silent")              # a cheaper look lands right behind it
+ck("short cooldown does NOT shorten it", round(m._suppress_until), 1060)
+ck("...and the reason still names the deadline that won", m._suppress_reason, "greeted")
+NOW[0] = 1005.0
+m._fire()                                # inside what the SHORT one would have allowed
+ck("still suppressed at t+5s", len(fired), 0)
+
+print("\n=== ...but a LONGER one still pushes the deadline out ===")
+m = fresh()
+NOW[0] = 1000.0
+m.arm_cooldown(4, "silent")
+ck("short armed first", round(m._suppress_until), 1004)
+m.arm_cooldown(60, "greeted")
+ck("longer one wins", round(m._suppress_until), 1060)
+ck("reason follows the winner", m._suppress_reason, "greeted")
+
+print("\n=== ...and 0 still CLEARS outright (the documented off-switch) ===")
+# 0 is "stop suppressing", not "suppress for zero seconds", so it must beat the extend rule or setting
+# ROBOT_CONCIERGE_*_COOLDOWN_S=0 would silently stop working.
+fired = []
+m = fresh()
+NOW[0] = 1000.0
+m.arm_cooldown(60, "greeted")
+m.arm_cooldown(0, "")
+ck("cleared", m._suppress_until, 0.0)
+ck("reason cleared too", m._suppress_reason, "")
+NOW[0] = 1001.0
+m._fire()
+ck("every edge served again", len(fired), 1)
+
+print("\n=== extend-only cannot creep the deadline forever ===")
+# Each call is max(existing, now + secs), so repeated arming tracks the clock rather than accumulating.
+m = fresh()
+NOW[0] = 1000.0
+for _ in range(20):
+    m.arm_cooldown(60, "greeted")
+ck("deadline is now+60, not now+1200", round(m._suppress_until), 1060)
+NOW[0] = 1030.0
+m.arm_cooldown(60, "greeted")
+ck("a later arm does push it out", round(m._suppress_until), 1090)
+
 print("\n" + "=" * 60)
 print(f"  {'ALL PASS' if not F else 'FAILURES: ' + ', '.join(F)}")
 print("=" * 60)

@@ -1857,12 +1857,17 @@ def main():
                         # ROBOT_CONCIERGE_GREET_ONLY=1 drops it: the greeting stays the only thing Jarvis says,
                         # and it goes quiet the moment the follow-up window expires. The face still changes to
                         # 'sleeping', so you can see it happen without hearing it.
-                        if os.environ.get("ROBOT_CONCIERGE_GREET_ONLY", "0") == "1":
-                            log.info("conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)")
-                        else:
-                            snd.play_blocking("sleep")  # say goodbye FULLY before we re-enter the wake listen
-                                                        # (which then holds audio_lock)
-                        idle["face"] = _sleep_face()    # stay "asleep" until the next wake / motion
+                        # ARM AND CLEAR *BEFORE* THE GOODBYE CLIP, not after it. The clip is blocking (it
+                        # holds audio_lock through Piper + aplay), so with it enabled the old order left a
+                        # window of exactly its own length in which an edge could be accepted, set the
+                        # event, and then be cleared by a discard that ran afterwards -- the wake vanished
+                        # with the cooldown not yet armed to explain it. Doing both first shrinks that
+                        # window to the few microseconds between these two statements.
+                        # (On this robot ROBOT_CONCIERGE_GREET_ONLY=1 makes the clip a no-op, so the
+                        # reorder buys nothing TODAY -- it buys correctness for anyone who turns the
+                        # goodbye back on, which is the shipped default.)
+                        motion_wake.arm_cooldown(
+                            _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
                         # DISCARD any motion that fired DURING the conversation. It is almost always the
                         # person we were just talking to -- they stood in front of the sensor for the whole
                         # exchange -- so servicing it now makes Jarvis smile at the back of someone who has
@@ -1871,15 +1876,23 @@ def main():
                         # honoured the instant the chat ended -- "motion but nobody there, 30.54s since the
                         # PIR fired". The greet cooldown doesn't cover this case because it is only armed
                         # when the CONCIERGE greets; a conversation opened by the wake word never arms it.
-                        # (A genuinely different visitor arriving mid-chat is not lost: they are still
-                        # there, so the next edge -- or their next movement -- wakes it normally.)
+                        # A genuinely different visitor arriving mid-chat is NOT lost: they are still there,
+                        # and the cooldown armed above is departure-aware -- the first edge after the sensor
+                        # has been quiet for ROBOT_PIR_PRESENCE_HOLD_S clears it and wakes normally
+                        # (pir._fire, "this is a new arrival"). What that cannot cover is a new arrival who
+                        # OVERLAPS the person leaving, with no quiet gap between them; that one waits out
+                        # the cooldown.
                         if motion_event is not None and motion_event.is_set():
                             motion_event.clear()
                             concierge_stats["discarded_chat"] += 1
                             log.info("concierge: discarded a motion wake that arrived during the "
                                      "conversation (almost certainly the person we were talking to)")
-                        motion_wake.arm_cooldown(
-                            _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
+                        if os.environ.get("ROBOT_CONCIERGE_GREET_ONLY", "0") == "1":
+                            log.info("conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)")
+                        else:
+                            snd.play_blocking("sleep")  # say goodbye FULLY before we re-enter the wake listen
+                                                        # (which then holds audio_lock)
+                        idle["face"] = _sleep_face()    # stay "asleep" until the next wake / motion
                         break
                     fc.set_expression("idle")   # nothing heard yet; keep waiting for a follow-up
                     continue
