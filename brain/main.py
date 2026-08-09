@@ -1058,7 +1058,7 @@ def main():
     # and whatever is left over is Event coalescing (several accepted edges collapsing into one
     # threading.Event, which by design services them as a single look).
     concierge_stats = {"probe_silent": 0, "probe_hit": 0, "window_lost": 0, "greeted": 0, "by_name": 0,
-                       "dropped_stale": 0, "discarded_chat": 0}
+                       "dropped_stale": 0, "discarded_chat": 0, "kept_newcomer": 0}
     # Social Memory telemetry, same monotonic-counter discipline. Two numbers are enough to answer the only
     # questions a soak asks: is it actually using the history, and is it actually learning anything?
     # LOCKED, unlike concierge_stats: `learned` is incremented from the social-extract DAEMON THREADS, and
@@ -1109,10 +1109,13 @@ def main():
                     sbase.update(social_stats)
                 log.info("concierge: last %.0f min -- PIR %d wake(s) (+%d held by cooldown, +%d debounce, "
                          "+%d noise) | %d silent (probe), %d looked at, %d lost in the window, "
-                         "%d greeting(s) (%d by name) | disposal: %d stale, %d mid-chat, %d coalesced",
+                         "%d greeting(s) (%d by name) | disposal: %d stale, %d mid-chat, %d coalesced"
+                         "%s",
                          period_s / 60.0, woke, out, deb, spk, seen["probe_silent"], seen["probe_hit"],
                          seen["window_lost"], seen["greeted"], seen["by_name"],
-                         seen["dropped_stale"], seen["discarded_chat"], collapsed)
+                         seen["dropped_stale"], seen["discarded_chat"], collapsed,
+                         f" | {seen['kept_newcomer']} kept (new arrival mid-chat)"
+                         if seen["kept_newcomer"] else "")
             except Exception as e:
                 log.debug("concierge summary error: %s", e)
 
@@ -2005,6 +2008,9 @@ def main():
             #     person-check + wake-ack above are wake-ONLY -- follow-ups just listen. ---
             last_voice = time.monotonic()
             first_turn = True   # hold the inquisitive wake face through the FIRST record; then show "listening"
+            # Baseline for the "was that somebody NEW?" test at the end of the conversation. Sampled here,
+            # where the chat begins, so the comparison covers exactly its duration. See the silence exit.
+            chat_arrivals_at_start = getattr(motion_wake, "arrivals_after_gap", 0)
             while True:
                 if not first_turn:
                     fc.set_expression("listening")
@@ -2045,25 +2051,47 @@ def main():
                         # goodbye back on, which is the shipped default.)
                         motion_wake.arm_cooldown(
                             _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
-                        # DISCARD any motion that fired DURING the conversation. It is almost always the
-                        # person we were just talking to -- they stood in front of the sensor for the whole
-                        # exchange -- so servicing it now makes Jarvis smile at the back of someone who has
-                        # already walked off. A field log caught exactly that: a wake-word chat ran
-                        # 09:14:52-09:15:32, the sensor tripped mid-conversation, and the queued wake was
-                        # honoured the instant the chat ended -- "motion but nobody there, 30.54s since the
-                        # PIR fired". The greet cooldown doesn't cover this case because it is only armed
-                        # when the CONCIERGE greets; a conversation opened by the wake word never arms it.
-                        # A genuinely different visitor arriving mid-chat is NOT lost: they are still there,
-                        # and the cooldown armed above is departure-aware -- the first edge after the sensor
-                        # has been quiet for ROBOT_PIR_PRESENCE_HOLD_S clears it and wakes normally
-                        # (pir._fire, "this is a new arrival"). What that cannot cover is a new arrival who
-                        # OVERLAPS the person leaving, with no quiet gap between them; that one waits out
-                        # the cooldown.
+                        # WAS THAT QUEUED MOTION THE PERSON WE WERE TALKING TO, OR SOMEBODY NEW?
+                        #
+                        # It used to be discarded unconditionally, on the reasoning that a visitor stands
+                        # in front of the sensor for the whole exchange, so servicing it afterwards makes
+                        # Jarvis smile at the back of someone who has already walked off. A field log
+                        # caught exactly that: a chat ran 09:14:52-09:15:32, the sensor tripped mid-way, and
+                        # the queued wake was honoured the instant the chat ended -- "motion but nobody
+                        # there, 30.54s since the PIR fired".
+                        #
+                        # But that reasoning is only right when NOBODY LEFT. The sensor can already tell the
+                        # difference, and was telling us: a later log has
+                        #   "cooldown CLEARED -- sensor was quiet 16.5s, so they left; this is a new arrival"
+                        #   "motion detected on GPIO 4 -> wake"
+                        # -- the sensor identifying a new visitor, and the wake being thrown away anyway
+                        # because a conversation happened to be running. That is a person walked past a
+                        # greeter that had already decided not to look at them.
+                        #
+                        # So ask the counter: did any edge during this conversation follow a quiet gap
+                        # longer than the presence hold? If none did, the pulses were all one person who
+                        # never left -- discard, as before. If one did, somebody arrived, and the queued
+                        # event is left SET so the main loop services it as a normal motion wake on the
+                        # very next pass.
+                        arrivals = getattr(motion_wake, "arrivals_after_gap", 0)
+                        newcomer = arrivals > chat_arrivals_at_start
                         if motion_event is not None and motion_event.is_set():
-                            motion_event.clear()
-                            concierge_stats["discarded_chat"] += 1
-                            log.info("concierge: discarded a motion wake that arrived during the "
-                                     "conversation (almost certainly the person we were talking to)")
+                            if newcomer:
+                                concierge_stats["kept_newcomer"] += 1
+                                # ...and release the just-talked cooldown armed a moment ago. It exists to
+                                # stop re-greeting the person we were talking to; suppressing the newcomer
+                                # we just decided to keep would defeat the whole point. 0 clears outright
+                                # (arm_cooldown's documented off-switch) rather than shortening it.
+                                motion_wake.arm_cooldown(0, "")
+                                log.info("concierge: KEEPING a motion wake from the conversation -- the "
+                                         "sensor saw %d arrival(s) after a quiet gap, so somebody new "
+                                         "turned up while we were talking (just-talked cooldown released)",
+                                         arrivals - chat_arrivals_at_start)
+                            else:
+                                motion_event.clear()
+                                concierge_stats["discarded_chat"] += 1
+                                log.info("concierge: discarded a motion wake that arrived during the "
+                                         "conversation (no quiet gap -- the person we were talking to)")
                         if os.environ.get("ROBOT_CONCIERGE_GREET_ONLY", "0") == "1":
                             log.info("conversation: sleeping SILENTLY (ROBOT_CONCIERGE_GREET_ONLY=1)")
                         else:

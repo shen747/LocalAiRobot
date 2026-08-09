@@ -200,6 +200,12 @@ class CompositeWake:
     def cleared_on_departure(self):
         return self._sum("cleared_on_departure")
 
+    @property
+    def arrivals_after_gap(self):
+        """Summed across sources: rising edges that followed a real quiet gap. main.py samples this to
+        tell a new visitor arriving mid-conversation from the person it is already talking to."""
+        return self._sum("arrivals_after_gap")
+
     def stats_line(self):
         lines = []
         for s in self._sources:

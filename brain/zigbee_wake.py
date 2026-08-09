@@ -56,6 +56,7 @@ class ZigbeeWake:
         self._last_release = 0.0      # when the person actually LEFT (back-dated -- see _on_message)
         self._last_occupied_at = 0.0  # when occupancy was last REPORTED true; presence_age ages from this
         self.cleared_on_departure = 0
+        self.arrivals_after_gap = 0   # parity with pir.MotionWake; see the note there
         self._topic = ""
         self._cooldown_s = max(0.0, _envf("ROBOT_ZIGBEE_COOLDOWN_S", 2))
         # The device's own occupancy_timeout, as configured in the Z2M frontend. Used ONLY to back-date the
@@ -235,6 +236,7 @@ class ZigbeeWake:
                 if hold > 0 and self._last_release and (edge_at - self._last_release) > hold:
                     self._suppress_until = 0.0
                     self.cleared_on_departure += 1
+                    self.arrivals_after_gap += 1
                 else:
                     self.rejected_outcome += 1
                     return

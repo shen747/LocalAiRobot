@@ -107,6 +107,10 @@ class MotionWake:
         # Monotonic stamp of the last FALLING edge -- see _note_release() and the departure check in _fire().
         self._last_release = 0.0
         self.cleared_on_departure = 0      # how many outcome cooldowns we cut short because they left
+        # Rising edges that followed a quiet gap longer than the presence hold -- i.e. somebody ARRIVING
+        # rather than the next pulse of a person already standing there. Monotonic; main.py samples it
+        # across a conversation to tell "this is the person I am talking to" from "somebody new turned up".
+        self.arrivals_after_gap = 0
         self._last_rise_was_spike = False  # so a fall ending a noise spike doesn't stamp presence
         if not pin:
             return
@@ -387,6 +391,17 @@ class MotionWake:
         # the logging happens below.
         verdict, detail, chatter = None, (), None
         with self._lock:
+            # WAS THERE A GAP BEFORE THIS EDGE? Computed for EVERY rising edge, not just inside the
+            # cooldown branch where it used to live, because the answer is useful to more than the
+            # cooldown. A rising edge that follows a long quiet is somebody ARRIVING, as opposed to the
+            # next pulse of a person who never left -- and main.py needs exactly that distinction to
+            # decide whether a motion wake queued during a conversation was the person it was already
+            # talking to (discard) or a new visitor who turned up mid-chat (service). The field log has
+            # this happening: "cooldown CLEARED -- sensor was quiet 16.5s, so they left; this is a new
+            # arrival", immediately followed by that wake being swallowed because a chat was running.
+            departed = self._departed_since(now)
+            if departed:
+                self.arrivals_after_gap += 1
             # Outcome cooldown FIRST: it is the deliberate one (the last look decided how long to wait),
             # so it should be what the counters and the verbose log attribute the rejection to.
             if self._suppress_until and now < self._suppress_until:
@@ -396,7 +411,7 @@ class MotionWake:
                 # arrives next. A 44-minute field window lost 215s -- 47% of it -- to exactly this: a 60s
                 # greet cooldown, re-armed to 60s again when the conversation ended, blocking every wake in
                 # between with no smile and (outside verbose) no log line at all.
-                if self._departed_since(now):
+                if departed:
                     detail = (self._suppress_reason or "outcome", now - self._last_release)
                     self._suppress_until = 0.0
                     self.cleared_on_departure += 1
