@@ -996,6 +996,76 @@ concierge: last 60 min -- PIR 431 wake(s) (+402 held by cooldown, +96 debounce, 
 
 Those two need opposite fixes and used to look identical in the log, which is why the line exists.
 
+## 10B. Full debug logging — ON
+
+Everything below is a **diagnosis switch, not a setting**. Turn it on when you are chasing something,
+read what you need, then turn it off with §10C. Leaving it on costs disk and CPU forever (numbers below).
+
+```bash
+cd ~/LocalAiRobot
+sed -i -E -e 's|^(ROBOT_LOG_LEVEL=)[^[:space:]]*|\1DEBUG|' \
+          -e 's|^(ROBOT_SENSOR_VERBOSE=)[^[:space:]]*|\11|' \
+          -e 's|^(ROBOT_FACE_DEBUG_LABEL=)[^[:space:]]*|\11|' \
+          -e 's|^(ROBOT_CONCIERGE_SUMMARY_S=)[^[:space:]]*|\1300|' \
+          -e 's|^(ROBOT_DETECT_CAPTURE_MODE=)[^[:space:]]*|\1all|' \
+          config/robot.env
+
+grep -E '^ROBOT_(LOG_LEVEL|SENSOR_VERBOSE|FACE_DEBUG_LABEL|CONCIERGE_SUMMARY_S|DETECT_CAPTURE_MODE)=' \
+  config/robot.env | sed 's/[[:space:]]*#.*//'          # expect 5 lines; a sed no-op means a missing key
+
+./scripts/run_me.sh --reload
+```
+
+| Key | What it turns on | What it costs |
+|---|---|---|
+| `ROBOT_LOG_LEVEL=DEBUG` | weather polls, social extraction, the assembled LLM prompt, per-frame `PIR tick` | the bulk of the volume |
+| `ROBOT_SENSOR_VERBOSE=1` | **every** PIR edge — accepted / suppressed / debounced / `cooldown CLEARED on departure` | one journald write per edge; also disables idle-quiescing of the ultrasonics |
+| `ROBOT_FACE_DEBUG_LABEL=1` | the state name drawn on the panel — tells `weather` from `sleeping` at a glance | re-rendered at up to 10–15 fps on the talking face |
+| `ROBOT_CONCIERGE_SUMMARY_S=300` | the wake ledger every 5 min instead of hourly | trivial |
+| `ROBOT_DETECT_CAPTURE_MODE=all` | keeps the frame from **silent** looks too, not just greetings | the expensive one — a chattery sensor has produced **~6,150 frames/hour** |
+
+Watch it live:
+
+```bash
+journalctl -u robot.service -f | grep -aE 'PIR|concierge:|weather:|social:|face_id:'
+```
+
+The four lines worth knowing:
+
+```
+PIR: motion on GPIO 4 ignored -- greeted cooldown, 41.3s left     <- suppressed, and why
+PIR: greeted cooldown CLEARED on GPIO 4 -- sensor was quiet 7.2s  <- they left; new arrival
+social: greeting 'Ramesh' as a 'today' sighting (2 note(s) known) <- history is being used
+face_id: all 73 enrolled embedding(s) match this pipeline         <- enrolments are aligned
+```
+
+If that last one instead **warns** that some embeddings were not made by this pipeline, stop and run
+`bash enroll_all.sh` — mixing aligned and unaligned embeddings collapses every similarity score into the
+same noise band, and it looks exactly like a threshold problem.
+
+## 10C. Full debug logging — OFF
+
+**Do this when you are done.** `ROBOT_DETECT_CAPTURE_MODE=all` in particular will fill
+`~/detect-captures` far faster than the daily purge cron expects.
+
+```bash
+cd ~/LocalAiRobot
+sed -i -E -e 's|^(ROBOT_LOG_LEVEL=)[^[:space:]]*|\1INFO|' \
+          -e 's|^(ROBOT_SENSOR_VERBOSE=)[^[:space:]]*|\10|' \
+          -e 's|^(ROBOT_FACE_DEBUG_LABEL=)[^[:space:]]*|\10|' \
+          -e 's|^(ROBOT_CONCIERGE_SUMMARY_S=)[^[:space:]]*|\13600|' \
+          -e 's|^(ROBOT_DETECT_CAPTURE_MODE=)[^[:space:]]*|\1greeted|' \
+          config/robot.env
+
+./scripts/run_me.sh --reload
+du -sh ~/detect-captures                       # how much the session cost you
+./scripts/purge_detect_captures.sh             # reclaim it now instead of waiting for the 04:17 cron
+```
+
+Neither block touches `config/robot.env`'s tracked template on `main` — they edit the working copy, so
+fold them into your local commit the usual way (`git add -u && git commit --amend --no-edit`) if you want
+them to survive the next rebase. Most people don't: debug flags are meant to be temporary.
+
 ## 11. Spoken earcons
 
 The WAVs are **committed**, so the robot only ever gets them via `git pull`. Run this **on your PC** (needs

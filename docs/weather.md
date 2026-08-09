@@ -75,6 +75,58 @@ and shrinks until it fits, then applies **that one size to all three columns** s
 Edit `CONDITION_LABELS` in [`brain/weather_screen.py`](../brain/weather_screen.py) to reword them; the
 fitter will cope with whatever length you choose.
 
+### After sunset: the card rolls to TONIGHT
+
+At 22:00 the `TODAY` column reports a day that finished hours ago — its maximum is history. So after
+sunset the card becomes:
+
+```
+   TONIGHT  |  TOMORROW  |  DAY AFTER
+     9°     |   14°/9°   |   14°/8°
+   moon         sun          sun
+```
+
+The first column leads with the **coming overnight low** and drops its second number. It takes that low
+from **tomorrow's** row, not today's: a calendar-day minimum falls before dawn, so today's row holds *this
+morning's* low — already spent. On a cold-front night that difference is the whole point.
+
+**Only TONIGHT gets a moon.** Tomorrow and the day after are *days*; drawing them with a moon because you
+happen to be looking at 10pm would claim the day after next is dark. The whole card does switch to a
+cooler, dimmer palette — that's what solves the glare of a bright panel in a dark hallway. The moon is
+about meaning, not brightness.
+
+Sunrise and sunset come from the **same** forecast request, so this costs no extra API call and stays exact
+all year — sunset here moves from 17:12 to 19:37. A forecast without those fields (an old disk cache, a
+different provider) falls back to a 06:00–19:00 rule.
+
+Turn either half off with `ROBOT_WEATHER_NIGHT_ICONS=0` / `ROBOT_WEATHER_EVENING_ROLL=0`.
+
+### Adding your own icon variants
+
+Every variant is **optional**. The compositor builds an ordered candidate list per column and takes the
+first file that exists, always ending at the plain condition:
+
+```
+frosty night, clear sky   ->  Frost.gif  ->  Sunny-night.gif  ->  Sunny.gif
+```
+
+Drop `Sunny-night.gif` in and clear nights start using it; delete it and the card silently goes back to
+`Sunny.gif`. No code change, no config change, no restart. Supply them one at a time in any order.
+
+| File | Shown when | Currently |
+|---|---|---|
+| `Sunny-night.gif` | TONIGHT, clear | ✅ supplied |
+| `PartlyCloudy-night.gif` | TONIGHT, partly cloudy | ✅ supplied |
+| `PartlyCloudyRain-night.gif` | TONIGHT, showers | ✅ supplied |
+| `Frost.gif` | min ≤ `ROBOT_WEATHER_FROST_C` (2 °C) | not drawn — falls back |
+| `Hot.gif` | max ≥ `ROBOT_WEATHER_SCORCHER_C` (35 °C) | not drawn — falls back |
+| `Cloudy-night.gif`, `CloudyRain-night.gif`, `Thunderstorms-night.gif`, `SunnyRain-night.gif` | TONIGHT, those conditions | not drawn — falls back (no sun in them anyway) |
+
+**Temperature outranks time of day** in that order: a frosty night is worth telling someone about, whereas
+they can already see that it is dark. When `Frost` or `Hot` wins, the column's *text* changes to match
+(`FROST` / `SCORCHER`) — a frost picture over the word `SUNNY` reads as a mismatch. A `-night` win keeps
+the base label, because a moon over `CLEAR` says the same thing as a sun over it.
+
 
 The `sleeping` face is the robot's long-duration idle surface, which makes it the natural home for a
 forecast — you glance at the hallway panel and the weather is simply *there*. So the card **replaces** the

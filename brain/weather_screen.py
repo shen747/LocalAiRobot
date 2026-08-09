@@ -37,6 +37,7 @@ ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weather_ico
 CARD_FRAMES = 8
 
 COL_LABELS = ("TODAY", "TOMORROW", "DAY AFTER")
+NIGHT_COL_LABELS = ("TONIGHT", "TOMORROW", "DAY AFTER")
 
 # What each condition is CALLED on the card. Deliberately separate from weather._CONDITION_WORDS, which is
 # spoken prose ("sunny with showers") -- a screen wants one or two words that survive being shrunk to fit a
@@ -49,6 +50,11 @@ CONDITION_LABELS = {
     "PartlyCloudyRain": "SHOWERS",
     "CloudyRain":       "RAIN",
     "Thunderstorms":    "STORMS",
+    # Temperature variants. These are labels for an ICON, not for a sky: when the Frost icon wins the
+    # column, the text says FROST too. A frost picture over the word SUNNY reads as a mismatch at a
+    # glance, and the sky is the less useful of the two facts on a morning you have to scrape a car.
+    "Frost":            "FROST",
+    "Hot":              "SCORCHER",
 }
 
 BG = (16, 18, 24)            # near-black, matching the procedural faces' dark aesthetic
@@ -57,6 +63,12 @@ TMAX_FG = (236, 244, 255)
 TMIN_FG = (124, 146, 174)
 CONDITION_FG = (255, 255, 255)
 DIVIDER = (34, 38, 48)
+# Night ink. Same layout, same pixel positions, cooler and dimmer -- a hallway panel showing bright white
+# at 2am is the brightest object in the room, and this card is on screen for half the year in the dark.
+NIGHT_LABEL_FG = (104, 122, 152)
+NIGHT_TMAX_FG = (196, 212, 236)
+NIGHT_TMIN_FG = (100, 120, 150)
+NIGHT_CONDITION_FG = (206, 220, 240)
 
 # Fonts: this repo commits none, and face.py hand-draws its "Zzz" strokes specifically to avoid the
 # dependency. Raspberry Pi OS Bookworm ships DejaVu, so try that first and degrade to PIL's built-in.
@@ -149,6 +161,51 @@ def _layout(width, height):
             "cond_max_w": col_w * 0.92}                   # leave a gutter so labels never touch the divider
 
 
+def card_columns(snapshot, at_night=False, roll=True):
+    """The three columns to draw: [{label, condition, headline, sub}] -- a pure function, the test surface.
+
+    THE EVENING ROLL. At 22:00 the `TODAY` column reports a day that finished hours ago: its max is
+    history, and the only number still ahead of the viewer is the overnight low. After sunset the first
+    column therefore becomes `TONIGHT` and leads with a minimum instead of a maximum.
+
+    WHICH minimum, precisely. Open-Meteo's `temperature_2m_min` for a date is the minimum over that
+    CALENDAR day, so today's row holds *this* morning's low -- also already history. The coming overnight
+    low falls after midnight and therefore belongs to TOMORROW's row. That is what TONIGHT shows.
+    Getting this wrong is the difference between "it'll drop to 8 tonight" and quoting a number from
+    eighteen hours ago, which on a cold-front night is exactly when somebody cares.
+
+    The condition and icon still come from TODAY's row -- tonight's sky follows today's weather, not
+    tomorrow's.
+
+    DELIBERATELY NOT DONE IN WeatherService.get(). That snapshot also feeds spoken_summary() and the
+    greeting advice; rolling it there would make the robot say "Today it's 8 degrees and raining" about
+    tomorrow, and advise on the wrong day. The roll is a DISPLAY decision and lives with the display.
+
+    ONLY THE TONIGHT COLUMN IS "NIGHT". Tomorrow and the day after are DAYS -- rendering them with a moon
+    because the viewer happens to be looking at 10pm would say the day after next is dark, which is
+    nonsense. This is what every weather app does: the now/tonight cell gets the moon, future days keep
+    their day icons. The dimmed night palette still applies to the whole card, which is what actually
+    solves the glare; the moon is about meaning, not brightness.
+    """
+    days = (snapshot or {}).get("days") or []
+    if len(days) < 3:
+        return []
+    if not (at_night and roll):
+        # No TONIGHT column exists, so no column represents a night and none gets a night icon.
+        return [{"label": COL_LABELS[i], "condition": days[i].get("condition"),
+                 "headline": days[i].get("tmax"), "sub": days[i].get("tmin"),
+                 "night": False, "day": days[i]}
+                for i in range(3)]
+    tonight_low = days[1].get("tmin")          # the coming overnight low -- see the docstring
+    cols = [{"label": NIGHT_COL_LABELS[0], "condition": days[0].get("condition"),
+             "headline": tonight_low, "sub": None, "night": True, "day": days[0]}]
+    cols += [{"label": NIGHT_COL_LABELS[i], "condition": days[i].get("condition"),
+              "headline": days[i].get("tmax"), "sub": days[i].get("tmin"),
+              "night": False, "day": days[i]}
+             for i in (1, 2)]
+    return cols
+
+
 def icon_boxes(width, height):
     """The three icon rectangles [(x, y, w, h)] -- the ONLY pixels that differ between card frames.
     Exported so the chrome-static test can mask them instead of re-deriving the layout."""
@@ -158,12 +215,62 @@ def icon_boxes(width, height):
             for i in range(3)]
 
 
+def icon_candidates(col, frost_c=None, hot_c=None):
+    """Ordered icon basenames to try for a column, most specific first, ALWAYS ending in the plain
+    condition.
+
+    That last element is the whole safety story: every variant is optional. Drop `Sunny-night.gif` into
+    brain/weather_icons/ and clear nights start using it; delete it again and the card silently returns to
+    `Sunny.gif`. Nothing needs a code change, a config change or a restart to add or remove artwork, and a
+    half-supplied set can never produce a hole in the card.
+
+    Order is deliberate: TEMPERATURE outranks time of day. A frosty night is more worth telling somebody
+    about than the fact that it is dark -- they can see that it is dark."""
+    out = []
+    cond = col.get("condition")
+    day = col.get("day") or {}
+    try:
+        if frost_c is not None and day.get("tmin") is not None and float(day["tmin"]) <= float(frost_c):
+            out.append("Frost")
+        if hot_c is not None and day.get("tmax") is not None and float(day["tmax"]) >= float(hot_c):
+            out.append("Hot")
+    except (TypeError, ValueError):
+        pass
+    if col.get("night") and cond:
+        out.append(f"{cond}-night")
+    if cond:
+        out.append(cond)
+    return out
+
+
+def resolve_icon(candidates):
+    """The first candidate whose gif actually exists on disk, or None.
+
+    Separated from loading so the card can LABEL the column with whatever won: a Frost picture over the
+    word SUNNY is a mismatch, and the label should tell the same story as the image."""
+    for name in (candidates or []):
+        if name and os.path.exists(os.path.join(ICON_DIR, f"{name}.gif")):
+            return name
+    return None
+
+
 def _load_icon(condition, side, n):
-    """`n` frames of the condition's gif, resampled across its FULL timeline and resized to side x side.
+    """`n` frames of the FIRST usable icon in `condition`, which may be a single basename or an ordered
+    list of candidates (see icon_candidates).
 
     Only the resampled result is cached -- decoding a 91-frame gif costs ~100ms and happens once per poll,
     whereas holding every source frame of all seven conditions would be ~57 MB of RAM for no benefit.
-    Missing or corrupt file -> None, and the caller draws a labelled placeholder."""
+    No candidate usable -> None, and the caller draws a labelled placeholder."""
+    if isinstance(condition, (list, tuple)):
+        for name in condition:
+            frames = _load_icon(name, side, n)
+            if frames is not None:
+                return frames
+        return None
+    # A variant that simply has not been drawn yet is the NORMAL case, not an error: fall through to the
+    # next candidate without warning, or the log would carry a line per poll for every icon nobody made.
+    if not os.path.exists(os.path.join(ICON_DIR, f"{condition}.gif")):
+        return None
     key = (condition, side, n)
     if key in _icon_cache:
         return _icon_cache[key]
@@ -257,18 +364,35 @@ def _temp(v):
         return "--"
 
 
-def build_frames(snapshot, width, height, n=CARD_FRAMES):
+def build_frames(snapshot, width, height, n=CARD_FRAMES, at_night=None, roll=None,
+                 frost_c=None, hot_c=None):
     """snapshot -> a list of `n` finished RGB frames of exactly width x height, or [] if it can't be built.
 
-    Never raises: this runs on the weather poll thread, whose loop would otherwise lose a whole cycle."""
+    `at_night` / `roll` / `frost_c` / `hot_c` default to the configuration; pass them explicitly from
+    tests. Never raises: this runs on the weather poll thread, whose loop would otherwise lose a cycle."""
     try:
         from PIL import Image, ImageDraw
-        days = (snapshot or {}).get("days") or []
-        if len(days) < 3:
-            return []
+        import weather                                       # for is_night + the knobs; lazy like PIL
         width, height, n = int(width), int(height), max(1, int(n))
+        if at_night is None:
+            at_night = weather.night_icons_enabled() and weather.is_night(snapshot)
+        if roll is None:
+            roll = weather.evening_roll_enabled()
+        if frost_c is None:
+            frost_c = weather.frost_c()
+        if hot_c is None:
+            hot_c = weather.scorcher_c()
+
+        cols = card_columns(snapshot, at_night=at_night, roll=roll)
+        if len(cols) < 3:
+            return []
         L = _layout(width, height)
         boxes = icon_boxes(width, height)
+        # At night the whole card cools down, not just the icons: a bright white 15 degrees on a hallway
+        # panel at 2am is the brightest thing in the room. Same layout, same pixels, cooler ink.
+        label_fg, tmax_fg, tmin_fg, cond_fg = ((NIGHT_LABEL_FG, NIGHT_TMAX_FG, NIGHT_TMIN_FG,
+                                                NIGHT_CONDITION_FG) if at_night else
+                                               (LABEL_FG, TMAX_FG, TMIN_FG, CONDITION_FG))
 
         # --- the static half, drawn exactly once ---
         base = Image.new("RGB", (width, height), BG)
@@ -280,29 +404,36 @@ def build_frames(snapshot, width, height, n=CARD_FRAMES):
         # The condition labels are sized ONCE, from the widest of the three, and that one size is used for
         # all three columns. Sizing each independently would fit just as well but look wrong -- "RAIN" would
         # render half again as large as "PARTLY CLOUDY" beside it. One size reads as a row.
-        conditions = [CONDITION_LABELS.get(day.get("condition")) or str(day.get("condition") or "").upper()
-                      for day in days[:3]]
+        # Resolve the artwork FIRST, so the text can name what actually got drawn. A '-night' variant has
+        # no label of its own and falls through to its base condition, which is right: a moon over the
+        # word CLEAR is the same fact as a sun over it. A Frost or Hot win DOES relabel.
+        won = [resolve_icon(icon_candidates(c, frost_c=frost_c, hot_c=hot_c)) for c in cols]
+        conditions = [(CONDITION_LABELS.get(w) if w else None)
+                      or CONDITION_LABELS.get(c.get("condition"))
+                      or str(c.get("condition") or "").upper()
+                      for w, c in zip(won, cols)]
         f_cond = _font(L["cond_px"])
         for text in conditions:
             if text:
                 f_cond = min(f_cond, _fit_font(d, text, L["cond_max_w"], L["cond_px"]),
                              key=lambda f: getattr(f, "size", 0))
 
-        for i, day in enumerate(days[:3]):
+        for i, col in enumerate(cols):
             cx = (i + 0.5) * L["col_w"]
-            _centred(d, cx, L["label_y"], COL_LABELS[i], f_label, LABEL_FG)
-            _centred(d, cx, L["tmax_y"], _temp(day.get("tmax")), f_max, TMAX_FG)
-            _centred(d, cx, L["tmin_y"], _temp(day.get("tmin")), f_min, TMIN_FG)
+            _centred(d, cx, L["label_y"], col["label"], f_label, label_fg)
+            _centred(d, cx, L["tmax_y"], _temp(col.get("headline")), f_max, tmax_fg)
+            if col.get("sub") is not None:      # TONIGHT leads with the low and has no second number
+                _centred(d, cx, L["tmin_y"], _temp(col["sub"]), f_min, tmin_fg)
             if conditions[i]:
-                _centred(d, cx, L["cond_y"], conditions[i], f_cond, CONDITION_FG)
+                _centred(d, cx, L["cond_y"], conditions[i], f_cond, cond_fg)
 
         # --- the animated half: three icon strips, each already resampled to n frames ---
         strips = []
-        for i, day in enumerate(days[:3]):
-            cond = day.get("condition")
-            frames = _load_icon(cond, boxes[i][2], n) if cond else None
+        for i, col in enumerate(cols):
+            frames = _load_icon(won[i], boxes[i][2], n) if won[i] else None
             if frames is None:
-                _placeholder(d, boxes[i], cond or "?")           # placeholder is CHROME: draw it on base
+                # placeholder is CHROME: draw it on base
+                _placeholder(d, boxes[i], col.get("condition") or "?")
             strips.append(frames)
 
         out = []

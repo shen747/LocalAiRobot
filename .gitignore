@@ -45,6 +45,7 @@ __pycache__/
 /PLAN.md
 /REVIEW.md
 /CODE_REVIEW.md
+/WEATHER_IMP.md
 
 # macOS Finder droppings. Harmless, invisible on Linux, and a nuisance in every diff if one ever lands.
 .DS_Store

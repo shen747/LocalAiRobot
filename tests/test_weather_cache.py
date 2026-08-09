@@ -42,11 +42,14 @@ def make_transport(days_from, calls=None, boom=None):
             calls.append(getattr(req, "full_url", req))
         if boom is not None:
             raise boom
+        # Shaped like the real response, sunrise/sunset included -- those ride along in the same request.
         payload = {"daily": {
             "time": [(d0 + timedelta(days=i)).isoformat() for i in range(4)],
             "weather_code": [2, 61, 0, 95],
             "temperature_2m_max": [17.2, 15.0, 31.4, 22.0],
-            "temperature_2m_min": [9.1, 8.3, 18.0, 12.0]}}
+            "temperature_2m_min": [9.1, 8.3, 18.0, 12.0],
+            "sunrise": [f"{(d0 + timedelta(days=i)).isoformat()}T07:13" for i in range(4)],
+            "sunset": [f"{(d0 + timedelta(days=i)).isoformat()}T17:40" for i in range(4)]}}
         return FakeResp(json.dumps(payload).encode())
     return urlopen
 
@@ -224,6 +227,85 @@ ck("...and will never fetch again", svc9._next_fetch_at, float("inf"))
 svc9._fetched_at -= 100000                       # the wall clock moved on; no fetch will ever run again
 svc9.refresh()
 ck("availability still drops with no fetch due", svc9.available, False)
+
+print("\n=== sunrise/sunset ride along in the same request and survive the disk cache ===")
+env(CACHE=os.path.join(TMP, "sun.json"))
+svcS = weather.WeatherService(urlopen=make_transport(TODAY))
+svcS.refresh()
+day0 = svcS.get()["days"][0]
+ck("sunrise carried on the day", "sunrise" in day0, True)
+ck("sunset carried on the day", "sunset" in day0, True)
+ck("one request only (no extra call for daylight)", len(calls) >= 1, True)
+# a NEW service reads the same rows back off disk
+svcS2 = weather.WeatherService(urlopen=make_transport(TODAY))
+ck("survives the cache round-trip", "sunset" in svcS2.get()["days"][0], True)
+
+print("\n=== ...but they are OPTIONAL: a provider or an old cache without them still works ===")
+class NoSun:
+    name = "no-sun"
+    def __init__(self, urlopen=None): pass
+    def fetch(self, lat, lon, tz, days, timeout_s):
+        from datetime import date, timedelta
+        d0 = date.fromisoformat(TODAY)
+        return [{"date": (d0 + timedelta(days=i)).isoformat(), "condition": "Sunny",
+                 "tmax": 20.0, "tmin": 10.0} for i in range(4)]
+env(CACHE=os.path.join(TMP, "nosun.json"))
+svcN = weather.WeatherService(provider=NoSun())
+svcN.refresh()
+snapN = svcN.get()
+ck("a forecast with no daylight fields is still served", len(snapN["days"]), 3)
+ck("...and the day simply has no sunrise key", "sunrise" in snapN["days"][0], False)
+
+print("\n=== is_night(): exact from sunrise/sunset, hour-thresholded without ===")
+import datetime as _dt
+withsun = {"days": [{"date": TODAY, "condition": "Sunny", "tmax": 12.0, "tmin": 8.0,
+                     "sunrise": f"{TODAY}T07:13", "sunset": f"{TODAY}T17:40"}]}
+for hour, want in ((5, True), (7, False), (12, False), (17, False), (18, True), (23, True)):
+    ts = _dt.datetime.fromisoformat(f"{TODAY}T{hour:02d}:30").timestamp()
+    ck(f"{hour:02d}:30 with real sun times -> night={want}",
+       weather.is_night(withsun, now_ts=ts), want)
+nosun = {"days": [{"date": TODAY, "condition": "Sunny", "tmax": 12.0, "tmin": 8.0}]}
+for hour, want in ((5, True), (8, False), (18, False), (20, True)):
+    ts = _dt.datetime.fromisoformat(f"{TODAY}T{hour:02d}:30").timestamp()
+    ck(f"{hour:02d}:30 with NO sun times -> hour fallback night={want}",
+       weather.is_night(nosun, now_ts=ts), want)
+# The whole point of using real times: at this latitude sunset moves 17:12 -> 19:37 across the year, so
+# 18:30 is night in winter and broad daylight in summer. The fallback cannot know that; the real one can.
+summer = {"days": [{"date": TODAY, "condition": "Sunny", "tmax": 30.0, "tmin": 15.0,
+                    "sunrise": f"{TODAY}T05:30", "sunset": f"{TODAY}T19:37"}]}
+ts = _dt.datetime.fromisoformat(f"{TODAY}T18:30").timestamp()
+ck("18:30 in SUMMER is daylight", weather.is_night(summer, now_ts=ts), False)
+ck("18:30 in WINTER is night", weather.is_night(withsun, now_ts=ts), True)
+for junk in (None, {}, {"days": []}, {"days": [{"sunrise": "nope", "sunset": None}]}, {"days": [7]}):
+    try:
+        ck(f"is_night({junk!r:.24}) never raises", isinstance(weather.is_night(junk), bool), True)
+    except Exception as e:
+        ck(f"is_night({junk!r:.24}) must not raise", f"raised {e!r}", "a bool")
+
+print("\n=== the four new display knobs ===")
+for k in ("ROBOT_WEATHER_NIGHT_ICONS", "ROBOT_WEATHER_EVENING_ROLL",
+          "ROBOT_WEATHER_FROST_C", "ROBOT_WEATHER_SCORCHER_C"):
+    os.environ.pop(k, None)
+ck("night icons default ON", weather.night_icons_enabled(), True)
+ck("evening roll default ON", weather.evening_roll_enabled(), True)
+ck("frost default 2C", weather.frost_c(), 2.0)
+ck("scorcher default 35C", weather.scorcher_c(), 35.0)
+os.environ["ROBOT_WEATHER_NIGHT_ICONS"] = "0"
+os.environ["ROBOT_WEATHER_EVENING_ROLL"] = "0"
+ck("night icons switchable", weather.night_icons_enabled(), False)
+ck("roll switchable", weather.evening_roll_enabled(), False)
+os.environ["ROBOT_WEATHER_FROST_C"] = "-99"
+os.environ["ROBOT_WEATHER_SCORCHER_C"] = "99"
+ck("frost disable sentinel", weather.frost_c(), None)
+ck("scorcher disable sentinel", weather.scorcher_c(), None)
+for k, fn, want in (("ROBOT_WEATHER_FROST_C", weather.frost_c, 2.0),
+                    ("ROBOT_WEATHER_SCORCHER_C", weather.scorcher_c, 35.0)):
+    for blank in ("", "   ", "abc"):
+        os.environ[k] = blank
+        ck(f"{k}={blank!r} -> default", fn(), want)
+    del os.environ[k]
+del os.environ["ROBOT_WEATHER_NIGHT_ICONS"]
+del os.environ["ROBOT_WEATHER_EVENING_ROLL"]
 
 print("\n=== blank env values fall back to defaults (set -a exports them as empty strings) ===")
 env(CACHE="", REFRESH_S="", TIMEOUT_S="", STALE_S="", CHILLY_C="", HOT_C="", TZ="")

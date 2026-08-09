@@ -102,6 +102,36 @@ def enabled():
     return _env("ROBOT_WEATHER_ENABLE", "0").lower() in _TRUE
 
 
+def night_icons_enabled():
+    """Use `-night` icon variants after sunset (ROBOT_WEATHER_NIGHT_ICONS, default on).
+
+    Costs nothing when the artwork is absent: the resolver falls through to the day icon, so this being
+    on for a robot with no night gifs is identical to it being off."""
+    return _env("ROBOT_WEATHER_NIGHT_ICONS", "1").lower() in _TRUE
+
+
+def evening_roll_enabled():
+    """After sunset, lead the card with TONIGHT's low instead of a day that is already over
+    (ROBOT_WEATHER_EVENING_ROLL, default on)."""
+    return _env("ROBOT_WEATHER_EVENING_ROLL", "1").lower() in _TRUE
+
+
+def frost_c():
+    """Min at or below this uses the Frost icon, or None to disable. Default 2 degrees.
+
+    Measured at the reference location: 11 nights a year at or below 2C, coldest -0.1C. Rare on purpose --
+    a card that looks different on eleven mornings is a card somebody actually reads."""
+    v = _envf("ROBOT_WEATHER_FROST_C", 2)
+    return None if v <= -90 else v
+
+
+def scorcher_c():
+    """Max at or above this uses the Hot icon, or None to disable. Default 35 degrees.
+    Reference location: 6 days a year at or above 35C, hottest 41.6C."""
+    v = _envf("ROBOT_WEATHER_SCORCHER_C", 35)
+    return None if v >= 90 else v
+
+
 def greeting_enabled():
     """True when weather-aware greeting TEXT is wanted (ROBOT_WEATHER_GREETING, default on).
     0 leaves the plain concierge greeting byte-for-byte unchanged while the card and the spoken answer
@@ -151,6 +181,44 @@ def today_iso(tz=None):
 def _hour_now(tz=None):
     """The local hour 0-23, used only to pick a morning/afternoon/evening opener."""
     return _now_local(tz).hour
+
+
+def _parse_local(stamp, tz=None):
+    """Open-Meteo's local ISO stamp ('2026-08-09T17:45') -> an aware datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(str(stamp))
+        if dt.tzinfo is None:
+            zi = _tzinfo(tz)
+            dt = dt.replace(tzinfo=zi) if zi is not None else dt
+        return dt
+    except (TypeError, ValueError):
+        return None
+
+
+def is_night(snapshot=None, now_ts=None, tz=None):
+    """Is it dark RIGHT NOW? Uses today's sunrise/sunset when the forecast carries them.
+
+    Why this is worth a real answer rather than an hour threshold: at this latitude sunset moves from
+    17:12 to 19:37 across the year, so any fixed hour is wrong for months at a time. The fallback exists
+    for a snapshot that predates the field (an old disk cache) or a provider that omits it -- 19:00-06:00
+    is crude but never worse than pretending it is always daytime.
+
+    Never raises: every caller is a display decision, and a display decision must not be able to break a
+    poll cycle."""
+    try:
+        now = _now_local(tz) if now_ts is None else datetime.fromtimestamp(now_ts, _tzinfo(tz))
+        days = (snapshot or {}).get("days") or []
+        today = days[0] if days else {}
+        rise = _parse_local(today.get("sunrise"), tz)
+        set_ = _parse_local(today.get("sunset"), tz)
+        if rise is not None and set_ is not None:
+            # Compare on the clock, not the date: `today` is whatever the card currently calls day one,
+            # and after the evening roll that is still the day whose sunset just passed.
+            return not (rise.timetz() <= now.timetz() < set_.timetz())
+        return not (6 <= now.hour < 19)
+    except Exception as e:
+        log.debug("weather: is_night failed (%s) -- assuming daytime", e)
+        return False
 
 
 # --- provider: Open-Meteo --------------------------------------------------------------------------------
@@ -219,7 +287,10 @@ class _OpenMeteoProvider:
         url = self.URL + "?" + urllib.parse.urlencode({
             "latitude": lat,
             "longitude": lon,
-            "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+            # sunrise/sunset ride along in the SAME request -- no extra call, no extra rate-limit cost.
+            # They are what makes "is it dark right now?" a fact rather than an hour-of-day guess, which
+            # matters at this latitude: sunset moves from 17:12 to 19:37 across the year.
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset",
             "timezone": tz,                 # day boundaries come back already local -- no conversion here
             "forecast_days": int(days),
         })
@@ -246,12 +317,17 @@ class _OpenMeteoProvider:
         raise TimeoutError(f"weather budget of {timeout_s}s exhausted")        # defensive
 
     def _normalize(self, payload):
-        """Open-Meteo JSON -> [{date, condition, tmax, tmin}, ...]. Raises on a response we can't trust."""
+        """Open-Meteo JSON -> [{date, condition, tmax, tmin, sunrise?, sunset?}, ...].
+
+        Raises on a response we can't trust. sunrise/sunset are OPTIONAL: they are not part of the
+        length check, so a provider that omits them still yields perfectly usable days."""
         daily = (payload or {}).get("daily") or {}
         times = daily.get("time") or []
         codes = daily.get("weather_code") or []
         tmaxs = daily.get("temperature_2m_max") or []
         tmins = daily.get("temperature_2m_min") or []
+        sunrises = daily.get("sunrise") or []
+        sunsets = daily.get("sunset") or []
         n = len(times)
         if not n or not (len(codes) == len(tmaxs) == len(tmins) == n):
             raise ValueError(f"weather: malformed daily arrays (time={n}, code={len(codes)}, "
@@ -263,10 +339,18 @@ class _OpenMeteoProvider:
             if times[i] is None or tmaxs[i] is None or tmins[i] is None:
                 continue
             try:
-                out.append({"date": str(times[i])[:10],
-                            "condition": self.condition_for(codes[i]),
-                            "tmax": float(tmaxs[i]),
-                            "tmin": float(tmins[i])})
+                day = {"date": str(times[i])[:10],
+                       "condition": self.condition_for(codes[i]),
+                       "tmax": float(tmaxs[i]),
+                       "tmin": float(tmins[i])}
+                # OPTIONAL, and treated as such everywhere downstream. A provider that does not supply
+                # them, and a disk cache written before this field existed, both just produce days
+                # without them -- is_night() then falls back to hour thresholds rather than failing.
+                if i < len(sunrises) and sunrises[i]:
+                    day["sunrise"] = str(sunrises[i])
+                if i < len(sunsets) and sunsets[i]:
+                    day["sunset"] = str(sunsets[i])
+                out.append(day)
             except (TypeError, ValueError):
                 continue
         if not out:

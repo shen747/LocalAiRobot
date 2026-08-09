@@ -142,7 +142,11 @@ for name, bad in (("None", None), ("no days", {}), ("empty days", {"days": []}),
 
 print("\n=== the condition label: every condition named, one or two words, ALWAYS one line ===")
 ck("every canonical condition has a label",
-   sorted(ws.CONDITION_LABELS), sorted(weather.CONDITIONS))
+   sorted(set(weather.CONDITIONS) - set(ws.CONDITION_LABELS)), [])
+# The table also carries labels for the temperature VARIANTS, so the text can name whatever icon actually
+# won the column -- a Frost picture over the word SUNNY reads as a mismatch.
+ck("...plus the temperature variants",
+   sorted(set(ws.CONDITION_LABELS) - set(weather.CONDITIONS)), ["Frost", "Hot"])
 ck("no label exceeds two words",
    max(len(v.split()) for v in ws.CONDITION_LABELS.values()), 2)
 ck("labels are white", ws.CONDITION_FG, (255, 255, 255))
@@ -210,6 +214,117 @@ ck("an unmapped condition still renders a card", len(odd), ws.CARD_FRAMES)
 print("\n=== icon_boxes() is a pure function of the canvas, so the mask can never drift ===")
 ck("stable across calls", ws.icon_boxes(480, 320), ws.icon_boxes(480, 320))
 ck("differs by canvas", ws.icon_boxes(480, 320) != ws.icon_boxes(800, 480), True)
+
+print("\n=== the evening roll: TONIGHT leads with the COMING overnight low ===")
+ROLL = {"days": [{"date": "2026-08-09", "condition": "PartlyCloudy", "tmax": 12.2, "tmin": 8.6},
+                 {"date": "2026-08-10", "condition": "CloudyRain", "tmax": 14.2, "tmin": 6.6},
+                 {"date": "2026-08-11", "condition": "Sunny", "tmax": 13.5, "tmin": 7.6}]}
+dayc = ws.card_columns(ROLL, at_night=False, roll=True)
+ck("by day the labels are unchanged", [c["label"] for c in dayc], ["TODAY", "TOMORROW", "DAY AFTER"])
+ck("by day column 1 leads with the MAX", dayc[0]["headline"], 12.2)
+ck("by day no column is a night", any(c["night"] for c in dayc), False)
+
+nightc = ws.card_columns(ROLL, at_night=True, roll=True)
+ck("after sunset column 1 becomes TONIGHT", nightc[0]["label"], "TONIGHT")
+# The load-bearing one: a calendar-day minimum falls BEFORE dawn, so today's row holds THIS morning's low
+# -- already history. The coming overnight low is tomorrow's row.
+ck("TONIGHT shows TOMORROW's min, not today's", nightc[0]["headline"], 6.6)
+ck("...which is NOT today's min", nightc[0]["headline"] != ROLL["days"][0]["tmin"], True)
+ck("TONIGHT has no second number", nightc[0]["sub"], None)
+ck("TONIGHT keeps TODAY's condition (tonight's sky follows today's)",
+   nightc[0]["condition"], "PartlyCloudy")
+ck("the other two columns are unchanged",
+   [(c["label"], c["headline"], c["sub"]) for c in nightc[1:]],
+   [("TOMORROW", 14.2, 6.6), ("DAY AFTER", 13.5, 7.6)])
+
+ck("roll=False keeps TODAY even after sunset",
+   [c["label"] for c in ws.card_columns(ROLL, at_night=True, roll=False)],
+   ["TODAY", "TOMORROW", "DAY AFTER"])
+for bad in (None, {}, {"days": []}, {"days": [1, 2]}):
+    ck(f"card_columns({bad!r}) -> []", ws.card_columns(bad), [])
+
+print("\n=== ONLY the TONIGHT column is a night -- tomorrow is still a DAY ===")
+# Rendering the day-after-next with a moon because the viewer is up late would claim that day is dark.
+ck("TONIGHT is a night", nightc[0]["night"], True)
+ck("TOMORROW is NOT", nightc[1]["night"], False)
+ck("DAY AFTER is NOT", nightc[2]["night"], False)
+ck("so only TONIGHT asks for a -night icon",
+   [ws.icon_candidates(c)[0] for c in nightc],
+   ["PartlyCloudy-night", "CloudyRain", "Sunny"])
+
+print("\n=== icon_candidates: most specific first, ALWAYS ending in the plain condition ===")
+plain = {"condition": "Sunny", "night": False, "day": {"tmax": 20.0, "tmin": 10.0}}
+ck("plain day", ws.icon_candidates(plain), ["Sunny"])
+ck("night", ws.icon_candidates({**plain, "night": True}), ["Sunny-night", "Sunny"])
+cold = {"condition": "Sunny", "night": True, "day": {"tmax": 9.0, "tmin": -1.0}}
+ck("frost outranks night", ws.icon_candidates(cold, frost_c=2), ["Frost", "Sunny-night", "Sunny"])
+hot = {"condition": "Sunny", "night": False, "day": {"tmax": 41.6, "tmin": 22.0}}
+ck("heat", ws.icon_candidates(hot, hot_c=35), ["Hot", "Sunny"])
+ck("thresholds are inclusive",
+   ws.icon_candidates({"condition": "Sunny", "night": False, "day": {"tmax": 35.0, "tmin": 2.0}},
+                      frost_c=2, hot_c=35), ["Frost", "Hot", "Sunny"])
+ck("disabled thresholds add nothing",
+   ws.icon_candidates(cold, frost_c=None, hot_c=None), ["Sunny-night", "Sunny"])
+ck("every list ends in the bare condition",
+   all(ws.icon_candidates({**plain, "night": n}, frost_c=2, hot_c=35)[-1] == "Sunny"
+       for n in (True, False)), True)
+for junk in ({"day": {"tmin": "cold"}}, {"condition": None}, {}):
+    try:
+        ck(f"junk column {junk!r} does not raise", isinstance(ws.icon_candidates(junk), list), True)
+    except Exception as e:
+        ck(f"junk column {junk!r} must not raise", f"raised {e!r}", "a list")
+
+print("\n=== a variant that has NOT been drawn falls back to the day icon, silently ===")
+# This is what makes every new icon optional: Frost.gif and Hot.gif do not exist yet.
+ck("Frost.gif is genuinely absent (so this test means something)",
+   os.path.exists(os.path.join(ws.ICON_DIR, "Frost.gif")), False)
+frosty = {"days": [{"date": "2026-07-01", "condition": "Sunny", "tmax": 9.0, "tmin": -1.0},
+                   {"date": "2026-07-02", "condition": "Sunny", "tmax": 10.0, "tmin": 0.0},
+                   {"date": "2026-07-03", "condition": "Sunny", "tmax": 11.0, "tmin": 1.0}]}
+frames = ws.build_frames(frosty, 480, 320, at_night=False, roll=False, frost_c=2, hot_c=35)
+ck("the card still builds with no Frost.gif", len(frames), ws.CARD_FRAMES)
+ck("...and still animates (it used the real Sunny.gif)",
+   len({pixels(f) for f in frames}) > 1, True)
+ck("a missing variant is NOT the placeholder path",
+   ws._load_icon(["Frost", "Sunny"], 100, 8) is not None, True)
+ck("a candidate list of only-missing files -> None",
+   ws._load_icon(["Frost", "NoSuchThing"], 100, 8), None)
+
+print("\n=== the column LABEL names whatever icon actually won ===")
+ck("resolve_icon skips absent variants", ws.resolve_icon(["Frost", "Sunny-night", "Sunny"]),
+   "Sunny-night")
+ck("resolve_icon with nothing present", ws.resolve_icon(["Frost", "NoSuchThing"]), None)
+ck("resolve_icon of an empty list", ws.resolve_icon([]), None)
+# A '-night' win must NOT relabel: a moon over CLEAR says the same thing as a sun over it.
+ck("a night win falls through to the base label",
+   ws.CONDITION_LABELS.get("Sunny-night") or ws.CONDITION_LABELS.get("Sunny"), "SUNNY")
+ck("a Frost win DOES relabel", ws.CONDITION_LABELS.get("Frost"), "FROST")
+ck("a Hot win relabels", ws.CONDITION_LABELS.get("Hot"), "SCORCHER")
+ck("both variant labels still fit one line",
+   max(len(ws.CONDITION_LABELS[k].split()) for k in ("Frost", "Hot")), 1)
+
+print("\n=== the supplied night artwork is actually picked up ===")
+for cond in ("Sunny", "PartlyCloudy", "PartlyCloudyRain"):
+    p = os.path.join(ws.ICON_DIR, f"{cond}-night.gif")
+    ck(f"{cond}-night.gif present", os.path.exists(p), True)
+    day_frames = ws._load_icon(cond, 100, 8)
+    night_frames = ws._load_icon([f"{cond}-night", cond], 100, 8)
+    ck(f"{cond}: the night variant differs from the day one",
+       day_frames[0].tobytes() != night_frames[0].tobytes(), True)
+
+print("\n=== night rendering: same layout, cooler ink, chrome still static ===")
+for (w, h) in SIZES:
+    nf = ws.build_frames(ROLL, w, h, at_night=True, roll=True)
+    dfr = ws.build_frames(ROLL, w, h, at_night=False, roll=True)
+    ck(f"{w}x{h}: night card builds", len(nf), ws.CARD_FRAMES)
+    ck(f"{w}x{h}: identical geometry", [f.size for f in nf], [f.size for f in dfr])
+    ck(f"{w}x{h}: it LOOKS different from the day card", pixels(nf[0]) != pixels(dfr[0]), True)
+    boxes = ws.icon_boxes(w, h)
+    base = pixels(masked(nf[0], boxes))
+    ck(f"{w}x{h}: night chrome still pixel-identical across frames",
+       all(pixels(masked(f, boxes)) == base for f in nf), True)
+ck("night ink is dimmer than day ink",
+   sum(ws.NIGHT_TMAX_FG) < sum(ws.TMAX_FG), True)
 
 print("\n=== the seam: compositor -> Face.set_frames -> the panel ===")
 # The card only reaches the screen through this one new public API, and the state has to be whitelisted or

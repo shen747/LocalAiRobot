@@ -96,6 +96,10 @@ degrades when the internet is down: [docs/weather.md](../docs/weather.md).
 | `ROBOT_WEATHER_GREETING` | `1` | `1` = greetings become time- and weather-aware (opener + one advice sentence). `0` = the plain concierge greeting, unchanged. No forecast → the advice sentence is simply omitted. Halloween Mode outranks it. |
 | `ROBOT_WEATHER_CHILLY_C` / `ROBOT_WEATHER_HOT_C` | `15` / `30` | Advice bands on **today's max** (°C) — the "how should I dress" number. Rain and storms outrank both. |
 | `ROBOT_WEATHER_TRIGGERS` | *(blank)* | **Extra** ask-phrases, comma-separated — these *add to* the built-in list (unlike `ROBOT_LOOK_TRIGGERS`, which replaces it). Substring-matched, so keep entries multi-word. |
+| `ROBOT_WEATHER_NIGHT_ICONS` | `1` | After sunset the **TONIGHT** column uses the `-night` icon variant (a moon). Sunrise/sunset come from the same forecast request, so it is exact all year — sunset moves 17:12→19:37 here. Free when the artwork is absent: the resolver falls through to the day icon. |
+| `ROBOT_WEATHER_EVENING_ROLL` | `1` | After sunset, column 1 becomes **TONIGHT** and leads with the coming overnight **low** instead of a day that is already over. It takes *tomorrow's* row for that — a calendar-day minimum falls before dawn, so today's row holds this morning's low. |
+| `ROBOT_WEATHER_FROST_C` | `2` | Min at or below this uses `Frost.gif`, **if you have drawn one**. Measured at the reference location: 11 nights/yr, coldest −0.1 °C. `-99` disables. |
+| `ROBOT_WEATHER_SCORCHER_C` | `35` | Max at or above this uses `Hot.gif`, if drawn. Reference: 6 days/yr, hottest 41.6 °C. Set `30` for 22 days. `99` disables. |
 
 ## Robot identity
 
