@@ -60,15 +60,20 @@ CONDITION_LABELS = {
 BG = (16, 18, 24)            # near-black, matching the procedural faces' dark aesthetic
 LABEL_FG = (140, 158, 184)
 TMAX_FG = (236, 244, 255)
-TMIN_FG = (124, 146, 174)
+# The LOW reads in the SAME ink as the high. It was dimmed to about half the luminance, which looks like
+# a tidy hierarchy on a monitor and disappears on the actual panel: photographed on the wall in a dark
+# hallway, the low was barely legible while the high was fine. The DSI panel's black level is poor enough
+# that a dark room washes the whole card toward grey, and the dim ink went with it. SIZE already carries
+# the hierarchy -- the low is drawn at roughly half the point size -- so colour does not need to as well.
+TMIN_FG = TMAX_FG
 CONDITION_FG = (255, 255, 255)
 DIVIDER = (34, 38, 48)
 # Night ink. Same layout, same pixel positions, cooler and dimmer -- a hallway panel showing bright white
 # at 2am is the brightest object in the room, and this card is on screen for half the year in the dark.
-NIGHT_LABEL_FG = (104, 122, 152)
-NIGHT_TMAX_FG = (196, 212, 236)
-NIGHT_TMIN_FG = (100, 120, 150)
-NIGHT_CONDITION_FG = (206, 220, 240)
+NIGHT_LABEL_FG = (150, 168, 198)
+NIGHT_TMAX_FG = (226, 238, 255)
+NIGHT_TMIN_FG = NIGHT_TMAX_FG        # same reason as TMIN_FG above -- size is the hierarchy, not ink
+NIGHT_CONDITION_FG = (232, 242, 255)
 
 # Fonts: this repo commits none, and face.py hand-draws its "Zzz" strokes specifically to avoid the
 # dependency. Raspberry Pi OS Bookworm ships DejaVu, so try that first and degrade to PIL's built-in.

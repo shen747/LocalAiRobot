@@ -326,6 +326,25 @@ for (w, h) in SIZES:
 ck("night ink is dimmer than day ink",
    sum(ws.NIGHT_TMAX_FG) < sum(ws.TMAX_FG), True)
 
+print("\n=== the LOW temperature reads as brightly as the high ===")
+# It was dimmed to ~half luminance, which looks like a tidy hierarchy on a monitor and vanishes on the
+# panel: photographed on the wall in a dark hallway the low was barely legible. The DSI's black level is
+# poor enough that a dark room washes the card toward grey and takes the dim ink with it. Size is the
+# hierarchy (the low is drawn at roughly half the point size); colour does not need to be as well.
+def _lum(c):
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+ck("day: low is at least as bright as high", _lum(ws.TMIN_FG) >= _lum(ws.TMAX_FG), True)
+ck("night: low is at least as bright as high",
+   _lum(ws.NIGHT_TMIN_FG) >= _lum(ws.NIGHT_TMAX_FG), True)
+# ...and it is still SMALLER, or the two numbers become indistinguishable.
+L = ws._layout(480, 320)
+ck("the low is still drawn much smaller", L["tmin_px"] < L["tmax_px"] * 0.75, True)
+# Everything must stay well clear of the background or the wash-out returns.
+ck("all ink clears the background by a wide margin",
+   min(_lum(c) - _lum(ws.BG) for c in (ws.TMIN_FG, ws.TMAX_FG, ws.LABEL_FG, ws.CONDITION_FG,
+                                       ws.NIGHT_TMIN_FG, ws.NIGHT_TMAX_FG, ws.NIGHT_LABEL_FG,
+                                       ws.NIGHT_CONDITION_FG)) > 120, True)
+
 print("\n=== the seam: compositor -> Face.set_frames -> the panel ===")
 # The card only reaches the screen through this one new public API, and the state has to be whitelisted or
 # set_expression() silently coerces it to 'idle' -- a failure mode that looks like "the feature does
