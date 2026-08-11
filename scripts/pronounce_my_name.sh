@@ -51,13 +51,17 @@ ENROLL = os.environ.get("ENROLL", "enroll_all.sh")
 # SAME Piper binary + voice the robot's speak() uses (main.py cfg piper_bin/piper_voice defaults).
 piper = os.path.expanduser(os.environ.get("ROBOT_PIPER_BIN",   "~/piper/piper/piper"))
 voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
+# Multi-speaker voices: audition the SAME speaker the robot speaks with, or you tune the respelling
+# against a voice nobody will ever hear (speaker 0 on en_US-arctic is awb, a Scot).
+_spk  = (os.environ.get("ROBOT_PIPER_SPEAKER", "") or "").strip()
+SPK   = ["--speaker", _spk] if _spk.isdigit() else []
 tmp   = tempfile.gettempdir()
 
 def say(text):
     """Synthesize with Piper and play via aplay (same ALSA default as the robot voice). Returns True on sound."""
     wav = os.path.join(tmp, f"pron-{os.getpid()}-{int(time.time()*1000)}.wav")
     try:
-        syn = subprocess.run([piper, "-m", voice, "--output_file", wav], input=text.encode("utf-8"),
+        syn = subprocess.run([piper, "-m", voice] + SPK + ["--output_file", wav], input=text.encode("utf-8"),
                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
     except FileNotFoundError:
         print(f"   !! piper not found at {piper} -- set ROBOT_PIPER_BIN (run ./scripts/install_stack_pi5.sh)")
@@ -76,7 +80,7 @@ def say(text):
     return True
 
 # 1) SPEAK: bare, then inside a greeting (what a visitor actually hears).
-print(f">> '{NAME or PRON}' spoken as '{PRON}'   (voice: {voice})")
+print(f">> '{NAME or PRON}' spoken as '{PRON}'   (voice: {voice}{' speaker ' + _spk if SPK else ''})")
 ok = say(PRON)
 time.sleep(0.9)
 ok = say(f"Hello, how are you doing, {PRON}?") or ok

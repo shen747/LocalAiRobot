@@ -55,6 +55,22 @@ def env(key, default):
     return v if v else default
 
 
+def _piper_speaker():
+    """ROBOT_PIPER_SPEAKER as a validated speaker-id string, or "" for a single-speaker voice.
+
+    Only ever passed to Piper as `--speaker <n>`, so anything non-numeric is dropped rather than handed
+    over: a bad value would fail synthesis on EVERY utterance, i.e. a robot that is silently mute until
+    someone reads the logs. Blank/absent is the normal case and stays blank."""
+    raw = (os.environ.get("ROBOT_PIPER_SPEAKER", "") or "").strip()
+    if not raw:
+        return ""
+    if raw.isdigit():
+        return raw
+    log.warning("ROBOT_PIPER_SPEAKER=%r is not a speaker number -- ignoring it (Piper will use speaker 0). "
+                "Pick one with ./scripts/scan_piper_voice.sh", raw)
+    return ""
+
+
 def load_config():
     home = os.path.expanduser("~")
     return {
@@ -72,6 +88,11 @@ def load_config():
         "whisper_model": env("ROBOT_WHISPER_MODEL", os.path.join(home, "whisper.cpp/models/ggml-base.en.bin")),
         "piper_bin": env("ROBOT_PIPER_BIN", os.path.join(home, "piper/piper/piper")),
         "piper_voice": env("ROBOT_PIPER_VOICE", os.path.join(home, "piper/en_US-lessac-medium.onnx")),
+        # Speaker id inside a MULTI-speaker voice (en_US-arctic, en_GB-vctk, ...). Empty = single-speaker
+        # voice, pass nothing. Piper defaults to speaker 0 when the flag is absent, and speaker 0 is rarely
+        # the one you auditioned -- on en_US-arctic it is awb (Scottish). ./scripts/scan_piper_voice.sh
+        # auditions the speakers and writes this key for you.
+        "piper_speaker": _piper_speaker(),
         "mic": env("ROBOT_MIC", "plughw:1,0"),
         "record_secs": env("ROBOT_RECORD_SECS", "4"),
         "tmpdir": env("ROBOT_TMPDIR", "/dev/shm"),
@@ -400,8 +421,15 @@ def speak(cfg, text, on_play=None):
     try:
         # Synthesize: pipe text via stdin (no shell -> no injection). Capture stderr so a Piper/voice
         # failure is logged with its reason, not silently swallowed.
+        cmd = [cfg["piper_bin"], "-m", cfg["piper_voice"]]
+        # Multi-speaker voices ONLY. Omitted, Piper uses speaker 0 -- which on en_US-arctic is awb
+        # (Scottish) and on en_GB-vctk is p239, so a voice picked for its accent would silently speak
+        # in someone else's. Absent on single-speaker voices, where the flag is meaningless.
+        if cfg.get("piper_speaker"):
+            cmd += ["--speaker", cfg["piper_speaker"]]
+        cmd += ["--output_file", wav]
         syn = subprocess.run(
-            [cfg["piper_bin"], "-m", cfg["piper_voice"], "--output_file", wav],
+            cmd,
             input=text.encode("utf-8"), timeout=30,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )

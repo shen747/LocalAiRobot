@@ -7,8 +7,14 @@
 #   ./scripts/generate_sounds.sh --force  # re-synthesize ALL of them (overwrite existing)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-PIPER="$HOME/piper/piper/piper"
-VOICE="$HOME/piper/en_US-lessac-medium.onnx"
+# Follow the robot's OWN voice config when it is set, with the host_setup.sh layout as the default. If you
+# switch ROBOT_PIPER_VOICE and do NOT regenerate, the earcons keep the old voice -- so "Yes?" answers in a
+# different accent to the reply that follows it. Re-run with --force after changing the voice.
+PIPER="${ROBOT_PIPER_BIN:-$HOME/piper/piper/piper}"
+VOICE="${ROBOT_PIPER_VOICE:-$HOME/piper/en_US-lessac-medium.onnx}"
+PIPER="${PIPER/#\~/$HOME}"; VOICE="${VOICE/#\~/$HOME}"
+# Multi-speaker voices need the speaker id too, else every earcon comes out as speaker 0.
+SPK=(); case "${ROBOT_PIPER_SPEAKER:-}" in ''|*[!0-9]*) ;; *) SPK=(--speaker "$ROBOT_PIPER_SPEAKER") ;; esac
 
 FORCE=0
 case "${1:-}" in
@@ -39,11 +45,11 @@ say() {
     printf '  kept   %-38s (exists -- --force to overwrite)\n' "$1"
     kept=$((kept + 1)); return
   fi
-  if echo "$2" | "$PIPER" -m "$VOICE" -f "$1" >/dev/null 2>&1; then
+  if echo "$2" | "$PIPER" -m "$VOICE" ${SPK[@]+"${SPK[@]}"} -f "$1" >/dev/null 2>&1; then
     printf '  wrote  %-38s "%s"\n' "$1" "$2"
     made=$((made + 1))
   else
-    echo "  !! FAILED $1 -- test Piper by hand: echo hi | \"$PIPER\" -m \"$VOICE\" -f /tmp/t.wav" >&2
+    echo "  !! FAILED $1 -- test Piper by hand: echo hi | \"$PIPER\" -m \"$VOICE\" ${SPK[*]+${SPK[*]}} -f /tmp/t.wav" >&2
   fi
 }
 

@@ -341,6 +341,9 @@ class Diag:
             return self.skip(label, "ROBOT_SOUNDS_ENABLE=0")
         piper = os.path.expanduser(os.environ.get("ROBOT_PIPER_BIN", "~/piper/piper/piper"))
         voice = os.path.expanduser(os.environ.get("ROBOT_PIPER_VOICE", "~/piper/en_US-lessac-medium.onnx"))
+        # Multi-speaker voices: same speaker main.py speaks with, or this test proves the wrong voice works.
+        spk = (os.environ.get("ROBOT_PIPER_SPEAKER", "") or "").strip()
+        spk_args = ["--speaker", spk] if spk.isdigit() else []
         name = os.environ.get("ROBOT_NAME", "Jarvis").strip() or "Jarvis"
         text = (f"Hello, I am {name}, your friendly robot car, powered by A I.")
         wav = os.path.join(OUTDIR, "diag_speaker.wav")
@@ -349,7 +352,8 @@ class Diag:
         #    scripts/setup_audio.sh sets up, same as `speaker-test -D default`).
         piper_ok, tts_note = False, ""
         try:
-            syn = subprocess.run([piper, "-m", voice, "--output_file", wav], input=text.encode("utf-8"),
+            syn = subprocess.run([piper, "-m", voice] + spk_args + ["--output_file", wav],
+                                 input=text.encode("utf-8"),
                                  timeout=40, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             piper_ok = syn.returncode == 0 and os.path.exists(wav) and os.path.getsize(wav) > 0
             if not piper_ok:
