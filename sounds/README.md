@@ -36,6 +36,8 @@ folder is empty, it just won't make that cue.
 
 Cues are made with **Piper** so they match the robot's own voice. **Do this on your PC** (WSL / macOS /
 Linux), not the Pi — the Pi only ever runs `scripts/install_stack_pi5.sh` and reads `config/robot.env`.
+One exception: **regenerating after a voice change** ("Changed the robot's voice?" below) is done on the
+Pi, because that is where `scan_piper_voice.sh --apply` downloaded the new voice.
 
 **1. One-time: install the tools.**
 ```bash
@@ -51,11 +53,39 @@ Re-running is **safe**: it only fills in cues you're **missing** and **skips one
 it never regenerates or duplicates them. **To change the words/voice**, edit the `say <file> "<words>"`
 lines near the bottom of `scripts/generate_sounds.sh`, then re-run with **`--force`** (or delete that file
 first). Add several `wake_word_ack/` and `ack_sounds/` lines — the robot plays one at random each time. To
-add or replace a *single* cue by hand (the folders exist after the script), call Piper directly:
+add or replace a *single* cue by hand (the folders exist after the script), call Piper directly — reading
+the voice from your config so the one clip matches the other 56:
 ```bash
-P="$HOME/piper/piper/piper -m $HOME/piper/en_US-lessac-medium.onnx"
-echo "Coming right up" | $P -f sounds/ack_sounds/coming.wav
+set -a; . config/robot.env; set +a
+echo "Coming right up" | "$ROBOT_PIPER_BIN" -m "$ROBOT_PIPER_VOICE" \
+  ${ROBOT_PIPER_SPEAKER:+--speaker $ROBOT_PIPER_SPEAKER} -f sounds/ack_sounds/coming.wav
 ```
+
+### Changed the robot's voice? Regenerate these.
+
+**Nothing regenerates them for you.** [`scripts/scan_piper_voice.sh`](../scripts/scan_piper_voice.sh)
+`--apply` repoints the *brain* at a new voice, but these WAVs were baked with the old one — so *"Yes?"*
+answers in the voice you just replaced and the reply a second later arrives in the new one. The mismatch is
+obvious the moment you hear it and invisible in every log.
+
+Do this **on the Pi**, which is where `--apply` downloaded the new voice:
+
+```bash
+./scripts/generate_sounds.sh --force     # ALL 57 cues, in the voice config/robot.env now names
+```
+
+`--force` is the whole point: a plain re-run **keeps** every existing cue and reports success while
+changing nothing you can hear. The script prints the voice (and speaker id) it is about to use as its first
+line — check that line matches what you applied before you let it write 57 files.
+
+Two things it does **not** touch: `spook_sounds/` (synthetic stingers, not speech — see
+`./scripts/generate_spook_stingers.sh`) and each person's **say-as** respelling, which is tuned by ear
+against a specific voice — re-audition it with `./scripts/pronounce_my_name.sh <respelling> --name=<Name>`,
+since a spelling that fixed one voice often doesn't fit the next.
+
+These WAVs are **tracked**, so regenerating on the Pi leaves ~57 modified files in `git status` there.
+Commit them on your Pi-local branch, or generate on the PC and pull them down — but don't leave them
+half-and-half, which is how you end up with two voices in one folder.
 Piper writes **16-bit mono 22050 Hz** — fine for `aplay`. If a speaker ever complains about the rate,
 normalize to 44100 with sox (from `host_setup.sh`): `sox in.wav -r 44100 -c 1 -b 16 out.wav`.
 

@@ -198,7 +198,7 @@ for vision).
 | `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
 | `ROBOT_WHISPER_MODEL` | `/home/YOUR_USER/whisper.cpp/models/ggml-base.en.bin` | Whisper GGML model file. |
 | `ROBOT_PIPER_BIN` | `/home/YOUR_USER/piper/piper/piper` | Path to the Piper TTS binary. |
-| `ROBOT_PIPER_VOICE` | `/home/YOUR_USER/piper/en_US-lessac-medium.onnx` | Piper voice model. Audition alternatives (incl. other accents) with `./scripts/scan_piper_voice.sh`. |
+| `ROBOT_PIPER_VOICE` | `/home/YOUR_USER/piper/en_US-lessac-medium.onnx` | Piper voice model. Audition alternatives (incl. other accents) with `./scripts/scan_piper_voice.sh`. **After changing this, run `./scripts/generate_sounds.sh --force`** — the earcons in `sounds/` were baked with the old voice and nothing regenerates them for you, so "Yes?" would answer in one voice and the reply arrive in another. |
 | `ROBOT_PIPER_SPEAKER` | *(empty)* | Speaker id **inside a multi-speaker voice** (`en_US-arctic`, `en_GB-vctk`, `en_US-l2arctic`, ...). Empty for a normal single-speaker voice. Leave it empty on a multi-speaker model and Piper uses speaker 0, which is rarely the one you wanted — on `en_US-arctic` that is `awb` (Scottish). Non-numeric values are ignored with a warning. |
 | `ROBOT_MIC` | `plughw:1,0` | ALSA capture device for command recording (find with `arecord -l`); `plughw` auto-resamples to 16 kHz. Card **numbers shift** when you add USB audio — pin by name: `plughw:CARD=<id>,DEV=0`. |
 | `ROBOT_RECORD_SECS` | `4` | Seconds of audio captured per command after a wake/ENTER. |

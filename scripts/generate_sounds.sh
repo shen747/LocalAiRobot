@@ -5,16 +5,38 @@
 #
 #   ./scripts/generate_sounds.sh          # write ONLY cues you don't already have (safe to re-run -- skips existing)
 #   ./scripts/generate_sounds.sh --force  # re-synthesize ALL of them (overwrite existing)
+#
+# CHANGED THE VOICE? Re-run with --force. Nothing does it for you: ./scripts/scan_piper_voice.sh --apply
+# repoints the BRAIN at a new voice, but these WAVs were baked with the old one, so "Yes?" keeps answering
+# in the voice you just replaced and the reply that follows it arrives in the new one.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-# Follow the robot's OWN voice config when it is set, with the host_setup.sh layout as the default. If you
-# switch ROBOT_PIPER_VOICE and do NOT regenerate, the earcons keep the old voice -- so "Yes?" answers in a
-# different accent to the reply that follows it. Re-run with --force after changing the voice.
+# Follow the robot's OWN voice config, sourced here the way run_me.sh and the probe scripts do it. This
+# script used to read these from the environment ALONE, which quietly made the mismatch above worse: the
+# Pi installer auto-loads robot.env into interactive shells, so it usually worked -- but any shell without
+# that (a fresh clone, a non-interactive run, your PC) fell through to the lessac defaults below and rebuilt
+# every earcon in a voice the robot does not use. An inline override still wins, so you can audition one
+# without editing config:  ROBOT_PIPER_VOICE=~/piper/x.onnx ./scripts/generate_sounds.sh --force
+_bin="${ROBOT_PIPER_BIN:-}"; _voice="${ROBOT_PIPER_VOICE:-}"; _spk="${ROBOT_PIPER_SPEAKER:-}"
+[ -f "$REPO/config/robot.env" ] && { set -a; . "$REPO/config/robot.env"; set +a; }
+[ -n "$_bin" ] && ROBOT_PIPER_BIN="$_bin"
+if [ -n "$_voice" ]; then
+  # VOICE + SPEAKER are ONE choice, not two. An inline voice override must NOT inherit the config file's
+  # speaker id: a single-speaker voice handed a leftover --speaker 15 fails on every one of the 57 cues.
+  # Override the voice and you own the speaker too -- pass it inline, or omit it for speaker 0.
+  ROBOT_PIPER_VOICE="$_voice"; ROBOT_PIPER_SPEAKER="$_spk"
+elif [ -n "$_spk" ]; then
+  ROBOT_PIPER_SPEAKER="$_spk"
+fi
+# An UNINSTALLED config still reads /home/YOUR_USER/... (install_stack_pi5.sh substitutes the real user on
+# the Pi). Treat that as unset, so a PC clone keeps working off the host_setup.sh layout instead of failing
+# on a path that cannot exist anywhere.
+case "${ROBOT_PIPER_BIN:-}"   in *YOUR_USER*) ROBOT_PIPER_BIN="" ;; esac
+case "${ROBOT_PIPER_VOICE:-}" in *YOUR_USER*) ROBOT_PIPER_VOICE="" ;; esac
+
 PIPER="${ROBOT_PIPER_BIN:-$HOME/piper/piper/piper}"
 VOICE="${ROBOT_PIPER_VOICE:-$HOME/piper/en_US-lessac-medium.onnx}"
 PIPER="${PIPER/#\~/$HOME}"; VOICE="${VOICE/#\~/$HOME}"
-# Multi-speaker voices need the speaker id too, else every earcon comes out as speaker 0.
-SPK=(); case "${ROBOT_PIPER_SPEAKER:-}" in ''|*[!0-9]*) ;; *) SPK=(--speaker "$ROBOT_PIPER_SPEAKER") ;; esac
 
 FORCE=0
 case "${1:-}" in
@@ -22,6 +44,17 @@ case "${1:-}" in
   -h|--help)  echo "usage: $(basename "$0") [--force]   (default: skip cues that already exist)"; exit 0 ;;
   "") ;;
   *) echo "unknown option: $1 (use --force)"; exit 2 ;;
+esac
+
+# Multi-speaker voices need the speaker id too, else every earcon comes out as speaker 0 -- which on
+# en_US-arctic is awb, a Scot, and on en_GB-vctk is p239. Same validation as main.py's _piper_speaker():
+# a non-number is DROPPED rather than passed on, because Piper would then fail on every single cue.
+# (Checked after the option parsing, so --help never has to print a config warning first.)
+SPK=(); SPKID=""
+case "${ROBOT_PIPER_SPEAKER:-}" in
+  '') ;;
+  *[!0-9]*) echo "!! ROBOT_PIPER_SPEAKER='$ROBOT_PIPER_SPEAKER' is not a speaker number -- ignoring it" >&2 ;;
+  *) SPKID="$ROBOT_PIPER_SPEAKER"; SPK=(--speaker "$SPKID") ;;
 esac
 
 if [ ! -x "$PIPER" ] || [ ! -f "$VOICE" ]; then
@@ -33,6 +66,11 @@ if [ ! -x "$PIPER" ] || [ ! -f "$VOICE" ]; then
 fi
 
 cd "$REPO"
+# Say WHICH voice, up front. These are 57 files you will not hear until the robot is running, so the only
+# way to catch "that's the old voice" has been to notice it mid-conversation days later.
+echo ">> voice: $VOICE${SPKID:+   speaker $SPKID}"
+[ "$FORCE" = 1 ] && echo "   --force: re-synthesizing ALL cues in this voice."
+
 mkdir -p sounds/greeting_sounds sounds/wake_word_ack sounds/ack_sounds \
          sounds/thinking_sounds sounds/thinking_still_sounds sounds/remote_ack_sounds \
          sounds/sleep_sounds sounds/error_sounds sounds/spook_sounds
@@ -139,5 +177,9 @@ say sounds/error_sounds/uh_oh.wav        "Uh oh"
 # (they're committed, so a fresh clone already has them). Nothing to Piper here.
 
 echo ">> done: $made written, $kept kept (already existed; use --force to overwrite)."
+# The kept ones were made by WHATEVER voice was configured at the time, which is the whole trap: after a
+# voice change a plain re-run looks like it succeeded while changing nothing you can hear.
+[ "$kept" -gt 0 ] && [ "$FORCE" != 1 ] && \
+  echo "   NOTE: those $kept kept cues are still in whatever voice built them. If you changed voices, re-run with --force."
 echo "   Test a clip:  aplay sounds/wake_word_ack/yes.wav"
 echo "   Keep them?    git add sounds/ && git commit -m \"Spoken earcons\""
