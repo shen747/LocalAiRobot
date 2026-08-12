@@ -188,6 +188,30 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 | `ROBOT_FACE_ID_MIN_FACE_PX_ENROLL` | `40` | The same floor for **enrolment photos**, deliberately lower — a human chose that photo deliberately, once, offline. Two of this repo's 73 enrolment photos have ~53 px faces and were being dropped silently. |
 | `ROBOT_FACE_ID_WARMUP` | `1` | Load the face model at **startup** (background) instead of lazily inside the first visitor's recognition window. |
 
+### Asked-for recognition — "who is this?"
+
+Everything above serves the **motion wake**, where the robot decides by itself to look at one visitor at the
+door. Being asked out loud, mid-conversation, is a different question: somebody is standing there waiting,
+nobody is about to walk off, and *"these people"* is routinely plural — which the one-face motion path
+deliberately is not.
+
+A *who* phrase promotes `SAY`/`LOOK` → **`IDENTIFY`**, which runs `face_id.identify_all()` over a short burst
+and speaks a reply **composed in code** (the model's own reply is discarded, exactly as `WEATHER` and `LOOK`
+already do — names must not be paraphrased by a 30-word local model). No face at all falls back to the
+ordinary camera description, so a misfired trigger on a photo of a dog still answers usefully.
+
+It also **attributes the conversation**: on exactly one unambiguous match, `present_person` is set, so from
+the next turn the model is told who it is talking to and the post-chat extractor files what it learns under
+the right person. Previously that only ever happened via a motion greeting — start a chat by *saying* "hey
+jarvis" rather than by walking up, and the robot had no idea who you were.
+
+| Key | Default | What it does |
+|---|---|---|
+| `ROBOT_IDENTIFY_TRIGGERS` | *(blank)* | **Extra** who-phrases; *adds to* the ~35 built-ins. Multi-word only (a bare "who" would hijack "who made you"). |
+| `ROBOT_IDENTIFY_FRAMES` | `3` | Frames per question. Stops early on a stable, complete answer — one person costs two; an unrecognised face keeps trying. |
+| `ROBOT_IDENTIFY_MAX_FACES` | `5` | Faces **recognised** per frame, nearest first. Over-cap faces are still counted and said aloud. |
+| `ROBOT_LOOK_IDENTIFIES` | `1` | Name recognised people in ordinary LOOK answers too, appended as its own sentence. |
+
 ## Detect captures — seeing what Jarvis saw
 
 Every motion wake keeps the **one frame that decided the outcome** in `~/detect-captures`, so a ghost greeting

@@ -353,3 +353,96 @@ def recognize_within(capture, identify, detect, window_s, clock=time.monotonic, 
         delay = gap if jpeg else max(gap, 0.1)
         if delay > 0:
             sleep(delay)
+
+
+def identify_group(capture, identify_all, frames=3, interval_s=0.2,
+                   clock=time.monotonic, sleep=time.sleep):
+    """Answer "who can you see" over a few frames -- the UNION of everyone seen, not the first match.
+
+    Deliberately NOT recognize_within(). That one is built for the doorway: it stops the instant ONE person
+    is matched, and it runs open-ended while a PIR keeps asserting. Both are wrong here. A conversational
+    "do you know these people?" has no sensor gating it, and stopping at the first match would name one
+    person in a group of three and call it an answer.
+
+    Multiple frames because a single still is a coin flip on blink, pose and motion blur -- the same reason
+    the greeting path takes a burst. The union across frames is what makes "two of the three were looking
+    away" recoverable. Each person keeps their BEST score across the burst, and the frame that produced the
+    most recognitions is returned so the caller can keep it for review.
+
+    EARLY EXIT: a frame that adds no new name and finds no more faces than the best frame so far ends the
+    burst. The overwhelmingly common case is one person standing still in good light, and that should cost
+    one capture (~390ms), not three. A group, or a frame that missed somebody, keeps going.
+
+      capture()           -> jpeg bytes, or None (camera unavailable / capture failed)
+      identify_all(jpeg)  -> face_id.identify_all's dict: {"faces", "face_count", "known", "truncated"}
+
+    Returns:
+        {"known": [str, ...],     # every name seen, best-scoring first
+         "scores": {name: float}, # each person's best score across the burst
+         "face_count": int,       # the MOST faces any single frame saw
+         "unknown": int,          # faces in that frame that matched nobody
+         "truncated": bool,       # any frame hit the per-frame face cap
+         "attempts": int,         # frames actually captured
+         "jpeg": bytes|None}      # the most informative frame
+
+    Pure/stdlib and dependency-injected (same contract as recognize_within), so it tests with no camera and
+    no face model. Never raises: a throwing identify_all costs that frame, not the answer."""
+    want = max(1, int(frames or 1))
+    gap = max(0.0, float(interval_s or 0.0))
+    scores, order = {}, []
+    face_count, unknown, truncated, attempts = 0, 0, False, 0
+    best_jpeg, last_jpeg, best_seen = None, None, -1
+    started = clock()
+    for i in range(want):
+        jpeg = None
+        try:
+            jpeg = capture()
+        except Exception:
+            jpeg = None
+        if jpeg:
+            last_jpeg = jpeg
+            attempts += 1
+            try:
+                res = identify_all(jpeg) or {}
+            except Exception:
+                res = {}
+            faces = res.get("faces") or []
+            named = [f.get("name") for f in faces if f.get("name")]
+            fresh = False
+            for f in faces:
+                name, score = f.get("name"), float(f.get("score") or 0.0)
+                if not name:
+                    continue
+                if name not in scores:
+                    order.append(name)
+                    fresh = True
+                if score > scores.get(name, -1.0):
+                    scores[name] = score
+            seen_here = int(res.get("face_count") or len(faces))
+            if seen_here > face_count:
+                face_count = seen_here
+                fresh = True                 # this frame saw MORE people -- worth another look
+            truncated = truncated or bool(res.get("truncated"))
+            # Keep the frame that recognised the most people; ties go to the earlier one.
+            if len(named) > best_seen:
+                best_seen = len(named)
+                best_jpeg = jpeg
+                unknown = max(0, seen_here - len(set(named)))
+            # STOP only on a STABLE, COMPLETE answer: this frame added nobody new AND everybody it could
+            # see was recognised. Both halves earn their keep. Without "complete", a frame where one of
+            # three people is looking away would end the burst and the robot would confidently name two;
+            # without "stable", the very first frame would end it, and someone who had not turned around
+            # yet would never be seen at all -- which is precisely the group case this function exists for.
+            # An unrecognised face, a capture the recogniser threw on, or a truncated frame therefore all
+            # keep trying to the frame budget, which is the bounded, cheap direction to be wrong in.
+            complete = bool(named) and seen_here == len(set(named)) and not res.get("truncated")
+            if complete and not fresh:
+                break
+        if i < want - 1 and gap > 0:
+            sleep(gap)
+    # Best-scoring first: the person the robot is most sure about should be named first, and on a single
+    # frame that is also the nearest, since ties keep insertion (nearest-first) order.
+    known = sorted(order, key=lambda n: (-scores.get(n, 0.0), order.index(n)))
+    return {"known": known, "scores": scores, "face_count": face_count, "unknown": unknown,
+            "truncated": truncated, "attempts": attempts, "jpeg": best_jpeg or last_jpeg,
+            "elapsed_s": max(0.0, clock() - started)}

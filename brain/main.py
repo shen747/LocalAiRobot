@@ -200,6 +200,101 @@ def is_weather_command(text):
     return any(t in low for t in weather_triggers())
 
 
+# --- IDENTIFY gate: "who is this / do you know these people" is a RECOGNITION question, and must reach
+# brain/face_id.py rather than the VLM. Without this the only path to the camera is LOOK, which describes
+# ("a young girl in pink pajamas") using a model that has never seen an enrolment -- so a robot holding 72
+# ArcFace embeddings answers a question about WHO with a sentence about WHAT.
+#
+# Same post-LLM promotion mechanism as the WEATHER gate, and deliberately NOT a new action verb, for the
+# reason spelled out above weather_triggers(): _ACTION_SCHEMA is shared byte-for-byte between the crawler
+# and concierge personas, and an unrecognised action falls through to DRIVE teleop -- a half-recognised
+# verb would literally drive the car.
+#
+# ROBOT_IDENTIFY_TRIGGERS *ADDS TO* these, like the weather list and unlike ROBOT_LOOK_TRIGGERS: adding one
+# phrase should not silently cost you the other twenty. Matching is bare substring containment, so every
+# entry is MULTI-WORD. Excluded on purpose: bare "who" (hijacks "who made you", "who is the prime
+# minister"), and "know him/her/them" (usually about someone being discussed, not someone in frame). ---
+DEFAULT_IDENTIFY_TRIGGERS = ("who is this", "who's this", "who is that", "who's that",
+                             "who is she", "who's she", "who is he", "who's he",
+                             "who are these", "who are those", "who are they",
+                             "who can you see", "who do you see", "who is in front",
+                             "who am i", "who is with me", "do you know me",
+                             "do you know these", "do you know those", "do you know this",
+                             "do you know that", "do you know who", "do you recognise",
+                             "do you recognize", "recognise anyone", "recognize anyone",
+                             "recognise these", "recognize these", "know who i am",
+                             "know who this is", "know who that is", "name these people",
+                             "can you tell who", "identify this person", "identify these people")
+
+
+def identify_triggers():
+    extra = [t.strip().lower() for t in env("ROBOT_IDENTIFY_TRIGGERS", "").split(",") if t.strip()]
+    return list(DEFAULT_IDENTIFY_TRIGGERS) + extra
+
+
+def is_identify_command(text):
+    low = text.lower()
+    return any(t in low for t in identify_triggers())
+
+
+_COUNT_WORDS = ("nobody", "one", "two", "three", "four", "five",
+                "six", "seven", "eight", "nine", "ten")
+
+
+def _count_word(n):
+    """Small counts as words -- spoken aloud, 'two people' beats '2 people'."""
+    return _COUNT_WORDS[n] if 0 <= n < len(_COUNT_WORDS) else str(n)
+
+
+def _join_names(names):
+    """['A'] -> 'A';  ['A','B'] -> 'A and B';  ['A','B','C'] -> 'A, B, and C'."""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
+def compose_identity_reply(known, face_count, unknown=0, truncated=False, note=None):
+    """What the robot SAYS about who it can see. Pure, so every phrasing is testable without a camera.
+
+    Returns None for "there is nobody to talk about" -- the signal for the caller to fall back to an
+    ordinary camera description, so a misfired trigger on a photo of a dog still gets a useful answer
+    instead of "I don't recognise anybody", which would be true and useless.
+
+    The counts are deliberately honest in both directions: a recognised person standing next to a stranger
+    is reported as both, because naming only the person it knows would imply the robot had looked at
+    everyone and it hasn't. `truncated` says the per-frame face cap hid people, which is a different
+    statement from not recognising them and reads that way out loud."""
+    known = [n for n in (known or []) if n]
+    faces = max(int(face_count or 0), len(known))
+    if not known and faces == 0:
+        return None
+    tail = " There may be one or two more further back that I couldn't make out." if truncated else ""
+    if not known:
+        if faces == 1:
+            return "I can see someone, but I don't recognise them." + tail
+        return f"I can see {_count_word(faces)} people, but I don't recognise any of them." + tail
+    unknown = max(0, int(unknown or 0))
+    if len(known) == 1:
+        out = f"That's {known[0]}."
+        if note:
+            out += " " + note          # one person -> Social Memory can safely say something about them
+        if unknown == 1:
+            out += " There's someone with them I haven't met."
+        elif unknown > 1:
+            out += f" There are {_count_word(unknown)} others with them I haven't met."
+        return out + tail
+    # Two or more recognised: no social note, because context_note speaks about ONE person and attaching
+    # it to a group is how the robot ends up telling you about someone else's day.
+    out = f"I can see {_join_names(known)}."
+    if unknown == 1:
+        out += " And someone else I haven't met."
+    elif unknown > 1:
+        out += f" And {_count_word(unknown)} others I haven't met."
+    return out + tail
+
+
 # Crawl by default: a normal move ("come forward", "follow me") stays SLOW. Speed only climbs when the
 # user EXPLICITLY asks for it -- detected on the RAW transcript, so the model can't decide to floor it on
 # its own. The crawl cap is ROBOT_DRIVE_CRAWL_SPEED (config). Any of these words lets speed climb to 100:
@@ -977,6 +1072,22 @@ def main():
             return True
         return vision.vision_backend(cfg) == "gemini"   # "auto": ON only when VISION is remote (fast; hidden in the record window)
 
+    def _identify_frames():
+        """How many frames the ASKED-FOR recognition ("who is this?") may capture before answering
+        (default 3). Not the same budget as a motion wake: that one is racing a visitor who may walk off,
+        this one has somebody standing there waiting for an answer, so accuracy beats latency. The burst
+        stops early on a stable, complete answer, so the common single-person case pays for two."""
+        try:
+            return max(1, int(float(os.environ.get("ROBOT_IDENTIFY_FRAMES", "3") or 3)))
+        except ValueError:
+            return 3
+
+    def _look_identifies():
+        """Name people the robot recognises inside ORDINARY 'what do you see' answers (default on).
+        Costs one ArcFace pass per face, and only when the detector actually found a face -- on the hallway
+        frames in the field log that is ~1% of them. 0 = plain VLM description, the old behaviour."""
+        return os.environ.get("ROBOT_LOOK_IDENTIFIES", "1") != "0"
+
     def _concierge_recognize_s():
         """Seconds to keep smiling + retrying face recognition on a Concierge motion wake (default 5).
         0 = a single shot (the old one-frame behavior)."""
@@ -1385,6 +1496,18 @@ def main():
                 log.info("weather gate: promoting %s -> WEATHER (forecast request)", action)
                 action = "WEATHER"
 
+            # A "who is this" is a RECOGNITION request, not a description request -- it must reach the face
+            # pipeline. Placed AFTER the weather gate (a weather question is never about people) and BEFORE
+            # the LOOK gate, because the two overlap on purpose: "who do you see" contains no LOOK trigger,
+            # but "do you know who this is in front of you" contains "what is in front"'s cousin and plenty
+            # of real phrasings hit both lists. WHO must win -- LOOK can only ever describe, so letting it
+            # take the turn is how the question gets the wrong KIND of answer. Accepts LOOK as well as SAY
+            # for exactly that reason: the model tagging it LOOK is the common case today.
+            if action in ("SAY", "LOOK") and is_identify_command(text):
+                print("(gate: a 'who is this' question -> IDENTIFY, a face-recognition look)")
+                log.info("identify gate: promoting %s -> IDENTIFY (recognition request)", action)
+                action = "IDENTIFY"
+
             # A live "what do you see / what is this" must LOOK (fresh capture) rather than answer from
             # stored scene memory -- promote SAY -> LOOK on those phrases even if the model chose SAY.
             if action == "SAY" and is_look_command(text):
@@ -1394,7 +1517,7 @@ def main():
 
             # --- HTTP hardening: over the network, BLOCK the camera-using actions unless explicitly
             # allowed, so a stolen token can't even get a one-shot photo description. Downgrade to SAY. ---
-            if source == "http" and action in ("REMEMBER", "FIND", "EXPLORE", "LOOK") \
+            if source == "http" and action in ("REMEMBER", "FIND", "EXPLORE", "LOOK", "IDENTIFY") \
                     and os.environ.get("ROBOT_HTTP_ALLOW_CAMERA", "0") != "1":
                 log.info("http: blocking camera action %s (ROBOT_HTTP_ALLOW_CAMERA=0) -> SAY", action)
                 action, reply = "SAY", "I can only drive and chat over the phone, not use my camera."
@@ -1437,6 +1560,65 @@ def main():
                 mem.remember_fact(name, note, desc, img_path)
                 reply = reply or f"Okay, I'll remember {name}."
                 say(reply)
+            elif action == "IDENTIFY":
+                # "Who is this?" -> the STRICTLY LOCAL face pipeline, never the VLM. The reply is composed
+                # here from the recognition result and SPOKEN AS BUILT -- the model's own reply is discarded,
+                # exactly as WEATHER and LOOK already do. Names must not be laundered through a 30-word local
+                # model: it would paraphrase them, and the say-as respelling that makes 'Ramesh' come out
+                # right is tuned against the name, not against whatever the model decides to call him.
+                print("action=IDENTIFY")
+                driver.stop()
+                fc.set_expression("capturing")
+                res = concierge.identify_group(lambda: cam.capture_jpeg(),
+                                               face_identifier.identify_all,
+                                               frames=_identify_frames())
+                fc.set_expression("thinking")
+                known = res["known"]
+                note = None
+                # EXACTLY ONE person, and nobody unidentified standing next to them -> this is who we are
+                # talking to. That is the fix for the gap where a wake-word chat never learned a name at
+                # all: present_person was only ever set by the motion greeting, so starting a conversation
+                # by SPEAKING instead of by walking up left the model with no idea who it was addressing.
+                # Guarded to a single unambiguous face on purpose -- attributing a stranger's remarks to a
+                # named person would poison their notes, and the notes outlive the conversation.
+                if len(known) == 1 and res["unknown"] == 0 and social.enabled():
+                    name = known[0]
+                    try:
+                        last_seen = mem.last_sighting(name)      # BEFORE recording, as the greeting does
+                        notes = mem.notes_for(name)
+                        mem.record_sighting(name, res["scores"].get(name, 0.0), greeted=False)
+                        note = social.context_note(name, last_seen, notes)
+                        if present_person.get("name") != name:
+                            # Bumping gen retires any extraction still in flight from a previous person.
+                            # Skipped when it is already them, so asking "who am I" mid-chat does not throw
+                            # away the turns the post-conversation extractor is about to learn from.
+                            present_person.update(name=name, notes=notes, last_seen=last_seen,
+                                                  turns=[], exchanges=0, asked=False,
+                                                  gen=present_person["gen"] + 1)
+                            log.info("social: this conversation is now attributed to %r (identified on "
+                                     "request rather than by a motion greeting)", name)
+                    except Exception as e:
+                        # Social Memory enriches the answer; it is never allowed to be why there isn't one.
+                        log.warning("social: could not attach context for %r (%s)", name, e)
+                reply = compose_identity_reply(known, res["face_count"], res["unknown"],
+                                               res["truncated"], note=note)
+                if reply is None:
+                    # NO FACE AT ALL. Answer the question they actually asked rather than insisting there
+                    # is nobody there -- they may be holding up a photo, or pointing at the dog. This is
+                    # the same call the LOOK branch makes, on the frame we already captured.
+                    log.info("identify: no face in %d frame(s) -- falling back to a camera description",
+                             res["attempts"])
+                    _start_thinking()
+                    desc = vision.describe(cfg, res.get("jpeg") or cam.capture_jpeg(), query=text)
+                    snd.stop_thinking()
+                    mem.record_scene(desc.get("description", ""), desc.get("objects", []),
+                                     driver.distances())
+                    reply = desc.get("description") or "I'm not sure what I'm looking at."
+                else:
+                    log.info("identify: %d face(s) over %d frame(s), %d recognised -> %s",
+                             res["face_count"], res["attempts"], len(known),
+                             ", ".join(known) if known else "nobody")
+                say(reply)
             elif action == "LOOK":
                 # Live look: capture a FRESH frame and describe what's visible NOW (never from memory/RAG).
                 print("action=LOOK")
@@ -1451,6 +1633,19 @@ def main():
                 snd.stop_thinking()
                 mem.record_scene(desc.get("description", ""), desc.get("objects", []), driver.distances())
                 reply = desc.get("description") or "I'm not sure what I'm looking at."
+                # NAME the people in an ordinary description. The VLM has never seen an enrolment, so left
+                # alone it says "a young girl in pink pajamas" about somebody the robot has 72 embeddings
+                # for -- which is the complaint that started all of this, and it is just as wrong when
+                # nobody asked "who". Appended as its own sentence rather than woven in, so the VLM's answer
+                # is never rewritten and a wrong name cannot corrupt a right description. Runs on the frame
+                # ALREADY captured (no second look) and costs one detector pass, plus ArcFace only when a
+                # face is actually found. ROBOT_LOOK_IDENTIFIES=0 restores the plain description.
+                if _look_identifies():
+                    seen = face_identifier.identify_all(jpeg)
+                    if seen["known"]:
+                        reply += (f" That's {seen['known'][0]}." if len(seen["known"]) == 1
+                                  else f" That's {_join_names(seen['known'])}.")
+                        log.info("look: named %s in the description", ", ".join(seen["known"]))
                 say(reply)
             elif action == "FIND":
                 print(f"action=FIND target={target!r}")

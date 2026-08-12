@@ -122,9 +122,17 @@ class FaceID:
         # from "somebody was there but too far back to recognise" -- two outcomes that otherwise log
         # identically as a silent look. Read by main.py's silent-outcome line.
         self.last_rejected_px = 0
+        # How many faces the LAST detect pass accepted, before identify_all's cap. Separate from
+        # last_face_px, which describes only the biggest one: "who is in the room" is a COUNT question and
+        # a 3-face frame reported as one 180px box cannot answer it.
+        self.last_face_count = 0
         # Top-3 [(name, score)] from the LAST identify(), best first. The runner-up's score is what turns a
         # bare "matched 0.398" into something you can act on -- see the ranking note in identify().
         self.last_ranked = []
+        # Cost cap for identify_all(): ArcFace runs PER FACE, so a group photo held up to the lens would
+        # otherwise turn one question into dozens of inferences on a Pi 5 CPU. Faces are scored nearest
+        # first, so the cap drops the people furthest away -- the ones least likely to be who was meant.
+        self._max_faces = max(1, int(_envf("ROBOT_IDENTIFY_MAX_FACES", 5)))
         self._sess = None            # onnxruntime session (lazy)
         self._cascade = None         # cv2 Haar detector (lazy)
         self._np = None              # numpy (lazy)
@@ -278,6 +286,7 @@ class FaceID:
         else:
             faces = []
         self.last_face_px = int(max((max(f[2], f[3]) for f in faces), default=0))
+        self.last_face_count = len(faces)
         return faces
 
     def _align(self, bgr, pts):
@@ -310,15 +319,13 @@ class FaceID:
             return None
         return cv2.resize(crop, (self.input_size, self.input_size))
 
-    def _largest_face(self, bgr):
-        """Return a preprocessed NCHW float32 blob for the LARGEST detected face, or None if no face."""
+    def _blob(self, bgr, x, y, w, h, pts):
+        """ONE detected box -> a preprocessed NCHW float32 blob, or None when the crop is unusable.
+
+        Lifted verbatim out of _largest_face so _face_blobs can apply it to every face in the frame. The
+        landmark-then-fallback order and the ArcFace normalisation are unchanged, which is what keeps a
+        Haar-only robot and the tuned concierge path identical across this refactor."""
         cv2, np = self._cv2, self._np
-        faces = self._boxes(bgr)
-        if len(faces) == 0:
-            self._last_landmarks = None
-            return None
-        x, y, w, h, pts = max(faces, key=lambda f: f[2] * f[3])   # biggest box = closest/primary person
-        self._last_landmarks = pts
         crop = None
         if pts is not None:
             crop = self._align(bgr, pts)     # the good path: landmarks -> canonical template
@@ -329,6 +336,41 @@ class FaceID:
         rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32)
         rgb = (rgb - 127.5) / 127.5                          # ArcFace normalisation -> [-1, 1]
         return np.transpose(rgb, (2, 0, 1))[np.newaxis, :]   # NCHW, batch 1
+
+    def _face_blobs(self, bgr, limit=None):
+        """Every detected face as [(blob, (x, y, w, h)), ...], NEAREST FIRST (largest box first).
+
+        Nearest-first is the whole ordering contract: it makes `limit` drop the people furthest away
+        rather than an arbitrary subset, and it is the order a person naming a room would use. Sorting is
+        stable, so ties keep detector order -- the same face _largest_face used to pick with max().
+
+        `limit` caps how many faces are CROPPED AND RETURNED, not how many are detected: self.last_face_count
+        is set by _boxes() and stays truthful about the whole frame, so a caller can still say "and two
+        others further back". Faces whose crop fails are dropped from the list rather than returned as
+        holes."""
+        faces = self._boxes(bgr)
+        if not faces:
+            self._last_landmarks = None
+            return []
+        ordered = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+        self._last_landmarks = ordered[0][4]     # diagnostics stay about the PRIMARY face, as before
+        if limit is not None and limit > 0:
+            ordered = ordered[:limit]
+        out = []
+        for x, y, w, h, pts in ordered:
+            blob = self._blob(bgr, x, y, w, h, pts)
+            if blob is not None:
+                out.append((blob, (int(x), int(y), int(w), int(h))))
+        return out
+
+    def _largest_face(self, bgr):
+        """Return a preprocessed NCHW float32 blob for the LARGEST detected face, or None if no face.
+
+        Now expressed as _face_blobs(bgr, 1) with the box dropped. Behaviourally identical to the hand-rolled
+        version it replaces -- same box chosen, same crop path, same None on an unusable crop -- so embed()
+        and identify(), and through them the tuned concierge greeting, are untouched by multi-face support."""
+        blobs = self._face_blobs(bgr, 1)
+        return blobs[0][0] if blobs else None
 
     def embed(self, jpeg_bytes):
         """JPEG bytes -> L2-normalised face embedding (np.float32), or None (no libs / no face / error).
@@ -431,6 +473,115 @@ class FaceID:
                           len(names), len(by_name))
         return self._faces_names, self._faces_mat, self._faces_by_name
 
+    def _match(self, vec):
+        """Score ONE embedding against the enrolment set -> a decision dict. No logging, no state changes.
+
+        Split out of identify() so identify_all() can apply the SAME threshold and margin rules to every
+        face in a frame without either duplicating them (two copies of a safety rule is one copy too many)
+        or emitting identify()'s per-face INFO line N times per frame. identify() keeps its own logging and
+        its own 3-tuple return, so its behaviour across this split is unchanged.
+
+          name    the accepted match, or None -- below threshold, too close to call, or nobody enrolled
+          score   the best similarity seen (0.0 when there was nothing to score)
+          ranked  [(score, name), ...] best first; the runner-up is what says whether it was decisive
+          sims    {name: [per-photo sim, ...]}, for the photo count in identify()'s log line
+          margin  best minus runner-up (inf when only one person is enrolled)
+          reason  'match' | 'ambiguous' (over the bar but neck and neck) | 'below' | 'nobody' (none enrolled)
+        """
+        # Group every enrolled row by person: their per-photo cosine sims (+ raw embeddings for 'centroid').
+        # The enrolment set is read ONCE and kept as a stacked (N, D) matrix -- see _enrollments() -- so a
+        # frame costs one matmul instead of a SELECT plus a python loop of N dots. Enrol/forget bump
+        # mem.faces_version(), so a person added mid-run is picked up on the very next frame.
+        names, mat, embs_by_name = self._enrollments()
+        sims, embs = {}, {}
+        if mat is not None and mat.shape[1] == vec.shape[0]:
+            scores = mat @ vec                       # both L2-normalised -> dot == cosine, all rows at once
+            for name, score in zip(names, scores):
+                sims.setdefault(name, []).append(float(score))
+            if self._aggregate == "centroid":
+                embs = embs_by_name
+        if not sims:
+            return {"name": None, "score": 0.0, "ranked": [], "sims": {},
+                    "margin": float("inf"), "reason": "nobody"}
+        # RANK everyone, don't just track the winner. The runner-up's score is the number that says whether a
+        # match was DECISIVE or a coin flip: 'matched Ramesh 0.398' told us nothing about whether Shanika
+        # scored 0.11 (safe) or 0.39 (one bad frame from greeting the wrong person by name). Without the
+        # margin there is no way to tune ROBOT_FACE_ID_THRESHOLD from a run log, or to notice that two
+        # enrolled people have become confusable. Cheap: the per-person scores are already computed.
+        ranked = sorted(((self._combine(person_sims, embs.get(name), vec), name)
+                         for name, person_sims in sims.items()), reverse=True)
+        best, best_name = ranked[0]
+        margin = (best - ranked[1][0]) if len(ranked) > 1 else float("inf")
+        if best_name is not None and best >= self.threshold:
+            reason = "match" if margin >= self.min_margin else "ambiguous"
+        else:
+            reason = "below"
+        return {"name": best_name if reason == "match" else None, "score": best,
+                "ranked": ranked, "sims": sims, "margin": margin, "reason": reason}
+
+    def identify_all(self, jpeg_bytes, limit=None):
+        """JPEG bytes -> EVERY face in the frame, recognised where possible. Never raises.
+
+        identify() answers "who is at the door", which is a one-face question and rightly resolves only the
+        largest box. This answers "who can you see", which is not: naming the nearest person and silently
+        ignoring the two beside them is a wrong answer, not a partial one.
+
+          {"faces": [{"name": str|None, "score": float, "box": (x, y, w, h), "reason": str}, ...],
+           "face_count": int,     # faces DETECTED in the frame, before the cap
+           "known": [str, ...],   # accepted names, nearest first, de-duplicated
+           "truncated": bool}     # True when the cap left faces unscored
+
+        Faces come back NEAREST FIRST, so a caller can name them in the order a person would. `reason` is
+        _match's, plus 'error' for a face whose embedding failed -- which is why an unrecognised face and a
+        face we never managed to score stay distinguishable in the answer.
+
+        Cost is one detector pass plus ONE ArcFace inference PER FACE, capped by ROBOT_IDENTIFY_MAX_FACES.
+        The enrolment matrix is fetched once for the whole frame, not once per face."""
+        out = {"faces": [], "face_count": 0, "known": [], "truncated": False}
+        if not self._load() or not jpeg_bytes:
+            self.last_face_px = 0
+            self.last_face_count = 0
+            return out
+        cap = self._max_faces if limit is None else max(1, int(limit))
+        cv2, np = self._cv2, self._np
+        try:
+            bgr = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if bgr is None:
+                self.last_face_px = 0
+                self.last_face_count = 0
+                return out
+            blobs = self._face_blobs(bgr, cap)          # sets last_face_count for the WHOLE frame
+            out["face_count"] = self.last_face_count
+            out["truncated"] = self.last_face_count > cap
+            for blob, box in blobs:
+                try:
+                    vec = self._sess.run(None, {self._inp: blob})[0][0].astype(np.float32)
+                    n = float(np.linalg.norm(vec))
+                    vec = vec / n if n > 0 else None
+                except Exception as e:
+                    log.debug("face_id identify_all: embedding one face failed: %s", e)
+                    vec = None
+                if vec is None:
+                    out["faces"].append({"name": None, "score": 0.0, "box": box, "reason": "error"})
+                    continue
+                m = self._match(vec)
+                out["faces"].append({"name": m["name"], "score": float(m["score"]),
+                                     "box": box, "reason": m["reason"]})
+                log.debug("face_id: face at %s -> %s (%.3f, %s)", box, m["name"] or "unknown",
+                          m["score"], m["reason"])
+            seen = set()
+            for f in out["faces"]:
+                if f["name"] and f["name"] not in seen:
+                    seen.add(f["name"])
+                    out["known"].append(f["name"])
+            # ONE line per call, not one per face: this runs up to ROBOT_IDENTIFY_FRAMES times per question.
+            log.info("face_id: %d face(s)%s -> %s", out["face_count"],
+                     f" (capped at {cap})" if out["truncated"] else "",
+                     ", ".join(out["known"]) if out["known"] else "nobody recognised")
+        except Exception as e:
+            log.debug("face_id identify_all failed: %s", e)
+        return out
+
     def identify(self, jpeg_bytes):
         """JPEG bytes -> (name, score, face_seen).
 
@@ -456,37 +607,19 @@ class FaceID:
         face_seen = self.last_face_px > 0
         if vec is None:
             return None, 0.0, face_seen
-        np = self._np
-        # Group every enrolled row by person: their per-photo cosine sims (+ raw embeddings for 'centroid').
-        # The enrolment set is read ONCE and kept as a stacked (N, D) matrix -- see _enrollments() -- so a
-        # frame costs one matmul instead of a SELECT plus a python loop of N dots. Enrol/forget bump
-        # mem.faces_version(), so a person added mid-run is picked up on the very next frame.
-        names, mat, embs_by_name = self._enrollments()
-        sims, embs = {}, {}
-        if mat is not None and mat.shape[1] == vec.shape[0]:
-            scores = mat @ vec                       # both L2-normalised -> dot == cosine, all rows at once
-            for name, score in zip(names, scores):
-                sims.setdefault(name, []).append(float(score))
-            if self._aggregate == "centroid":
-                embs = embs_by_name
-        if not sims:
+        m = self._match(vec)
+        if m["reason"] == "nobody":
             # A real face, but nobody enrolled (or every stored row is a different dimension). face_seen is
             # True here -- that is exactly the case the old detect() fallback existed to catch.
             return None, 0.0, face_seen
-        # RANK everyone, don't just track the winner. The runner-up's score is the number that says whether a
-        # match was DECISIVE or a coin flip: 'matched Ramesh 0.398' told us nothing about whether Shanika
-        # scored 0.11 (safe) or 0.39 (one bad frame from greeting the wrong person by name). Without the
-        # margin there is no way to tune ROBOT_FACE_ID_THRESHOLD from a run log, or to notice that two
-        # enrolled people have become confusable. Cheap: the per-person scores are already computed.
-        ranked = sorted(((self._combine(person_sims, embs.get(name), vec), name)
-                         for name, person_sims in sims.items()), reverse=True)
+        ranked, sims = m["ranked"], m["sims"]
         self.last_ranked = [(n, s) for s, n in ranked[:3]]   # diagnostics for callers
         best, best_name = ranked[0]
         runner = f", runner-up {ranked[1][1]!r} {ranked[1][0]:.3f} (margin {best - ranked[1][0]:+.3f})" \
                  if len(ranked) > 1 else " (only one person enrolled)"
-        margin = (best - ranked[1][0]) if len(ranked) > 1 else float("inf")
-        if best_name is not None and best >= self.threshold:
-            if margin < self.min_margin:
+        margin = m["margin"]
+        if m["reason"] in ("match", "ambiguous"):
+            if m["reason"] == "ambiguous":
                 # Over the bar, but two people are neck and neck -- don't gamble a name on it.
                 log.info("face_id: %r cleared the threshold (%.3f >= %.2f) but only by %+.3f over %r "
                          "(need %+.3f) -- too close to call, greeting without a name%s",

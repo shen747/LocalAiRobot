@@ -325,6 +325,10 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 |---|---|---|
 | `ROBOT_EXPLORE_TRIGGERS` | `explore,look around,have a look,…,head towards` | Comma-separated phrases that must appear in the transcript for EXPLORE/FIND to run (else demoted to DRIVE). **Quote the value.** |
 | `ROBOT_LOOK_TRIGGERS` | `what is this,what do you see,look at this,…` | Phrases that force a **live camera LOOK** (capture a fresh frame + describe it) instead of answering from memory. **Quote the value.** |
+| `ROBOT_IDENTIFY_TRIGGERS` | *(blank)* | **Extra** phrases that force a **face-recognition IDENTIFY** (`who is this`, `do you know these people`) instead of a description — these *add to* the ~35 built-ins, they don't replace them. Multi-word only. Without this path, "who is that?" reaches only the vision model, which has never seen an enrolment. |
+| `ROBOT_IDENTIFY_FRAMES` | `3` | Frames an asked-for recognition may capture. Stops early on a stable, complete answer, so one person costs two. |
+| `ROBOT_IDENTIFY_MAX_FACES` | `5` | Per-frame cap on faces **recognised** (nearest first). ArcFace runs per face; faces over the cap are still counted and mentioned. |
+| `ROBOT_LOOK_IDENTIFIES` | `1` | Also name recognised people inside ordinary LOOK answers, as a separate appended sentence. `0` = plain description. |
 | `ROBOT_EXPLORE_MAX_ITERS` | `12` | **Local** agentic EXPLORE + FIND: max look→step iterations before giving up. |
 | `ROBOT_EXPLORE_MAX_ITERS_REMOTE` | `24` | **Remote** EXPLORE: 2× (Gemini/any remote is faster + smarter). |
 | `ROBOT_EXPLORE_MAX_SECONDS` | `60` | **Local** EXPLORE: wall-clock cap (whichever cap hits first ends it). |
