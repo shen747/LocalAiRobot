@@ -161,7 +161,7 @@ sed -i 's/^ROBOT_CONCIERGE_MODE=.*/ROBOT_CONCIERGE_MODE=1/' config/robot.env
 |---|---|---|
 | `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable the whole mode (top of `config/robot.env`). |
 | `ROBOT_PIR_PIN` | *(empty)* | PIR OUT pin (BCM). Empty = wake-word-only. |
-| `ROBOT_PIR_HOLD_S` | `0.25` | **Noise filter.** Re-read the pin this long after a trigger; if it has already fallen it was an electrical spike, not a person. `0` = trust every edge. |
+| `ROBOT_PIR_HOLD_S` | `0` | **Noise filter, OFF by default.** Re-read the pin this long after a trigger; if it has already fallen it was an electrical spike, not a person. Disabled because it infers "person" from pulse **length**, so a sensor that stops latching discards every real visitor while its LED still flashes — a silently deaf robot. Stage A filters transients with a picture instead. `0` = trust every edge. |
 | `ROBOT_PIR_COOLDOWN_S` | `2` | **Edge debounce** (was 15). One sensor pulse train = one wake. **No longer the rate limiter** — the two outcome cooldowns below are, and they run *after* the camera has looked. `0` = react to every edge. |
 | `ROBOT_CONCIERGE_SILENT_COOLDOWN_S` | `8` | **Outcome cooldown after "nobody there".** The real idle rate limiter — applied *with* evidence, so it throttles a lying sensor without throttling real visitors. `0` = off. |
 | `ROBOT_CONCIERGE_GREET_COOLDOWN_S` | `60` | **Outcome cooldown after a greeting** (or a Halloween spook). Stops the visitor you're already talking to from re-triggering their own greeting — the field log shows the same person greeted twice, 30s apart. `0` = off. |

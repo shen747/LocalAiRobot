@@ -25,8 +25,10 @@
 # 19-hour field log recorded 3,786 motion wakes of which 3,741 (98.8%) had nobody in front of the camera, and
 # 1,232 of those landed between midnight and 6am in an empty house. These three keys are what make that
 # survivable rather than crippling:
-#     ROBOT_PIR_HOLD_S                   0.1  re-read the pin after the edge; a spike that already fell was
-#                                             electrical noise, not a person.
+#     ROBOT_PIR_HOLD_S                   0    the spike re-read, deliberately OFF -- it guesses from pulse
+#                                             LENGTH, and a part that stops latching (a fault, or an EKMC
+#                                             fitted by mistake) makes it discard every real visitor while
+#                                             the motion LED keeps flashing. Stage A filters on evidence.
 #     ROBOT_CONCIERGE_SILENT_COOLDOWN_S  4    after a look that found nobody, stop looking for a moment --
 #                                             the only thing stopping a chattering sensor running the camera
 #                                             flat out all night.
@@ -72,9 +74,12 @@ set_kv ROBOT_PIR_PULL down
 # PaPIRs, whose output is undefined for up to 210s. Coming FROM that patch, this is the line that stops you
 # sitting through 3.5 minutes of silence wondering what broke.
 set_kv ROBOT_PIR_WARMUP_S 0
-# Re-read the pin after the edge; a spike that has already fallen was electrical noise, not a person. Safe
-# here because this module LATCHES its output high for ~2.5s after every trigger.
-set_kv ROBOT_PIR_HOLD_S 0.1
+# Spike re-read OFF. This module DOES latch (~2.5s), so 0.1 is defensible on paper -- but the filter infers
+# "person" from pulse LENGTH, so the day the part stops latching (ageing module, sagging supply, or an EKMC
+# fitted by mistake) it discards 100% of real visitors while the motion LED still flashes: a silently deaf
+# robot, and only a DEBUG line to say so. Across every field run before that it caught ZERO real noise, so
+# it was pure latency on every greeting. Stage A settles the same question in ~120ms with a picture.
+set_kv ROBOT_PIR_HOLD_S 0
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 4
 set_kv ROBOT_CONCIERGE_PROBE_TRIES 2
 set_kv ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.15

@@ -95,11 +95,14 @@ set_kv ROBOT_PIR_PULL down
 # value and it costs almost nothing -- THE WAKE WORD STILL WORKS throughout, and a wall-mounted concierge
 # boots about once a day.
 set_kv ROBOT_PIR_WARMUP_S 210
-# Keep the noise re-read: this part DOES latch. 4-5 gives it a Standby Hold Time of ~2.6s typ (extended
-# while motion continues) then a ~1.3s Mask Time, so "still HIGH 100ms later" separates a person from a
-# spike exactly as designed. (The EKMC series has NO hold time, NO mask time and NO minimum pulse width --
-# on THAT part this must be 0, or every real visitor is discarded as noise.)
-set_kv ROBOT_PIR_HOLD_S 0.1
+# Spike re-read OFF, matching the shipped default. On paper this part earns it: 4-5 gives it a Standby Hold
+# Time of ~2.6s typ (extended while motion continues) then a ~1.3s Mask Time, so "still HIGH 100ms later"
+# would separate a person from a spike as designed -- and the EKMB is the part where that is TRUE. It is
+# still 0, because the filter's failure mode is not proportionate to its benefit: it has never caught real
+# noise on any field run, it costs 100ms on every greeting, and when its latch assumption breaks (wrong part
+# in the socket -- the EKMC series has NO hold, NO mask, NO minimum pulse width -- or a sagging 3.3V rail)
+# it silently discards every visitor. Stage A already filters transients with evidence in ~120ms.
+set_kv ROBOT_PIR_HOLD_S 0
 set_kv ROBOT_CONCIERGE_SILENT_COOLDOWN_S 4
 set_kv ROBOT_CONCIERGE_PROBE_TRIES 2
 set_kv ROBOT_CONCIERGE_PROBE_INTERVAL_S 0.15

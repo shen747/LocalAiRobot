@@ -73,7 +73,10 @@ class MotionWake:
         # --verbose (ROBOT_SENSOR_VERBOSE=1): log every PIR trigger. In Concierge Mode the ultrasonic read-out
         # is suppressed (driver.py), so the PIR is what you watch instead -- like scripts/pir_sensor_probe.sh.
         self._verbose = os.environ.get("ROBOT_SENSOR_VERBOSE", "0") == "1"
-        self._hold_s = max(0.0, _envf("ROBOT_PIR_HOLD_S", 0.25))
+        # Default 0 = OFF, matching the shipped config/robot.env. It used to be 0.25, and a code default that
+        # is SAFER than the template is exactly backwards here: the failure mode of this filter is a robot
+        # that goes silently deaf (see _is_spike), so a missing key must not switch it on behind your back.
+        self._hold_s = max(0.0, _envf("ROBOT_PIR_HOLD_S", 0.0))
         self._cooldown_s = max(0.0, _envf("ROBOT_PIR_COOLDOWN_S", 2))
         self._chatter_n = int(_envf("ROBOT_PIR_CHATTER_N", 20))
         self._chatter_window_s = max(0.0, _envf("ROBOT_PIR_CHATTER_WINDOW_S", 600))

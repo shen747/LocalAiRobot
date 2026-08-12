@@ -664,10 +664,13 @@ On an HC-SR501 specifically, false wakes usually trace to the **sensitivity pot*
   100 µA budget — and Vout is still ≥ Vdd−0.5 V = **2.8 V**, over the Pi's ~2.31 V logic-high threshold.
 - **`ROBOT_PIR_WARMUP_S=210`** — Circuit Stability Time (Twu) is **25 s typical, 210 s maximum** (§4-4), and
   during it the output status is undefined. 210 is the only spec-compliant value.
-- **`ROBOT_PIR_HOLD_S=0.1`** — keep it. §4-5 gives this part a **Standby Hold ~2.6 s** then a **Mask ~1.3 s**,
-  so its output *is* latched and the 100 ms re-read filters wire noise as designed. ⚠️ The **EKMC** series has
-  no hold time, no mask time and no minimum pulse width — on *that* part `0.1` would discard every real
-  visitor, so set it to `0` there.
+- **`ROBOT_PIR_HOLD_S=0`** — off, and the patch writes `0` even though §4-5 gives *this* part a **Standby Hold
+  ~2.6 s** then a **Mask ~1.3 s**, i.e. an output that genuinely *is* latched. The filter is disabled anyway
+  because it infers "person" from pulse **length**: when that assumption breaks — an **EKMC** in the socket
+  (no hold, no mask, no minimum pulse width), an ageing module, a sagging 3.3 V rail — it discards **100 % of
+  real visitors** while the motion LED keeps flashing, and says so only at DEBUG. That happened on the
+  reference build: 18 clean wakes one evening, `0 wake(s) … +4 noise` the next morning, config unchanged.
+  It had never caught real noise on any field run, so it was pure latency on every greeting.
 - **Consequence of hold + mask:** rising edges can be no closer than **~3.9 s**, so the sensor self-limits
   the wake rate and `ROBOT_PIR_COOLDOWN_S=2` never binds. That 1.3 s mask is real hardware blindness — a
   second visitor arriving inside it isn't seen at all.
