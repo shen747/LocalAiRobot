@@ -13,9 +13,23 @@ drive request is refused, spookily). The trigger is **motion alone** — no came
 
 ## Turn it on
 
-Halloween Mode is a **sub-mode of Concierge**, so it needs **both** flags:
+Halloween Mode is a **sub-mode of Concierge**, so it needs **both** flags. They live in `config/robot.env`
+**on the robot**, so log in to it first.
+
+**1. Log in to the robot** (from your PC):
 
 ```bash
+ssh <user>@<hostname>.local     # e.g. ssh ramesh@LocalAiRobot-Jarvis.local
+```
+
+If `.local` won't resolve, use the robot's IP from your router instead. Connecting for the first time? See
+Phase 1, step 3 of [docs/assembly.md](assembly.md). Away from your home Wi-Fi? See
+[docs/change-pi-wifi.md](change-pi-wifi.md).
+
+**2. Turn on both flags and restart.** Run these in that SSH session:
+
+```bash
+cd ~/LocalAiRobot
 sed -i -e 's|^ROBOT_CONCIERGE_MODE=.*|ROBOT_CONCIERGE_MODE=1|' \
        -e 's|^ROBOT_HALLOWEEN_MODE=.*|ROBOT_HALLOWEEN_MODE=1|' config/robot.env
 sudo systemctl restart robot.service     # or ./scripts/run_me.sh --reload

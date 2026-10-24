@@ -43,7 +43,8 @@ ROBOT_AI_BACKEND=gemini
 ROBOT_GEMINI_API_KEY=AIza...your-key-here...
 # optional overrides (sensible defaults already set):
 # ROBOT_GEMINI_MODEL=gemini-3.5-flash
-# ROBOT_GEMINI_VISION_MODEL=gemini-robotics-er-1.6-preview   # ships set to Robotics-ER; leave empty to reuse ROBOT_GEMINI_MODEL
+# ROBOT_GEMINI_VISION_MODEL=gemini-robotics-er-2-preview   # ships set to Robotics-ER 2; leave empty to reuse ROBOT_GEMINI_MODEL
+# ROBOT_GEMINI_VISION_THINKING_LEVEL=minimal               # ER 2 thinks at 'high' by default -- too slow for a LOOK
 ```
 
 Then reload the config (the brain reads the **shell**, not the file):

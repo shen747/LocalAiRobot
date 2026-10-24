@@ -84,7 +84,8 @@ def _log_http_error(e, backend, model=None):
         pass
     code = getattr(e, "code", None)
     hint = {
-        400: "bad request -- often API_KEY_INVALID (a malformed/non-Gemini key) or a rejected field.",
+        400: "bad request -- often API_KEY_INVALID (a malformed/non-Gemini key) or a rejected field (e.g. a "
+             "thinking budget sent to a model that only takes a level -> set ROBOT_GEMINI_*THINKING_LEVEL).",
         401: "auth rejected -- ROBOT_GEMINI_API_KEY isn't a valid Gemini API key (AI Studio -> Get API key).",
         403: "forbidden -- the key is invalid/restricted, the Generative Language API isn't enabled for its "
              "project, or this key can't use this model. Verify the key and its model access.",
@@ -386,7 +387,8 @@ def _gemini_thinking_budget(is_vision):
     """Gemini 'thinking budget'. Thinking models (Gemini Robotics-ER, the *-flash models) reason BEFORE
     answering, which adds latency and can burn the token budget so the structured JSON truncates. For the
     robot's schema-constrained vision we want fast, deterministic replies, so the VISION path DEFAULTS to 0
-    (thinking off) -- the value the Robotics-ER docs recommend. Text keeps the model's own default.
+    (thinking off) -- the value the Robotics-ER 1.x docs recommended. Text keeps the model's own default.
+    Only consulted when no thinking LEVEL is set (see _gemini_thinking_level).
       ROBOT_GEMINI_VISION_THINKING_BUDGET / ROBOT_GEMINI_THINKING_BUDGET: int (0 = off, -1 = dynamic/model
       decides, N = fixed budget); a non-integer (e.g. 'auto') OMITS the field for a model that rejects it."""
     key = "ROBOT_GEMINI_VISION_THINKING_BUDGET" if is_vision else "ROBOT_GEMINI_THINKING_BUDGET"
@@ -397,6 +399,26 @@ def _gemini_thinking_budget(is_vision):
         return int(raw)
     except ValueError:
         return None                          # 'auto'/'default'/etc -> don't send thinkingConfig at all
+
+
+def _gemini_thinking_level(is_vision):
+    """Gemini 'thinking LEVEL' -- how the Gemini 3 family, Robotics-ER 2 included, is told how hard to think,
+    in place of a token budget. Robotics-ER 2 defaults to 'high', far too slow for a quick LOOK, so the shipped
+    config sets the vision level to 'minimal' (Google: "matches the no-thinking setting for most queries").
+      ROBOT_GEMINI_VISION_THINKING_LEVEL / ROBOT_GEMINI_THINKING_LEVEL: minimal | low | medium | high;
+      empty -> no level, and the budget above applies instead (the 2.5-series models only take a budget)."""
+    key = "ROBOT_GEMINI_VISION_THINKING_LEVEL" if is_vision else "ROBOT_GEMINI_THINKING_LEVEL"
+    return (os.environ.get(key) or "").strip().lower() or None
+
+
+def _gemini_thinking_config(is_vision):
+    """The generationConfig.thinkingConfig to send, or None to send none. A LEVEL replaces the budget
+    outright: Google answers a request that carries both with HTTP 400, so it is one or the other."""
+    level = _gemini_thinking_level(is_vision)
+    if level:
+        return {"thinkingLevel": level}
+    tb = _gemini_thinking_budget(is_vision)
+    return {"thinkingBudget": tb} if tb is not None else None
 
 
 def _gemini_generate(cfg, payload, timeout):
@@ -428,9 +450,9 @@ def _gemini_generate(cfg, payload, timeout):
         schema = _to_gemini_schema(fmt)
         if schema:
             gen["responseSchema"] = schema
-    tb = _gemini_thinking_budget(is_vision)   # vision defaults to thinking OFF (Robotics-ER: fast, no truncation)
-    if tb is not None:
-        gen["thinkingConfig"] = {"thinkingBudget": tb}
+    thinking = _gemini_thinking_config(is_vision)   # vision: minimal/off by default (fast, no truncation)
+    if thinking:
+        gen["thinkingConfig"] = thinking
 
     body = json.dumps({"contents": [{"parts": parts}], "generationConfig": gen}).encode("utf-8")
     base = (cfg.get("gemini_url") or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
