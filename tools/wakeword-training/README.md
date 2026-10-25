@@ -1,6 +1,6 @@
 # `tools/wakeword-training/` — local scratch for training a wake word
 
-This is the working folder for **[Training your own wake word](../../docs/opnewakeword/openwake-word.md)**
+This is the working folder for **[Training your own wake word](../../docs/openwakeword/openwake-word.md)**
 (Path B — local PC / Windows WSL). You run the openWakeWord notebook **here**, inside your repo clone, so
 the trained model lands one `cp` away from [`models/`](../../models/) — no separate `~/oww` workspace and
 no `scp` to the Pi.

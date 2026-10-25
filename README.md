@@ -1,13 +1,37 @@
 # LocalAiRobot
 
 > A 1/10 RC crawler you can **talk to** — local LLM, speech-to-text, text-to-speech, **and a
-> camera**, running **entirely on a Raspberry Pi 5 (16GB)**. No cloud, no Wi-Fi, fully offline.
-> It drives on voice command, **stops for an obstacle directly ahead**, **looks around and drives
-> toward things you name**, shows an **expressive face**, and talks back.
+> camera**, running **on a Raspberry Pi 5 (16GB)** and **fully offline by default** (a cloud brain and a
+> weather card are opt-in). It drives on voice command, **stops for an obstacle directly ahead**, **looks
+> around and drives toward things you name**, shows an **expressive face**, and talks back. The same code
+> also runs a wall-mounted **[Concierge](#concierge-mode-optional--a-stationary-greeter)** that recognises
+> people and greets them by name.
 
 ![Concept render of the assembled LocalAiRobot on a workbench: a four-wheel 1/10 all-metal crawler chassis carrying a hexagonal front "sensor" module — three HC-SR04P ultrasonic sensors on its angled facets (front, left, right) plus a speaker behind a clear lid — and a rectangular rear module housing the Raspberry Pi 5 and electronics with a small face/status display mounted on top. Callouts note the ~350 mm base depth, 200 mm base width and ~180 mm total height.](docs/images/approximate_generation.png)
 
 *Concept render — how the finished robot looks once the electronics are housed in the two enclosures (hexagonal front sensor module + rectangular rear electronics box). Full breakdown in [Enclosures](#enclosures--the-two-box-layout) below.*
+
+<p align="center">
+  <img src="docs/my-final-products/crawler_car_side_profile.jpg" width="48%" alt="The finished LocalAiRobot crawler on a wooden floor, seen from the front: red acrylic mounts hold the ultrasonic sensors (stars marked R and F), a USB webcam sits between them, the face panel above shows sleepy blue eyes, and a black bar speaker rides on the front bumper above big knobby tyres.">
+  <img src="docs/my-final-products/crawler_car_from_top.jpg" width="48%" alt="The finished crawler seen from above: the yellow rear deck carries the Raspberry Pi 5 under a Freenove M.2 NVMe HAT, a heatsinked buck converter and the PCA9685 PWM board; the battery and ESC wiring run down the blue chassis to the face panel; the clear front deck holds the round USB microphone, the webcam, the bar speaker and three ultrasonic sensors labelled US Left, US Front and US Right.">
+</p>
+
+*The real crawler build — from the front (left) and from above (right). The electronics ride open-frame on two decks rather than in the enclosures of the render: the Pi 5, NVMe HAT, buck converter and PCA9685 on the yellow rear deck; the face panel, webcam, microphone, speaker and the three ultrasonic sensors on the clear front deck.*
+
+## Highlights
+
+- **Everything on-device by default.** Wake word (openWakeWord) → speech-to-text (whisper.cpp) → an intent
+  JSON from a local LLM (Gemma 4 on Ollama) → speech (Piper), plus a local vision model (moondream). An
+  optional Gemini backend falls back to the local models automatically when the network or the API is down.
+- **Two robots, one codebase.** A voice-driven crawler with a three-sensor ultrasonic safety gate and
+  camera-guided explore/find — or a stationary [Concierge](docs/concierge.md) with PIR wake, strictly local
+  face recognition (YuNet + ArcFace), [social memory](docs/social.md), a [3-day forecast card](docs/weather.md)
+  and a [Halloween mode](docs/halloween.md).
+- **One brain, two boards.** A board HAL runs the same code on a Raspberry Pi 5 or an NVIDIA Jetson Orin Nano.
+- **Tuned on real field logs.** The motion wake, its cooldowns and the face matching were tuned against long
+  field runs, and the numbers and reasoning are written up next to the code.
+- **Tested without hardware.** 17 deterministic harnesses (injected clocks, stub sensors, a fake HTTP
+  transport) cover the wake path, the face pipeline and the weather — see [tests/README.md](tests/README.md).
 
 > **Boards.** The reference build is a **Raspberry Pi 5**; the same brain also runs on an **NVIDIA Jetson
 > Orin Nano** via a board HAL ([`brain/hal.py`](brain/hal.py)) that swaps only the GPIO/PWM/camera backends.
@@ -27,7 +51,7 @@ Car built and wired ([docs/assembly.md](docs/assembly.md))? SSH into the Pi and:
 
 ![LocalAiRobot voice + vision control flow: a voice command — started by a wake word (openWakeWord; ENTER push-to-talk survives in --dry only) — is transcribed by whisper.cpp, passes a trigger-phrase gate (EXPLORE/FIND only on explore words, otherwise DRIVE), and the gemma4:e4b-it-qat text model (Ollama) turns it into an intent JSON using recent context from a SQLite environment memory; DRIVE/STOP go to the driver.py control loop while EXPLORE/FIND run a behaviour loop that stops the car, captures a camera frame, asks the moondream VLM what is visible, records it to memory, and takes gated drive steps; a 3-sensor HC-SR04P array (front/left/right) gates FORWARD and informs steering; the PCA9685 drives the ESC (Electronic Speed Controller) / drive motor and steering servo; the text-intent and vision calls share one Ollama server behind a single model_lock (warmed at boot); replies are spoken via Piper TTS alongside short ack/greeting/thinking earcons, and a USB-C face screen reflects state (idle/listening/thinking/happy/confused/alarmed/warmup/capturing)](docs/images/basic_control_flow.png)
 
-Everything runs on the Pi 5: **whisper.cpp** transcribes your voice, **Ollama** (`gemma4:e4b-it-qat`) turns
+Everything runs on the Pi 5: **whisper.cpp** transcribes your voice, **Ollama** (`gemma4:e2b-it-qat` by default) turns
 it into a JSON intent (a separate **`moondream`** VLM reads the camera), **Piper** speaks the reply, and
 `driver.py` drives — a **PCA9685** makes jitter-free PWM for the **ESC** + steering servo (Ackermann: drive
 + steer, no spin), and 3× **HC-SR04P** cut forward motion near obstacles and keep steering off walls.
@@ -141,9 +165,11 @@ Full build + calibration in [docs/assembly.md](docs/assembly.md); pin-by-pin wir
 
 ![LocalAiRobot wiring at a glance: a single 3S 11.1V LiPo feeds the ESC (Electronic Speed Controller) (drive motor + a BEC for the servo) AND an adjustable buck converter (set to 7.4V); the ESC (Electronic Speed Controller)'s 3-wire plug goes to PCA9685 ch0 (signal + V+ from the ESC BEC + GND) and the steering servo to ch1 (signal/V+/GND); the PCA9685 takes VCC 3.3V + SDA(GPIO2) + SCL(GPIO3) + GND from the Raspberry Pi 5; three HC-SR04P sensors (front GPIO23/24, left GPIO5/6, right GPIO20/21) take 3.3V + GND + TRIG/ECHO from the Pi; the Arducam IMX519 autofocus camera connects over the CSI ribbon and the USB-C face screen over USB; the Pi 5 is powered by the buck converter (7.4V) into the UPS HAT (2x 18650 backup), which re-regulates a clean 5.1V to the Pi. One LiPo, two rails, common ground.](docs/images/wiring.png)
 
+*The diagram predates the move to a USB camera — the camera now plugs into USB rather than the CSI ribbon.*
+
 - **One 3S LiPo powers everything** — an **ESC** branch (drive motor + a BEC for the servo) and an **adjustable buck (7.4 V) → UPS HAT → Pi** branch (the 18650s buffer spikes; the UPS re-regulates a clean ~5.1 V). **Tie all grounds together** (Pi ⟷ PCA9685 ⟷ ESC (Electronic Speed Controller) ⟷ buck) or the PWM won't register. ⚠️ A fixed 5–6 V UBEC sags too far under load — use an adjustable buck at 7.4 V into the UPS ([why](docs/assembly.md#phase-2--power-one-3s-lipo-two-rails-read-before-you-wire)).
 - PCA9685 **V+ rail = the ESC (Electronic Speed Controller)'s BEC** (the servo rail), *not* the Pi (so use an HV servo, or feed V+ from a separate 5–6 V BEC). All three HC-SR04**P** run at **3.3 V**, so every ECHO is Pi-safe (no divider).
-- **Pins:** I2C on GPIO2/3 (PCA9685 @ `0x40`); forward sensor TRIG/ECHO `23/24`, left `5/6`, right `20/21`. Camera is on the CSI ribbon, the face panel on USB — neither touches the GPIO header.
+- **Pins:** I2C on GPIO2/3 (PCA9685 @ `0x40`); forward sensor TRIG/ECHO `23/24`, left `5/6`, right `20/21`. The camera and the face panel are both USB, so neither touches the GPIO header.
 
 ---
 
@@ -220,8 +246,8 @@ or train your own: [`tools/wakeword-training/`](tools/wakeword-training/README.m
 text-intent and vision calls.
 
 **Tuning.** Every setting lives in [`config/robot.env`](config/robot.env), each documented (default + what
-it does) in [`config/README.md`](config/README.md). After the one-time downloads, disable Wi-Fi — it all
-runs on-device.
+it does) in [`config/README.md`](config/README.md). After the one-time downloads you can disable Wi-Fi —
+everything runs on-device unless you've turned on Gemini, the weather card or the phone endpoint.
 
 ---
 
@@ -234,6 +260,12 @@ a friendly face and runs a **strictly-local** pipeline (OpenCV face-detect → A
 against the RAG database) to **greet people it knows by name**, or smile silently at strangers; then it hands
 off to a normal chat. Set it back to `0` for the crawler car — nothing else changes. Full setup, wiring +
 the state-machine flow: **[docs/concierge.md](docs/concierge.md)**.
+
+<p align="center">
+  <img src="docs/my-final-products/concerge_final_look.jpg" width="45%" alt="The finished Concierge build on a wall: an IR night-vision USB camera in a clear case on a ball-head mount sits above a clear-lid enclosure whose screen shows the three-day forecast card (Today 17°/8° showers, Tomorrow 15°/7° cloudy, Day after 16°/6° showers), with a round USB microphone and a small cooling fan inside and a black bar speaker underneath.">
+</p>
+
+*The finished Concierge build — wall-mounted, with the IR camera on top and the three-day forecast as its idle face.*
 
 **Quick start (Pi 5 — greet people from photos you already have):**
 
@@ -290,26 +322,43 @@ Everything in this repo, with a one-line "what's this for" — so nothing's a de
 - [docs/diagnostics.md](docs/diagnostics.md) — the `run_diagnostics.sh` live self-test (green/red per peripheral + the pin map) explained.
 - [docs/gemini-setup.md](docs/gemini-setup.md) — optional: run the brain on remote Google Gemini instead of local Ollama.
 - [docs/concierge.md](docs/concierge.md) — optional **Concierge Mode**: a stationary greeter with PIR motion wake + strictly-local face recognition (`ROBOT_CONCIERGE_MODE`).
-- [docs/halloween.md](docs/halloween.md) — 🎃 **Halloween Mode**: a Concierge sub-mode that spooks trick-or-treaters with 50+ phrases + 10 spooky faces + a cackle (`ROBOT_HALLOWEEN_MODE`).
+- [docs/halloween.md](docs/halloween.md) — 🎃 **Halloween Mode**: a Concierge sub-mode that spooks trick-or-treaters with 50+ phrases + 10 spooky faces + a loud jump-scare stinger (`ROBOT_HALLOWEEN_MODE`).
+- [docs/weather.md](docs/weather.md) — the 3-day forecast card + weather-aware greetings (Open-Meteo; keeps working through an outage on a cached forecast).
+- [docs/social.md](docs/social.md) — **Social Memory**: greetings that know when they last saw you, and remember what you mentioned.
 - [docs/http_setup.md](docs/http_setup.md) — command the robot from your phone over Wi-Fi (the token-secured HTTP endpoint).
 - [docs/change-pi-wifi.md](docs/change-pi-wifi.md) — **field networking & recovery**: phone-hotspot backup, Comitup portal, persistent boot logs, and connecting from your phone with **ConnectBot** (+ Ed25519 SSH keys).
 
 **Configure & customise**
 - [config/README.md](config/README.md) — every `config/robot.env` key: default + what it does (incl. the Pi-5 vs Jetson board keys).
-- [docs/opnewakeword/openwake-word.md](docs/opnewakeword/openwake-word.md) — how the "hey jarvis" wake word works + tuning it.
+- [docs/openwakeword/openwake-word.md](docs/openwakeword/openwake-word.md) — how the "hey jarvis" wake word works + tuning it.
 - [tools/wakeword-training/README.md](tools/wakeword-training/README.md) — train your own wake word (e.g. "hey richard").
 - [brain/faces/README.md](brain/faces/README.md) — design the robot's face (procedural or your own PNG animations).
 - [sounds/README.md](sounds/README.md) — the spoken earcons (ack / greeting / thinking / error cues).
 - [models/README.md](models/README.md) — the committed wake-word models.
 
+**Operate & test**
+- [BENCH_SCRIPTS.md](BENCH_SCRIPTS.md) — bench scripts + the operator runbook: first contact with a fresh board, the update loop, enrolling faces, pulling logs, recovery.
+- [tests/README.md](tests/README.md) — the hardware-free test harnesses and what each one pins down.
+
 ---
 
 ## Credits & license
 
-MIT — see [LICENSE](LICENSE). Built on [Ollama](https://ollama.com/) +
+MIT — see [LICENSE](LICENSE) — **except the third-party models and data listed below**, which keep their
+own licences. Built on [Ollama](https://ollama.com/) +
 [Gemma](https://ai.google.dev/gemma) + [moondream](https://moondream.ai/), [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
 [Piper](https://github.com/rhasspy/piper), [picamera2](https://github.com/raspberrypi/picamera2),
 [gpiozero](https://gpiozero.readthedocs.io/),
 [Adafruit ServoKit / PCA9685](https://github.com/adafruit/Adafruit_CircuitPython_ServoKit),
-[openWakeWord](https://github.com/dscripka/openWakeWord), and
-[turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python).
+[openWakeWord](https://github.com/dscripka/openWakeWord),
+[turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python),
+[OpenCV](https://opencv.org/) (the YuNet face detector) and [InsightFace](https://github.com/deepinsight/insightface)
+(ArcFace face embeddings), plus the optional [Google Gemini API](https://ai.google.dev/gemini-api).
+
+**Third-party models & data**
+- [`models/hey_jarvis.onnx`](models/README.md) is openWakeWord's pre-trained model, licensed
+  [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) — not MIT.
+- The face-recognition models are downloaded at install time from InsightFace, whose pre-trained models are
+  for **non-commercial research use only**.
+- Weather data by [Open-Meteo.com](https://open-meteo.com/), licensed
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

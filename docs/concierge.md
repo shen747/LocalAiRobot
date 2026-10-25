@@ -6,6 +6,13 @@ be woken by a **PIR motion sensor** as well as the wake word. When someone walks
 a **strictly-local** face pipeline and greets them by name — or smiles and stays quiet if it doesn't know
 them.
 
+<p align="center">
+  <img src="my-final-products/concerge_final_look.jpg" width="55%" alt="The finished Concierge build on a wall: an IR night-vision USB camera in a clear case on a ball-head mount sits above a clear-lid enclosure whose screen shows the three-day forecast card (Today 17°/8° showers, Tomorrow 15°/7° cloudy, Day after 16°/6° showers), with a round USB microphone and a small cooling fan inside and a black bar speaker underneath.">
+</p>
+
+*The finished build — wall-mounted, with the IR camera on top and the three-day forecast card as its idle face
+(see [Weather](weather.md)).*
+
 ## What changes when it's ON
 
 | | Normal robot | Concierge Mode |

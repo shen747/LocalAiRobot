@@ -54,3 +54,10 @@ __pycache__/
 # regenerated on demand; never committed. The GENERATOR is committed; its OUTPUT is not.
 /enroll_all.sh
 
+# Personal data that must never be published: the enrolment photos (real people's faces), local API keys,
+# and full disk images of the robot (which contain all of the above). Ignored HERE, in the shared file, so a
+# fresh clone on another machine is protected too -- not only the one with a local .git/info/exclude.
+/people/
+/API_KEYS.txt
+/DISK_IMAGES/
+

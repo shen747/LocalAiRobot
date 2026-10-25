@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the fully-offline AI stack + Raspberry Pi 5 hardware deps for the RC crawler (arm64):
-# Ollama + gemma4:e4b-it-qat (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
+# Ollama + gemma4:e2b-it-qat (text) + moondream (vision), whisper.cpp, Piper, picamera2, the face-panel library,
 # and the Python venv. Needs internet for THIS step only. Re-runnable.
 set -euo pipefail
 

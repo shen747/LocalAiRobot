@@ -4,7 +4,8 @@
 # (a trick-or-treater -- NOT an enrolled face) with one of 50+ kid-friendly SPOOKY phrases and a random
 # spooky face, then falls through to the SAME conversation loop as Concierge so it can banter back. It is
 # still 100% STATIONARY (every move/explore/find is refused, spookily). Everything else -- the PIR wake, the
-# strictly-local face DETECTION, the conversation loop, sleep-on-silence -- is Concierge's, unchanged.
+# conversation loop, sleep-on-silence -- is Concierge's, unchanged. The face pipeline is SKIPPED: motion alone
+# triggers a spook, because masks and costumes defeat face detection.
 #
 # Pure stdlib -- safe to import anywhere. See main.py for the wake-flow branch and docs/halloween.md.
 

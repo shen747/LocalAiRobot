@@ -46,7 +46,9 @@ Outside Australia, also set `ROBOT_WEATHER_TZ` (blank means `Australia/Melbourne
 "Today" over at the wrong hour and the robot will say "good evening" at breakfast.
 
 No API key and no account: [Open-Meteo](https://open-meteo.com) is keyless. One robot polling every 30
-minutes uses 48 requests a day against a fair-use budget of roughly 10,000.
+minutes uses 48 requests a day against a fair-use budget of roughly 10,000. Weather data by
+[Open-Meteo.com](https://open-meteo.com/), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+— keep that credit if you share screenshots of the card or the data itself.
 
 To turn the whole thing off: `ROBOT_WEATHER_ENABLE=0`. Every face, greeting and command path then behaves
 exactly as it did before the feature existed.

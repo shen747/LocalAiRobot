@@ -107,10 +107,10 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
 6. **Send the local LLM a prompt and watch it reply** — proof the AI brain runs **entirely on the Pi**
    (Ollama serves on `localhost`, no internet):
    ```bash
-   ollama list                                        # expect gemma4:e4b-it-qat (text) AND moondream (vision)
-   ollama run gemma4:e4b-it-qat "reply with one word: ready"  # first run is a slow cold load; Ctrl-D to exit
+   ollama list                                        # expect gemma4:e2b-it-qat (text) AND moondream (vision)
+   ollama run gemma4:e2b-it-qat "reply with one word: ready"  # first run is a slow cold load; Ctrl-D to exit
    ```
-   Ask anything to be sure it's thinking (`ollama run gemma4:e4b-it-qat "name three primary colours"`).
+   Ask anything to be sure it's thinking (`ollama run gemma4:e2b-it-qat "name three primary colours"`).
    Proof it's offline? Turn Wi-Fi off and ask again. Then watch the temperature (it's CPU-heavy):
    ```bash
    vcgencmd get_throttled            # 0x0 = healthy (no under-volt / throttling)
@@ -164,12 +164,12 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
      *(Unreliable? Almost always **mic gain** or the threshold — see below. A missing model means live has
      no trigger and the brain exits — use `--dry`; `ROBOT_WAKEWORD_DEVICE` picks the input if not default.)*
    - **Want a custom wake word** (your phrase, your model)? A one-time job on a **PC / Google Colab — not
-     the Pi** — producing a small `.onnx`. Follow **[Training your own wake word](opnewakeword/openwake-word.md)**,
+     the Pi** — producing a small `.onnx`. Follow **[Training your own wake word](openwakeword/openwake-word.md)**,
      drop the `.onnx` in `models/`, point `ROBOT_WAKEWORD_MODEL` at it (or overwrite `hey_richard.onnx`).
    - **Won't wake / inconsistent?** Usually **mic capture gain** (too quiet → low scores; or clipping →
      scores ~0) or the threshold. The brain logs `best score`/`loudest` every ~15 s — set gain with
      `amixer -c <card> sset Mic 75%` (aim `loudest` mid-scale). Full procedure:
-     [the wake-word guide's tuning list](opnewakeword/openwake-word.md). False-firing? Raise
+     [the wake-word guide's tuning list](openwakeword/openwake-word.md). False-firing? Raise
      `ROBOT_WAKEWORD_TRIGGER_LEVEL` to 2 (or `ROBOT_WAKEWORD_THRESHOLD`).
    - **Wake ack:** each *"hey jarvis"* plays a random clip from `sounds/wake_word_ack/` ("Yes?/Hi") as the
      face switches to *listening*; then one from `sounds/ack_sounds/` ("Got it") once your command is
@@ -323,8 +323,8 @@ latest cached value, never blocking the control loop.
 
 ## Phase 5 — Plug in the camera (**USB / UVC** — no ribbon, no overlay)
 
-Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the text brain
-`gemma4:e4b-it-qat` is multimodal too and can take over if you empty that var), and the whole basis of
+Visual input for the **vision model** (`moondream` by default, set via `ROBOT_VISION_MODEL`; the Gemma 4
+text brain is multimodal too and can take over if you empty that var), and the whole basis of
 Concierge face recognition. **It's a USB device** — nothing on GPIO/I2C, nothing in the boot config, so it
 conflicts with nothing and needs no reboot.
 

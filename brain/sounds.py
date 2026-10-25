@@ -48,7 +48,7 @@ _CATEGORY_DIR = {
     "remote_ack": "remote_ack_sounds",           # a phone/HTTP command just arrived (excuse-me cue)
     "sleep": "sleep_sounds",                      # spoken "going back to sleep, say hey jarvis" on conversation end
     "error": "error_sounds",
-    "spook": "spook_sounds",                      # Halloween Mode: a cackle/boo/wail played BEFORE the spooky greeting
+    "spook": "spook_sounds",                      # Halloween Mode: a LOUD jump-scare stinger played BEFORE the spooky greeting
 }
 
 # repo-root/sounds by default (this file is <repo>/brain/sounds.py); resolves under the

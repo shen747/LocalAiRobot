@@ -106,8 +106,8 @@ Fix these:
 | Servo right / left / center | [pwm-esc-servo-wiring.md](wiring/pwm-esc-servo-wiring.md) §3 (ch1); `ROBOT_STEER_*` in [assembly Phase 8](assembly.md) |
 | Ultrasonic front / left / right | [ultrasonic-sensors-wiring.md](wiring/ultrasonic-sensors-wiring.md); [assembly Phase 4](assembly.md) |
 | Speaker | [assembly Phase 1](assembly.md) audio callout; `./scripts/setup_audio.sh` (USB speaker as ALSA default) |
-| Camera picture / video | [assembly Phase 5](assembly.md); `rpicam-hello --list-cameras` (reseat the CSI ribbon / 22→15 cable) |
-| Microphone / wake | [assembly Phase 1](assembly.md) steps 7–8; [wake-word guide](opnewakeword/openwake-word.md) (mic gain / threshold) |
+| Camera picture / video | [assembly Phase 5](assembly.md); USB camera: `v4l2-ctl --list-devices` (reseat the cable / try another port); CSI camera: `rpicam-hello --list-cameras` (reseat the ribbon / 22→15 cable) |
+| Microphone / wake | [assembly Phase 1](assembly.md) steps 7–8; [wake-word guide](openwakeword/openwake-word.md) (mic gain / threshold) |
 | Face panel | [assembly Phase 6](assembly.md) (data USB-C cable, `dialout` re-login, `ROBOT_FACE_REVISION`) |
 | Enclosure fan | [assembly Phase 7](assembly.md) fan callout (MOSFET gate wiring + fan power); `ROBOT_FAN_*` in [config/README.md](../config/README.md#enclosure-cooling-fan--off-by-default) |
 

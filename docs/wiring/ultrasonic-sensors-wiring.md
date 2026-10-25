@@ -158,6 +158,6 @@ Test: `./scripts/test_sensors.sh` · 3.3 V only · no level shifter (HC-SR04**P*
 ---
 
 **Build order:** in the [assembly guide](../assembly.md) this is
-[Phase 4](../assembly.md#phase-4--wire-the-distance-sensors-3-hc-sr04p-semi-hexagonal-front-array), done on
+[Phase 4](../assembly.md#phase-4--wire-the-distance-sensors-3-hc-sr04p-semi-hex-front-array), done on
 the bench right after the PCA9685. Sibling guide: the drive/steer side is
 [PWM / ESC / servo wiring](pwm-esc-servo-wiring.md).

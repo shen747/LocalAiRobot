@@ -32,7 +32,7 @@ OUTDIR = os.path.expanduser("~/.localairobot/diagnostics")
 DOC_PWM = "docs/wiring/pwm-esc-servo-wiring.md"
 DOC_SENS = "docs/wiring/ultrasonic-sensors-wiring.md"
 DOC_ASM = "docs/assembly.md"
-DOC_WAKE = "docs/opnewakeword/openwake-word.md"
+DOC_WAKE = "docs/openwakeword/openwake-word.md"
 
 _TTY = sys.stdout.isatty()
 

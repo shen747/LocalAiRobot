@@ -20,10 +20,10 @@
 #
 # That is not theory, it is what a 19-hour field log showed. Of 257 frames that genuinely contained a face,
 # exactly 6 matched anybody -- 2.3%. The failures all looked like this:
-#     no match (closest 'Manjula' 0.171 < 0.38), runner-up 'Rozana' 0.168 (margin +0.003)
-#     no match (closest 'Rozana'  0.137 < 0.38), runner-up 'Tharanga' 0.136 (margin +0.001)
+#     no match (closest 'Person A' 0.171 < 0.38), runner-up 'Person B' 0.168 (margin +0.003)
+#     no match (closest 'Person B' 0.137 < 0.38), runner-up 'Person C' 0.136 (margin +0.001)
 # Every score squashed into 0.13-0.21, every margin ~0.00, and the "closest" name spread evenly across all 35
-# enrolled people (Tharanga 37 times, Romesha 34, Chrismal 33, Rozana 28...) -- a lottery, not a measurement.
+# enrolled people (Person C 37 times, Person D 34, Person E 33, Person B 28...) -- a lottery, not a measurement.
 # One person stood squarely in front of the camera for 14 consecutive frames and scored 0.142.
 #
 # So detection now prefers YuNet (cv2.FaceDetectorYN, an ONNX detector OpenCV bundles the API for), which

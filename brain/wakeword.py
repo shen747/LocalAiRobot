@@ -32,7 +32,7 @@
 # install_stack_pi5.sh handles either. The "Richard" model itself is a small keyword classifier you
 # train separately (NOT TTS voice cloning). A ready-made one ships at models/hey_richard.onnx (the
 # ROBOT_WAKEWORD_MODEL default); swap it, or point at a bundled stock model
-# (find brain/.venv -path "*openwakeword*" -name "*.onnx"). See docs/opnewakeword/.
+# (find brain/.venv -path "*openwakeword*" -name "*.onnx"). See docs/openwakeword/.
 
 import logging
 import os
