@@ -13,8 +13,8 @@ the **shell environment**, not the file directly, so an edit only takes effect o
 [`robot.env`](robot.env) sets a key (e.g. `ROBOT_MODEL`, `ROBOT_GEMINI_MODEL`) the table shows that shipped
 value; keys `robot.env` leaves blank show the code fallback the brain uses instead.
 
-**Paths contain `YOUR_USER`** — replace it with your Linux username once:
-`sed -i "s/YOUR_USER/$(whoami)/g" config/robot.env`. Booleans are `1`/`0`. `~` expands to your home.
+**Paths start with `~`**, which expands to your home, so they work for any Linux username with no edit.
+Booleans are `1`/`0`.
 
 ---
 
@@ -41,7 +41,7 @@ A separate **mode**: `ROBOT_CONCIERGE_MODE=1` turns Jarvis into a stationary ass
 
 | Key | Default | What it does |
 |---|---|---|
-| `ROBOT_CONCIERGE_MODE` | `0` | `1` = enable Concierge Mode (stationary greeter; every drive/explore/find is refused with a random in-character line). `0` = normal crawler car. Sits at the **top** of `robot.env` in the RUN MODE block. |
+| `ROBOT_CONCIERGE_MODE` | `1` | `1` = enable Concierge Mode (stationary greeter; every drive/explore/find is refused with a random in-character line). `0` = normal crawler car. Sits at the **top** of `robot.env` in the RUN MODE block. |
 | `ROBOT_PIR_PIN` | `4` | PIR motion-sensor OUT pin (Pi **BCM** / Jetson **BOARD**). **Default GPIO4 (pin 7)** — free in the HC-SR04 + ToF builds. Wiring: OUT→GPIO4/pin 7, VCC→5 V/pin 2 (**not 3.3 V** — won't trigger reliably on 3.3 V), GND→GND/pin 6 ([guide](../docs/wiring/pir-sensor-wiring.md); probe: `scripts/pir_sensor_probe.sh`). Only OUT is 3.3 V → Pi-safe. Empty = motion wake off (wake-word-only concierge). |
 | `ROBOT_FACE_ID_MODEL` | `~/.localairobot/models/arcface.onnx` | ArcFace recognition ONNX (112×112 → 512-d), auto-downloaded by `install_stack_pi5.sh` / `_jetson.sh`. Missing → face match off (smiles at everyone, greets no one). |
 | `ROBOT_FACE_ID_THRESHOLD` | `0.38` | Cosine-similarity match threshold. **Higher = stricter** (fewer false greetings, more misses); lower = looser. |
@@ -119,8 +119,8 @@ on the Pi, [`install_stack_jetson.sh`](../scripts/install_stack_jetson.sh) on th
 |---|---|---|
 | `ROBOT_BOARD` | `auto` | `auto` = detect the board, else `pi5` \| `jetson`. Force it if detection is wrong (e.g. on a dev laptop it falls back to `pi5`). |
 | `ROBOT_I2C_BUS` | *(empty)* | PCA9685 I²C bus number. Empty = Blinka default (**Pi = bus 1**). **Jetson: set `7`** (the 40-pin header) — needs the `adafruit-extended-bus` package. |
-| `ROBOT_CAMERA_BACKEND` | *(empty)* | Empty = board default (**pi5 → picamera2**, **jetson → gstreamer**). Override: `picamera2` \| `gstreamer` \| `v4l2`. |
-| `ROBOT_CAMERA_SOURCE` | *(empty)* | `v4l2`: USB webcam index (e.g. `0`). `gstreamer`: a full pipeline string. Empty = CSI sensor 0 via Argus (Jetson). |
+| `ROBOT_CAMERA_BACKEND` | `v4l2` | Empty = board default (**pi5 → picamera2**, **jetson → gstreamer**). Override: `picamera2` \| `gstreamer` \| `v4l2`. |
+| `ROBOT_CAMERA_SOURCE` | `0` | `v4l2`: USB webcam index (e.g. `0`). `gstreamer`: a full pipeline string. Empty = CSI sensor 0 via Argus (Jetson). |
 
 > **Jetson pins differ.** The `ROBOT_*_TRIG_PIN`/`ROBOT_*_ECHO_PIN` values in the sensors section ship **SET** to
 > Pi **BCM** numbers. On a Jetson those six lines must be **commented out** — `install_stack_jetson.sh` does this
@@ -197,10 +197,10 @@ for vision).
 | `ROBOT_MODEL` | `gemma4:e2b-it-qat` | Ollama **text/intent** model (4-bit QAT) that turns a transcript into the command JSON (shipped default; code fallback `gemma4:e4b-it-qat`). **E2B** = faster/lighter — the Pi 5 CPU sweet spot; **E4B** (`gemma4:e4b-it-qat`) = more capable (better at structured fields like REMEMBER's `note` + recall) but ~2× slower. Vision is a separate `ROBOT_VISION_MODEL`. |
 | `ROBOT_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama generate endpoint (local; no internet). |
 | `ROBOT_LLM_TIMEOUT_S` | `120` | Timeout for the text-intent call. Raise if a cold first-command load times out. |
-| `ROBOT_WHISPER_BIN` | `/home/YOUR_USER/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
-| `ROBOT_WHISPER_MODEL` | `/home/YOUR_USER/whisper.cpp/models/ggml-base.en.bin` | Whisper GGML model file. |
-| `ROBOT_PIPER_BIN` | `/home/YOUR_USER/piper/piper/piper` | Path to the Piper TTS binary. |
-| `ROBOT_PIPER_VOICE` | `/home/YOUR_USER/piper/en_US-lessac-medium.onnx` | Piper voice model. Audition alternatives (incl. other accents) with `./scripts/scan_piper_voice.sh`. **After changing this, run `./scripts/generate_sounds.sh --force`** — the earcons in `sounds/` were baked with the old voice and nothing regenerates them for you, so "Yes?" would answer in one voice and the reply arrive in another. |
+| `ROBOT_WHISPER_BIN` | `~/whisper.cpp/build/bin/whisper-cli` | Path to the whisper.cpp CLI (speech-to-text). |
+| `ROBOT_WHISPER_MODEL` | `~/whisper.cpp/models/ggml-base.en.bin` | Whisper GGML model file. |
+| `ROBOT_PIPER_BIN` | `~/piper/piper/piper` | Path to the Piper TTS binary. |
+| `ROBOT_PIPER_VOICE` | `~/piper/en_US-lessac-medium.onnx` | Piper voice model. Audition alternatives (incl. other accents) with `./scripts/scan_piper_voice.sh`. **After changing this, run `./scripts/generate_sounds.sh --force`** — the earcons in `sounds/` were baked with the old voice and nothing regenerates them for you, so "Yes?" would answer in one voice and the reply arrive in another. |
 | `ROBOT_PIPER_SPEAKER` | *(empty)* | Speaker id **inside a multi-speaker voice** (`en_US-arctic`, `en_GB-vctk`, `en_US-l2arctic`, ...). Empty for a normal single-speaker voice. Leave it empty on a multi-speaker model and Piper uses speaker 0, which is rarely the one you wanted — on `en_US-arctic` that is `awb` (Scottish). Non-numeric values are ignored with a warning. |
 | `ROBOT_MIC` | `plughw:1,0` | ALSA capture device for command recording (find with `arecord -l`); `plughw` auto-resamples to 16 kHz. Card **numbers shift** when you add USB audio — pin by name: `plughw:CARD=<id>,DEV=0`. |
 | `ROBOT_RECORD_SECS` | `4` | Seconds of audio captured per command after a wake/ENTER. |
@@ -311,7 +311,7 @@ Folder layout + animation rules: [`brain/faces/README.md`](../brain/faces/README
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_FACE_ENABLE` | `1` | `0` turns the face off entirely (never blocks driving either way). |
-| `ROBOT_FACE_BACKEND` | `auto` | `auto` (tries turing→framebuffer→simulated) \| `turing` (USB-C serial panel) \| `framebuffer` (a **DSI/HDMI** screen e.g. **Freenove 5" 800×480** → `/dev/fb0`) \| `simulated` (logs only). |
+| `ROBOT_FACE_BACKEND` | `framebuffer` | `auto` (tries turing→framebuffer→simulated) \| `turing` (USB-C serial panel) \| `framebuffer` (a **DSI/HDMI** screen e.g. **Freenove 5" 800×480** → `/dev/fb0`) \| `simulated` (logs only). |
 | `ROBOT_FACE_PORT` | `AUTO` | **turing only.** Serial port for the USB-C panel, or `AUTO` (e.g. `/dev/ttyACM0`). |
 | `ROBOT_FACE_REVISION` | `A` | **turing only.** `A` (Turing/UsbPCMonitor 320×480) or `B` (XuanFang) — confirm with the lib's `simple-program.py`. |
 | `ROBOT_FACE_WIDTH` / `ROBOT_FACE_HEIGHT` | `320` / `480` | **turing only** (panel geometry, portrait). The `framebuffer` backend auto-reads size **and** colour depth from the kernel (so 800×480 + Pi 5 KMS 32bpp just work). |
@@ -373,7 +373,7 @@ Inspect or edit it with **[`scripts/rag.sh`](../scripts/rag.sh)**: `./scripts/ra
 | Key | Default | What it does |
 |---|---|---|
 | `ROBOT_FOLLOWUP_ENABLE` | `1` | `1` = after a wake, keep taking commands with **no** "hey jarvis" until you go quiet — a natural back-and-forth. `0` = require the wake word every single turn (old behaviour). |
-| `ROBOT_FOLLOWUP_SILENCE_S` | `12` | Seconds of silence mid-conversation before it goes back to sleep (wake word needed again). Granularity is ~one record window (`ROBOT_RECORD_SECS`), so the effective wait rounds up to the next window. |
+| `ROBOT_FOLLOWUP_SILENCE_S` | `2` | Seconds of silence mid-conversation before it goes back to sleep (wake word needed again). Granularity is ~one record window (`ROBOT_RECORD_SECS`), so the effective wait rounds up to the next window. |
 
 ## Wake word (openWakeWord)
 

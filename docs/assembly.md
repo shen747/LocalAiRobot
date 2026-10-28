@@ -54,10 +54,10 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
    throttles a bare board at 80–85 °C.
 2. **Flash Raspberry Pi OS Lite (64-bit, Bookworm)** with **Raspberry Pi Imager** + an SD reader. In the
    Imager's OS-customisation (⚙️):
-   - **Set the username you'll use for everything — this becomes `YOUR_USER`** in this doc and in
-     `config/robot.env`'s whisper/piper paths. You replace it **only in `config/robot.env`** (step 5).
-     `scripts/robot.service` also has `YOUR_USER` but **don't edit it** — `./scripts/run_me.sh
-     --install-boot` fills in your username + repo path automatically.
+   - **Set the username you'll use for everything — this becomes `YOUR_USER`** in this doc. You never
+     replace it in a file: `config/robot.env`'s paths start with `~`, and `scripts/robot.service` also has
+     `YOUR_USER` but **don't edit it** — `./scripts/run_me.sh --install-boot` fills in your username + repo
+     path automatically.
    - **Enable SSH**, set **Wi-Fi** SSID/password + locale so the Pi joins headless. *(Need to switch Wi-Fi
      later without a monitor? [docs/change-pi-wifi.md](change-pi-wifi.md) sets up a phone-hotspot fallback
      + a Comitup captive portal + passwordless mobile SSH.)*
@@ -80,11 +80,11 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
    sudo reboot
    ```
 5. **Plug in the USB mic + speaker, then set up `config/robot.env`** — **three** things (leave the rest):
-   - **`YOUR_USER`** → your real username, in the four whisper/piper path lines. One-liner (uses `whoami`):
+   - **`ROBOT_CONCIERGE_MODE=0`** + **`ROBOT_HALLOWEEN_MODE=0`** — the shipped file is set up as the
+     stationary Halloween greeter; these two make it the crawler car:
      ```bash
-     sed -i "s/YOUR_USER/$(whoami)/g" config/robot.env
+     sed -i -e "s|^ROBOT_CONCIERGE_MODE=.*|ROBOT_CONCIERGE_MODE=0|" -e "s|^ROBOT_HALLOWEEN_MODE=.*|ROBOT_HALLOWEEN_MODE=0|" config/robot.env
      ```
-     Check: `grep whisper config/robot.env` shows `/home/<you>/whisper.cpp/...` (no literal `YOUR_USER`).
    - **`ROBOT_DRY_RUN=1`** — bench mode: fakes motor + sensors so nothing needs wiring yet.
      ```bash
      sed -i "s|^ROBOT_DRY_RUN=.*|ROBOT_DRY_RUN=1|" config/robot.env
@@ -97,7 +97,7 @@ drive — before any other hardware exists. Nothing moves (no motor; dry-run dri
      ```
      (`plughw` = ALSA's wrapper that auto-resamples to the 16 kHz the app records at; plain `hw` is rejected.)
 
-   Check: `grep -E '^ROBOT_(DRY_RUN|MIC)=' config/robot.env`. After **any** edit, reload it into your
+   Check: `grep -E '^ROBOT_(CONCIERGE_MODE|HALLOWEEN_MODE|DRY_RUN|MIC)=' config/robot.env`. After **any** edit, reload it into your
    shell: `set -a; source config/robot.env; set +a`.
 
    > ⚠️ **The brain reads settings from the shell, not the file.** The installer added an auto-load line to
