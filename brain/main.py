@@ -1185,6 +1185,19 @@ def main():
         except ValueError:
             return float(default)
 
+    def _greet_cooldown_s():
+        """The outcome cooldown after a GREETING (ROBOT_CONCIERGE_GREET_COOLDOWN_S, 60s) -- or, in Halloween
+        Mode, after a SPOOK, which has its own much shorter ROBOT_HALLOWEEN_COOLDOWN_S (default 10s).
+
+        The 60s exists so the person you're talking to can't re-trigger their own greeting. Halloween arms
+        it twice per visitor (at the scare, then again when the follow-up window closes), and on a sensor
+        that never goes quiet long enough for the they-left release in brain/pir.py the pair left the robot
+        deaf for ~76s of every ~77s -- a 3.5-day field log: 3,595 spooks, 22,157 motion edges ignored. On a
+        doorstep the next group of trick-or-treaters is usually right behind the last."""
+        if halloween.enabled():
+            return _concierge_cooldown_s("ROBOT_HALLOWEEN_COOLDOWN_S", 10)
+        return _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60)
+
     # Concierge telemetry. Silent looks are now a DEBUG line (they were 3,741 INFO lines a day, which buried
     # every line that mattered), so the ONE thing that has to survive at INFO is the shape of the hour:
     # how many edges the PIR offered, how many died in the cheap probe, and how many became a greeting. That
@@ -1996,11 +2009,11 @@ def main():
                     # 'talking' mouth). Earcon + a random spooky phrase, then FALL THROUGH into the SAME
                     # conversation loop as concierge.
                     log.info("halloween: motion -> spook")
-                    # Halloween has no face gate to arm a cooldown from, so arm the GREET one here: it used to
-                    # ride on the PIR's old blanket 15s cooldown, and that is now a ~2s debounce. Without this
-                    # a trick-or-treater standing at the door would be re-spooked every couple of seconds.
-                    motion_wake.arm_cooldown(
-                        _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "spooked")
+                    # Halloween has no face gate to arm a cooldown from, so arm it here: it used to ride on the
+                    # PIR's old blanket 15s cooldown, and that is now a ~2s debounce. Without this a
+                    # trick-or-treater standing at the door would be re-spooked every couple of seconds. It is
+                    # Halloween's OWN short cooldown, not the concierge's 60s -- see _greet_cooldown_s().
+                    motion_wake.arm_cooldown(_greet_cooldown_s(), "spooked")
                     concierge_stats["greeted"] += 1
                     fc.set_expression(halloween.FACE_STATE)    # a random spooky face (held through the greeting)
                     snd.play_blocking("spook")                 # LOUD jump-scare stinger, played in FULL before
@@ -2272,8 +2285,7 @@ def main():
                         # (On this robot ROBOT_CONCIERGE_GREET_ONLY=1 makes the clip a no-op, so the
                         # reorder buys nothing TODAY -- it buys correctness for anyone who turns the
                         # goodbye back on, which is the shipped default.)
-                        motion_wake.arm_cooldown(
-                            _concierge_cooldown_s("ROBOT_CONCIERGE_GREET_COOLDOWN_S", 60), "just-talked")
+                        motion_wake.arm_cooldown(_greet_cooldown_s(), "just-talked")
                         # WAS THAT QUEUED MOTION THE PERSON WE WERE TALKING TO, OR SOMEBODY NEW?
                         #
                         # It used to be discarded unconditionally, on the reasoning that a visitor stands

@@ -63,7 +63,9 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
    beat — **then** speaks a **random spooky phrase** (the face still held).
 4. It **falls into the conversation loop** (identical to Concierge): the kid can talk back, and Jarvis
    replies in a **spooky persona**. Ask it to drive and it refuses with a spooky line — it never moves.
-5. After `ROBOT_FOLLOWUP_SILENCE_S` of silence, it **drowses back to sleep**, ready for the next visitor.
+5. After `ROBOT_FOLLOWUP_SILENCE_S` of silence, it **drowses back to sleep** and is ready for the next
+   visitor **`ROBOT_HALLOWEEN_COOLDOWN_S` (10 s) later**. Lower it to spook the next group sooner; raise it
+   if the PIR keeps re-spooking an empty doorway.
 
 ---
 
