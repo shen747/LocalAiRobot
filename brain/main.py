@@ -849,6 +849,11 @@ def main():
                      "all looks" if captures.keep_all() else "greetings only",
                      os.environ.get("ROBOT_DETECT_CAPTURE_KEEP_DAYS", "7") or "7")
             threading.Thread(target=captures.prune, daemon=True, name="captures-prune").start()
+        # Halloween's person detector, loaded HERE so a missing model is an ERROR in the startup block (from
+        # load() itself) instead of a robot that silently never spooks anyone. ~0.1s, so no thread needed.
+        if halloween.enabled() and halloween.camera_check() and halloween.person_detector().load():
+            log.info("halloween: person detector ready (%s, score >= %.2f) -- a spook needs the PIR AND a "
+                     "person in frame", os.path.basename(halloween.PERSON_MODEL), halloween.person_score())
 
     # P2-3: ONE teardown list for BOTH exit paths (the early no-trigger return AND the main finally),
     # so the two can never drift apart again. driver.stop stays FIRST (ESC to neutral before anything
@@ -2026,13 +2031,13 @@ def main():
                     # Halloween Mode (Concierge sub-mode): a spook needs the PIR AND the camera. The PIR alone
                     # is a liar -- a field log had it firing every ~11s for hours at an empty doorway, and on
                     # motion alone each of those edges became a full scare. So the camera confirms first
-                    # (halloween.check_doorway): a face, OR anything moving in frame. Movement as well as faces
-                    # because trick-or-treaters wear MASKS / costumes that defeat face detection -- gating on
-                    # a face alone meant a costumed kid never got spooked, which is why this branch once
-                    # dropped the camera entirely. Nothing confirmed -> no spook, the short silent cooldown,
-                    # back to sleep. No camera, or no frames -> no spook either: strictly both or nothing
-                    # (ROBOT_HALLOWEEN_CAMERA_CHECK=0 goes back to motion alone). The idle face stays up for
-                    # the look (~1s), so an empty room never flashes a monster.
+                    # (halloween.check_doorway): a PERSON in frame, from a body detector -- trick-or-treaters
+                    # wear MASKS / costumes that defeat face detection, which is why this branch once dropped
+                    # the camera entirely -- or a face. (Plain movement was tried and let the door glass's
+                    # reflections and the sun on the bricks through.) Nobody -> no spook, the short silent
+                    # cooldown, back to sleep. No camera, or no frames -> no spook either: strictly both or
+                    # nothing (ROBOT_HALLOWEEN_CAMERA_CHECK=0 goes back to motion alone). The idle face stays
+                    # up for the look (~1s), so an empty room never flashes a monster.
                     look = None
                     if halloween.camera_check():
                         verdict, look = "blind", {"attempts": 0, "jpeg": None}
@@ -2054,15 +2059,21 @@ def main():
                             else:
                                 # DEBUG, like the concierge's silent looks: a chattering PIR makes these by the
                                 # hundred. The "N silent (probe)" count in the 5-min summary is the INFO view.
-                                log.debug("halloween: motion but nobody in frame (%d look(s)) -- no spook",
-                                          look["attempts"])
+                                log.debug("halloween: motion but nobody in frame (%d look(s), best person "
+                                          "score %.2f) -- no spook", look["attempts"],
+                                          halloween.person_detector().last_score)
                                 _keep_capture(look.get("jpeg"), "noface")
                             continue
                         concierge_stats["probe_hit"] += 1
                     # Show a random spooky face and KEEP it up through the whole greeting (talk_expr/end_expr =
                     # the spooky state, so say() doesn't swap in the generic 'talking' mouth). Earcon + a random
                     # spooky phrase, then FALL THROUGH into the SAME conversation loop as concierge.
-                    log.info("halloween: motion -> spook")
+                    # The suffix says WHAT the camera saw, so the photo and the reason can be checked together.
+                    _why = ""
+                    if look is not None:
+                        _score = halloween.person_detector().last_score
+                        _why = (" (person %.2f)" % _score if _score >= halloween.person_score() else " (a face)")
+                    log.info("halloween: motion -> spook%s", _why)
                     # Arm Halloween's own cooldown here, at the scare: it used to ride on the PIR's old blanket
                     # 15s cooldown, and that is now a ~2s debounce. Without this a trick-or-treater standing at
                     # the door would be re-spooked every couple of seconds. It is Halloween's OWN short

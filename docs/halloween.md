@@ -4,9 +4,9 @@ A spooky **sub-mode of [Concierge Mode](concierge.md)**. When a trick-or-treater
 sensor, Jarvis doesn't give a friendly "Hello!" — it **spooks them**: a **LOUD jump-scare stinger**, one of
 **50+ kid-friendly spooky phrases**, and a **random spooky face held on the panel**, then it drops into the
 normal conversation loop so it can banter back in a spooky character. It stays **100 % stationary** (every
-drive request is refused, spookily). A scare needs the **PIR and the camera to agree**: the camera looks for a
-face **or anything moving**, so a **masked, costumed stranger** still gets spooked but an empty doorway
-doesn't. There's no face recognition, and nothing ever leaves the Pi.
+drive request is refused, spookily). A scare needs the **PIR and the camera to agree**: a person detector
+must see **a person** in frame (or a face), so a **masked, costumed stranger** still gets spooked but an empty
+doorway doesn't. There's no face recognition, and nothing ever leaves the Pi.
 
 > Perfect on a porch on Halloween night: motion → camera sees someone → *SCREECH* → "Mwa-ha-ha… welcome, brave
 > soul!" → chat → sleep.
@@ -48,8 +48,8 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
 - **A camera** (the Concierge webcam). Every PIR trigger is confirmed by the camera before a scare —
   `ROBOT_HALLOWEEN_CAMERA_CHECK=1`, the default. **Strict:** no camera, or one that returns no picture, means
   **no scares at all**, and the log says `the camera gave no picture -- NOT spooking`. No enrolment is needed:
-  it only asks "is a face **or** anything moving in frame?", never "who is it?". Set
-  `ROBOT_HALLOWEEN_CAMERA_CHECK=0` to go back to scaring on motion alone.
+  it only asks "is there a person?", never "who is it?". The person detector (`models/person_nanodet.onnx`)
+  comes with `git pull`. Set `ROBOT_HALLOWEEN_CAMERA_CHECK=0` to go back to scaring on motion alone.
 - A **speaker** for the stinger + phrases (the robot's normal voice). Turn it **up** — the stingers are
   synthesized hot on purpose.
 
@@ -58,13 +58,15 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
 ## What happens (the flow)
 
 1. **Motion** on the PIR wakes the robot, and the **camera confirms it**. It takes ~1 s of frames (longer
-   while the sensor still says someone is there, up to 6 s) and looks for **a face, or anything moving**.
-   Movement counts, not just faces, because trick-or-treaters wear **masks/costumes** that defeat face
-   detection. Nothing seen → **no scare**: a short `ROBOT_CONCIERGE_SILENT_COOLDOWN_S`, then back to sleep.
-   That is what stops a chattering PIR from scaring an empty doorway every half minute. The idle face stays
-   up during the look, so an empty room never flashes a monster. If the camera can see its own movement (an
-   animated prop, a flickering candle, a TV), raise `ROBOT_HALLOWEEN_MOVE_FRACTION` (default `0.01` = 1 % of
-   the picture).
+   while the sensor still says someone is there, up to 6 s) and runs a **person detector** on each
+   ([NanoDet-Plus](https://github.com/opencv/opencv_zoo/tree/main/models/object_detection_nanodet) from
+   OpenCV Zoo). It finds **bodies**, so masks and costumes don't matter, and it only counts people tall enough
+   to be near the door (at least 15 % of the picture's height), which ignores the street reflected in door
+   glass. A visible face also counts. Nobody → **no scare**: a short `ROBOT_CONCIERGE_SILENT_COOLDOWN_S`,
+   then back to sleep. That is what stops a chattering PIR, reflections or moving sunlight from scaring an
+   empty doorway. The idle face stays up during the look, so an empty room never flashes a monster. The log
+   says what passed — `halloween: motion -> spook (person 0.78)` or `(a face)` — and
+   `ROBOT_HALLOWEEN_PERSON_SCORE` (default `0.5`) sets how sure it must be.
 2. A **random spooky face** snaps onto the panel and is **held** — it stays that monster through the whole
    scare (no flicker back to the idle face).
 3. It plays a **LOUD jump-scare stinger** (a screech/boom/shriek) in **full** — the face + sound sit there a

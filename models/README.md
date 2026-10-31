@@ -1,4 +1,4 @@
-# `models/` — wake-word models
+# `models/` — wake-word models (and Halloween's person detector)
 
 This folder holds the openWakeWord **`.onnx`** wake-word model(s) the robot listens for, pointed at by
 `ROBOT_WAKEWORD_MODEL` in [`config/robot.env`](../config/robot.env). Two ship:
@@ -12,6 +12,15 @@ This folder holds the openWakeWord **`.onnx`** wake-word model(s) the robot list
 > [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (attribution, **non-commercial**,
 > share-alike) — not this repo's MIT licence. `hey_richard.onnx` was trained for this robot with
 > openWakeWord's training tools.
+
+One more model ships here that is **not** a wake word:
+
+- **`person_nanodet.onnx`** — the person detector behind Halloween Mode's camera check (a spook needs the
+  PIR **and** a person in frame; see [docs/halloween.md](../docs/halloween.md)). It is OpenCV Zoo's
+  [NanoDet-Plus](https://github.com/opencv/opencv_zoo/tree/main/models/object_detection_nanodet)
+  (`object_detection_nanodet_2022nov.onnx`, 3.8 MB, SHA-256 `4b82da99…720186`), licensed
+  [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0). `brain/halloween.py` finds it next to the code,
+  so no config key points at it.
 
 Notes:
 - **The path is absolute** in the config (e.g. `~/LocalAiRobot/models/hey_jarvis.onnx`) on purpose: it

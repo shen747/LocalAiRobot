@@ -360,5 +360,7 @@ own licences. Built on [Ollama](https://ollama.com/) +
   [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) — not MIT.
 - The face-recognition models are downloaded at install time from InsightFace, whose pre-trained models are
   for **non-commercial research use only**.
+- [`models/person_nanodet.onnx`](models/README.md) (Halloween Mode's person detector) is OpenCV Zoo's
+  NanoDet-Plus, licensed [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 - Weather data by [Open-Meteo.com](https://open-meteo.com/), licensed
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

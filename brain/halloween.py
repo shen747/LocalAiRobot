@@ -5,17 +5,20 @@
 # spooky face, then falls through to the SAME conversation loop as Concierge so it can banter back. It is
 # still 100% STATIONARY (every move/explore/find is refused, spookily). Everything else -- the PIR wake, the
 # conversation loop, sleep-on-silence -- is Concierge's, unchanged. Recognition is SKIPPED, but the camera
-# CONFIRMS the motion before a spook (check_doorway): a face OR anything moving in frame, because masks and
-# costumes defeat face detection but not movement.
+# CONFIRMS the motion before a spook (check_doorway): a PERSON in frame, found by a body detector, so masks
+# and costumes don't matter -- or a face.
 #
 # Stdlib at import -- safe to import anywhere. OpenCV/numpy are imported lazily, only when a frame is actually
-# compared. See main.py for the wake-flow branch and docs/halloween.md.
+# looked at. See main.py for the wake-flow branch and docs/halloween.md.
 
+import logging
 import os
 import random
 import time
 
 import concierge   # Halloween is a sub-mode of Concierge -- it reuses concierge.enabled() as the base gate
+
+log = logging.getLogger("robot.halloween")
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -30,22 +33,35 @@ def enabled():
     return concierge.enabled() and os.environ.get("ROBOT_HALLOWEEN_MODE", "0").strip().lower() in _TRUE
 
 
-# --- The doorway check: does the camera agree somebody is there before we scare them?
+# --- The doorway check: is there a PERSON at the door before we scare them?
 #
 # The PIR alone is not enough. A field log had this build's sensor firing every ~11s for hours with nobody
 # there, and on motion alone every one of those edges became a full scare at an empty doorway. Faces alone
 # are not enough either -- a masked trick-or-treater has no face to find, which is why this mode once dropped
-# the camera altogether. So the camera looks for EITHER: a face (catches a visitor standing still), or a
-# change between frames (catches a mask, a hood, a kid in a box).
+# the camera altogether. Movement is not enough: on a real porch the door glass reflects the street and the
+# sun moves across the bricks, and both read as "something moved". So the camera asks the question that
+# matters with a person DETECTOR -- a body, mask or no mask -- and also accepts a face.
 #
 # LOOK_FRAMES is the floor, always taken; past it the look continues for as long as the PIR still asserts,
 # up to LOOK_MAX_S -- a visitor who tripped the sensor 4m out needs a few seconds to walk into frame.
 LOOK_FRAMES = 4
 LOOK_INTERVAL_S = 0.2
 LOOK_MAX_S = 6.0
-# Per-pixel brightness change (0-255) that counts as "this pixel changed". The frames are decoded at quarter
-# scale and blurred first, which leaves sensor noise and JPEG artefacts a few levels wide -- 25 is well clear.
-_PIXEL_DELTA = 25
+
+# The detector: OpenCV Zoo's NanoDet-Plus (COCO, Apache-2.0), committed as models/person_nanodet.onnx (3.8MB)
+# so a git pull is the whole install. 416x416 input, ~50-100ms a frame on a Pi 5 through cv2.dnn. Only its
+# "person" class is read.
+PERSON_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "models",
+                            "person_nanodet.onnx")
+_SIZE = 416
+_STRIDES = (8, 16, 32)              # this export has three output levels (2704 / 676 / 169 anchors)
+_REG_MAX = 7
+_MEAN = (103.53, 116.28, 123.675)   # BGR, the order NanoDet was trained in
+_STD = (57.375, 57.12, 58.395)
+# A person must be at least this share of the frame's height. That is somebody near the door (a kid ~4m from
+# a wide lens is ~0.16); it rules out the small people in the door glass's reflection of the street, and
+# passers-by far off.
+MIN_PERSON_HEIGHT = 0.15
 
 
 def camera_check():
@@ -54,62 +70,90 @@ def camera_check():
     return os.environ.get("ROBOT_HALLOWEEN_CAMERA_CHECK", "1").strip().lower() in _TRUE
 
 
-def move_fraction():
-    """ROBOT_HALLOWEEN_MOVE_FRACTION (default 0.01): the share of the picture that must change between two
-    frames to count as somebody moving. A trick-or-treater walking up changes far more than 1%; an empty
-    porch changes almost nothing. Raise it if the view has its own movement (an animated prop, a TV)."""
+def person_score():
+    """ROBOT_HALLOWEEN_PERSON_SCORE (default 0.5): how sure the detector must be that a box is a person.
+    Measured: people in test photos 0.78-0.84; this robot's empty porch 0.07 (0.24-0.30 before the
+    MIN_PERSON_HEIGHT cut drops the street reflected in the door glass). Raise it if something on the porch
+    keeps passing (a life-size decoration); lower it if costumed kids get missed."""
     try:
-        return min(1.0, max(0.0, float(os.environ.get("ROBOT_HALLOWEEN_MOVE_FRACTION", "") or 0.01)))
+        return min(1.0, max(0.0, float(os.environ.get("ROBOT_HALLOWEEN_PERSON_SCORE", "") or 0.5)))
     except ValueError:
-        return 0.01
+        return 0.5
 
 
-def _small_gray(jpeg):
-    """JPEG bytes -> a small, blurred, brightness-centred greyscale array, or None. Quarter-scale decoding
-    happens inside libjpeg, so it costs a few ms. Centring on the mean cancels a whole-frame exposure shift,
-    which would otherwise read as 'every pixel moved'."""
-    if not jpeg:
-        return None
-    import cv2                      # lazy: keeps this module importable on a box without OpenCV
-    import numpy as np
-    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_REDUCED_GRAYSCALE_4)
-    if img is None:
-        return None
-    img = cv2.GaussianBlur(img, (5, 5), 0).astype(np.int16)
-    return img - int(img.mean())
+class PersonDetector:
+    """`detector(jpeg) -> bool`: is there a person in this frame? Loads the model on first use (or via
+    load()); never raises -- a missing model or a bad frame reads as "no person", and load() says why once."""
 
+    def __init__(self, path=None):
+        self.path = path or PERSON_MODEL
+        self._net = None
+        self._failed = False
+        self.last_score = 0.0        # best person score in the last frame -- for the decision log line
 
-def movement_detector(fraction=None, prepare=None):
-    """A per-look `detect(jpeg) -> bool` that is True when this frame differs from the one TWO frames back
-    by at least `fraction` of its pixels (the second frame compares against the first). Make a new one for
-    every look; it keeps the last two frames.
-
-    Why two back and not the previous frame: the webcam's V4L2 queue hands a burst its frames back to back,
-    so neighbouring frames can be a single frame-time apart -- a walking visitor barely moves in 33ms. Two
-    back spans a few hundred ms, while still never comparing against a frame old enough for the light to
-    have drifted. Never raises: a frame that won't decode just doesn't count."""
-    want = move_fraction() if fraction is None else min(1.0, max(0.0, float(fraction)))
-    prep = prepare or _small_gray
-    recent = []
-
-    def moved(jpeg):
-        try:
-            cur = prep(jpeg)
-        except Exception:
-            return False
-        if cur is None:
-            return False
-        ref = recent[0] if recent else None
-        recent.append(cur)
-        del recent[:-2]
-        if ref is None or getattr(ref, "shape", None) != getattr(cur, "shape", None):
+    def load(self):
+        if self._net is not None:
+            return True
+        if self._failed:
             return False
         try:
-            return float((abs(cur - ref) > _PIXEL_DELTA).mean()) >= want
-        except Exception:
+            import cv2                  # lazy: keeps this module importable on a box without OpenCV
+            import numpy as np
+            net = cv2.dnn.readNet(self.path)
+            self._cv2, self._np, self._net = cv2, np, net
+            self._outs = net.getUnconnectedOutLayersNames()
+            return True
+        except Exception as e:
+            self._failed = True
+            log.error("halloween: could not load the person detector %s (%s) -- with the camera check on, "
+                      "only a visible FACE can confirm a visitor now. git pull should have brought it.",
+                      self.path, e)
             return False
 
-    return moved
+    def best(self, jpeg):
+        """The highest person score among boxes at least MIN_PERSON_HEIGHT of the frame tall (0.0 = none)."""
+        self.last_score = 0.0
+        if not jpeg or not self.load():
+            return 0.0
+        cv2, np = self._cv2, self._np
+        try:
+            img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                return 0.0
+            h, w = img.shape[:2]
+            k = _SIZE / max(h, w)
+            nh, nw = int(round(h * k)), int(round(w * k))
+            box = np.zeros((_SIZE, _SIZE, 3), np.float32)
+            box[:nh, :nw] = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+            box = (box - np.array(_MEAN, np.float32)) / np.array(_STD, np.float32)
+            self._net.setInput(cv2.dnn.blobFromImage(box))
+            outs = self._net.forward(self._outs)
+            proj = np.arange(_REG_MAX + 1, dtype=np.float32)
+            best = 0.0
+            for s, cls, reg in zip(_STRIDES, outs[::2], outs[1::2]):
+                p = cls.reshape(-1, cls.shape[-1])[:, 0]          # class 0 = person
+                reg = reg.reshape(-1, _REG_MAX + 1)
+                e = np.exp(reg - reg.max(axis=1, keepdims=True))
+                dist = ((e / e.sum(axis=1, keepdims=True)) @ proj).reshape(-1, 4) * s   # l, t, r, b
+                tall = (dist[:, 1] + dist[:, 3]) / k >= MIN_PERSON_HEIGHT * h
+                if tall.any():
+                    best = max(best, float(p[tall].max()))
+            self.last_score = best
+            return best
+        except Exception as e:
+            log.debug("halloween: person detector failed on a frame: %s", e)
+            return 0.0
+
+    def __call__(self, jpeg):
+        return self.best(jpeg) >= person_score()
+
+
+_detector = PersonDetector()
+
+
+def person_detector():
+    """The shared detector -- one model in memory for the whole run."""
+    return _detector
 
 
 def reaction_delay_s():
@@ -127,19 +171,19 @@ def reaction_delay_s():
     return max(0.0, warm) + 0.3
 
 
-def check_doorway(capture, has_face, still_present=None, fraction=None, sleep=time.sleep,
+def check_doorway(capture, has_face, still_present=None, has_person=None, sleep=time.sleep,
                   clock=time.monotonic):
     """Look before spooking. Returns (verdict, look). ONLY "seen" may spook -- sensor AND camera, never the
     sensor alone:
-      "seen"   -- a frame showed a face, or something moving -> spook.
-      "nobody" -- frames came back and none showed either -> don't spook.
+      "seen"   -- a frame showed a person (or a face) -> spook.
+      "nobody" -- frames came back and none showed one -> don't spook.
       "blind"  -- the camera returned no frame at all -> don't spook either. It is reported separately only
                   so the caller can say the camera is broken, rather than letting it pass as an empty porch.
-    `look` is concierge.presence_probe's dict (frame count + the last JPEG). Movement is checked first: it is
-    the cheap test, and it has to see every frame to keep its two-frame history. Dependency-injected, so it
-    runs without a camera in tests/test_halloween_look.py."""
-    moved = movement_detector(fraction)
-    look = concierge.presence_probe(capture, lambda jpeg: moved(jpeg) or has_face(jpeg),
+    `look` is concierge.presence_probe's dict (frame count + the last JPEG). The person detector runs first;
+    the face check only when it said no (a close-up face can fill too much of the frame for the body
+    detector). Dependency-injected, so it runs without a camera in tests/test_halloween_look.py."""
+    person = has_person or person_detector()
+    look = concierge.presence_probe(capture, lambda jpeg: person(jpeg) or has_face(jpeg),
                                     attempts=LOOK_FRAMES, interval_s=LOOK_INTERVAL_S, sleep=sleep,
                                     still_present=still_present, max_s=LOOK_MAX_S, clock=clock)
     if look["present"]:
