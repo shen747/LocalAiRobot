@@ -112,6 +112,21 @@ def movement_detector(fraction=None, prepare=None):
     return moved
 
 
+def reaction_delay_s():
+    """How long after the stinger starts to take the REACTION shot (their face as the scare lands).
+
+    It must land just AFTER the camera's warm window (ROBOT_CAMERA_WARM_WINDOW_S, default 2s). Inside that
+    window a capture reads a single frame, and the webcam's V4L2 queue is still holding frames from before the
+    scare -- the "reaction" would show them still walking up. Past it, the capture drains the queue first, so
+    the frame is from now: the stinger has just ended and the phrase is starting, which is when the jump turns
+    into a shriek or a laugh."""
+    try:
+        warm = float(os.environ.get("ROBOT_CAMERA_WARM_WINDOW_S", "") or 2.0)
+    except ValueError:
+        warm = 2.0
+    return max(0.0, warm) + 0.3
+
+
 def check_doorway(capture, has_face, still_present=None, fraction=None, sleep=time.sleep,
                   clock=time.monotonic):
     """Look before spooking. Returns (verdict, look). ONLY "seen" may spook -- sensor AND camera, never the

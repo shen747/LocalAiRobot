@@ -61,6 +61,8 @@ def save(jpeg_bytes, outcome, name=None, when=None):
         20260730-074742-known-ramesh.jpg     recognised -> greeted by name (this is the matching frame)
         20260730-074743-unknown.jpg          a face was seen but not matched -> generic greeting
         20260730-013120-noface.jpg           motion but no face -> stayed silent (only with MODE=all)
+        20261031-195512-spook.jpg            Halloween: the frame that confirmed somebody was there -> spooked
+        20261031-195514-spook-reaction.jpg   ...and their face a couple of seconds into the scare
     The timestamp leads so the names sort chronologically (and the cron purge can glob by date).
     """
     if not enabled() or not jpeg_bytes:

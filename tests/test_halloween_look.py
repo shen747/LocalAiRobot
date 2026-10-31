@@ -105,7 +105,23 @@ v, look = doorway([EMPTY] * 6 + [jpeg(person_at=300)], held=lambda n: n < 7)
 check("visitor reaches the frame while the PIR still asserts -> seen", (v, look["attempts"]), ("seen", 7))
 
 print("\n=== env ===")
-saved = {k: os.environ.pop(k, None) for k in ("ROBOT_HALLOWEEN_CAMERA_CHECK", "ROBOT_HALLOWEEN_MOVE_FRACTION")}
+saved = {k: os.environ.pop(k, None) for k in ("ROBOT_HALLOWEEN_CAMERA_CHECK", "ROBOT_HALLOWEEN_MOVE_FRACTION",
+                                              "ROBOT_CAMERA_WARM_WINDOW_S", "ROBOT_DETECT_CAPTURE",
+                                              "ROBOT_DETECT_CAPTURE_DIR")}
+import tempfile
+import captures
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["ROBOT_DETECT_CAPTURE_DIR"] = tmp
+    shots = [os.path.basename(captures.save(EMPTY, "spook") or ""),
+             os.path.basename(captures.save(EMPTY, "spook", "reaction") or "")]
+    check("deciding frame saved as <time>-spook.jpg", shots[0].endswith("-spook.jpg"), True)
+    check("reaction shot saved as <time>-spook-reaction.jpg", shots[1].endswith("-spook-reaction.jpg"), True)
+    os.environ.pop("ROBOT_DETECT_CAPTURE_DIR")
+check("reaction shot lands just past the 2s camera warm window", halloween.reaction_delay_s(), 2.3)
+os.environ["ROBOT_CAMERA_WARM_WINDOW_S"] = "3"
+check("...and follows a longer warm window", halloween.reaction_delay_s(), 3.3)
+os.environ["ROBOT_CAMERA_WARM_WINDOW_S"] = "junk"
+check("...junk falls back to the 2s default", halloween.reaction_delay_s(), 2.3)
 check("camera check defaults ON", halloween.camera_check(), True)
 check("move fraction defaults to 1%", halloween.move_fraction(), 0.01)
 os.environ["ROBOT_HALLOWEEN_CAMERA_CHECK"] = "0"

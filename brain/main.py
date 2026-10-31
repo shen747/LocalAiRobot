@@ -1319,6 +1319,29 @@ def main():
             log.info("concierge: kept the deciding frame -> %s", path)
         return path
 
+    def _spook_photos(look):
+        """Keep two pictures of every Halloween spook in ~/detect-captures, so a night's scares can be
+        audited: the frame that confirmed somebody was there (<time>-spook.jpg -- the answer to "was anyone
+        actually there?"), and a REACTION shot from a background thread a couple of seconds into the scare
+        (<time>-spook-reaction.jpg -- the fun one). Both follow ROBOT_DETECT_CAPTURE (0 keeps nothing) and
+        its age purge. The thread never touches the camera while the main thread does: nothing captures
+        during the stinger or the phrase. Never raises."""
+        _keep_capture((look or {}).get("jpeg"), "spook")
+        if not getattr(cam, "available", False) or not captures.enabled():
+            return
+
+        def _shoot():
+            time.sleep(halloween.reaction_delay_s())
+            try:
+                path = captures.save(cam.capture_jpeg(), "spook", "reaction")
+            except Exception as e:
+                log.debug("halloween: reaction shot failed: %s", e)
+                return
+            if path:
+                log.info("halloween: kept the reaction shot -> %s", path)
+
+        threading.Thread(target=_shoot, daemon=True, name="spook-photo").start()
+
     def _extract_timeout():
         """Per-attempt budget for the learning call: the social cap, but never MORE than the global LLM
         budget (lowering ROBOT_LLM_TIMEOUT_S must not be silently overridden by a background task)."""
@@ -2010,6 +2033,7 @@ def main():
                     # back to sleep. No camera, or no frames -> no spook either: strictly both or nothing
                     # (ROBOT_HALLOWEEN_CAMERA_CHECK=0 goes back to motion alone). The idle face stays up for
                     # the look (~1s), so an empty room never flashes a monster.
+                    look = None
                     if halloween.camera_check():
                         verdict, look = "blind", {"attempts": 0, "jpeg": None}
                         if getattr(cam, "available", False):
@@ -2046,6 +2070,7 @@ def main():
                     motion_wake.arm_cooldown(_greet_cooldown_s(), "spooked")
                     concierge_stats["greeted"] += 1
                     fc.set_expression(halloween.FACE_STATE)    # a random spooky face (held through the greeting)
+                    _spook_photos(look)                        # who was there + their reaction, for the audit
                     snd.play_blocking("spook")                 # LOUD jump-scare stinger, played in FULL before
                                                                # the phrase -> the monster lands + lingers a beat
                     say(halloween.spooky_greeting(),

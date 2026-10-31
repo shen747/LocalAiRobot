@@ -133,9 +133,16 @@ Names are still pronounced via `ROBOT_TTS_PRONUNCIATIONS` (e.g. "Ramesh"), same 
   *are* loud, though — that's the whole point of a jump scare. Turn the speaker down if a porch full of
   little ones is too much.)
 - **Never moves** — it's a stationary Concierge; drive/explore/find are always refused.
-- **Private** — the camera frames are checked on the Pi and never leave it. With
-  `ROBOT_DETECT_CAPTURE_MODE=all`, the last frame of each empty-porch look is kept in `~/detect-captures`
-  (so you can see what it saw) and purged after `ROBOT_DETECT_CAPTURE_KEEP_DAYS`.
+- **Photos of every scare** — each spook keeps two pictures in `~/detect-captures`:
+  `<time>-spook.jpg` (the frame that confirmed somebody was there) and `<time>-spook-reaction.jpg` (their
+  face a couple of seconds into the scare). With `ROBOT_DETECT_CAPTURE_MODE=all`, empty-porch looks are kept
+  too, as `<time>-noface.jpg`. To browse them from a phone or PC on the same Wi-Fi, run this on the robot and
+  open `http://<hostname>.local:8000` (Ctrl-C stops it):
+  ```bash
+  python3 -m http.server 8000 --directory ~/detect-captures
+  ```
+- **Private** — the camera frames are checked on the Pi and never leave it. Captures are purged after
+  `ROBOT_DETECT_CAPTURE_KEEP_DAYS` (7); `ROBOT_DETECT_CAPTURE=0` keeps none at all.
 - **Graceful** — no PIR, or no speaker? It simply does less (e.g. wake-word only, or no earcon) rather than
   crashing. **No camera** is the exception, by design: with the camera check on, it won't scare at all until
   the camera is back (or you set `ROBOT_HALLOWEEN_CAMERA_CHECK=0`).
