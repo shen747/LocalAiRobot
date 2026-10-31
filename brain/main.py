@@ -2000,19 +2000,49 @@ def main():
                 continue   # background voice-abort cancel, or MIC-03 transient retry -> just re-enter the wait
             if trigger == "MOTION":
                 if halloween.enabled():
-                    # Halloween Mode (Concierge sub-mode): the PIR MOTION wake IS the "someone's at the door"
-                    # signal, so we spook on motion. We deliberately do NOT require a camera face-detection:
-                    # trick-or-treaters wear MASKS / costumes that defeat face detection, so gating on it means
-                    # a costumed kid never gets spooked (and the spooky face just flickers, then reverts -- the
-                    # exact bug this replaces). Show a random spooky face and KEEP it up through the whole
-                    # greeting (talk_expr/end_expr = the spooky state, so say() doesn't swap in the generic
-                    # 'talking' mouth). Earcon + a random spooky phrase, then FALL THROUGH into the SAME
-                    # conversation loop as concierge.
+                    # Halloween Mode (Concierge sub-mode): a spook needs the PIR AND the camera. The PIR alone
+                    # is a liar -- a field log had it firing every ~11s for hours at an empty doorway, and on
+                    # motion alone each of those edges became a full scare. So the camera confirms first
+                    # (halloween.check_doorway): a face, OR anything moving in frame. Movement as well as faces
+                    # because trick-or-treaters wear MASKS / costumes that defeat face detection -- gating on
+                    # a face alone meant a costumed kid never got spooked, which is why this branch once
+                    # dropped the camera entirely. Nothing confirmed -> no spook, the short silent cooldown,
+                    # back to sleep. No camera, or no frames -> no spook either: strictly both or nothing
+                    # (ROBOT_HALLOWEEN_CAMERA_CHECK=0 goes back to motion alone). The idle face stays up for
+                    # the look (~1s), so an empty room never flashes a monster.
+                    if halloween.camera_check():
+                        verdict, look = "blind", {"attempts": 0, "jpeg": None}
+                        if getattr(cam, "available", False):
+                            verdict, look = halloween.check_doorway(
+                                cam.capture_jpeg, face_identifier.detect,
+                                still_present=(lambda: getattr(motion_wake, "is_active", False)))
+                        if verdict != "seen":
+                            motion_wake.arm_cooldown(
+                                _concierge_cooldown_s("ROBOT_CONCIERGE_SILENT_COOLDOWN_S", 8), "silent")
+                            concierge_stats["probe_silent"] += 1
+                            if verdict == "blind":
+                                # WARNING, every time: with the check on, a dead camera means NO spooks all
+                                # night, and this line is the only thing that says why.
+                                log.warning("halloween: motion, but the camera gave no picture -- NOT spooking "
+                                            "(a spook needs the sensor AND the camera). Check the webcam "
+                                            "(v4l2-ctl --list-devices), or set ROBOT_HALLOWEEN_CAMERA_CHECK=0 "
+                                            "to spook on motion alone")
+                            else:
+                                # DEBUG, like the concierge's silent looks: a chattering PIR makes these by the
+                                # hundred. The "N silent (probe)" count in the 5-min summary is the INFO view.
+                                log.debug("halloween: motion but nobody in frame (%d look(s)) -- no spook",
+                                          look["attempts"])
+                                _keep_capture(look.get("jpeg"), "noface")
+                            continue
+                        concierge_stats["probe_hit"] += 1
+                    # Show a random spooky face and KEEP it up through the whole greeting (talk_expr/end_expr =
+                    # the spooky state, so say() doesn't swap in the generic 'talking' mouth). Earcon + a random
+                    # spooky phrase, then FALL THROUGH into the SAME conversation loop as concierge.
                     log.info("halloween: motion -> spook")
-                    # Halloween has no face gate to arm a cooldown from, so arm it here: it used to ride on the
-                    # PIR's old blanket 15s cooldown, and that is now a ~2s debounce. Without this a
-                    # trick-or-treater standing at the door would be re-spooked every couple of seconds. It is
-                    # Halloween's OWN short cooldown, not the concierge's 60s -- see _greet_cooldown_s().
+                    # Arm Halloween's own cooldown here, at the scare: it used to ride on the PIR's old blanket
+                    # 15s cooldown, and that is now a ~2s debounce. Without this a trick-or-treater standing at
+                    # the door would be re-spooked every couple of seconds. It is Halloween's OWN short
+                    # cooldown, not the concierge's 60s -- see _greet_cooldown_s().
                     motion_wake.arm_cooldown(_greet_cooldown_s(), "spooked")
                     concierge_stats["greeted"] += 1
                     fc.set_expression(halloween.FACE_STATE)    # a random spooky face (held through the greeting)

@@ -4,13 +4,16 @@
 # (a trick-or-treater -- NOT an enrolled face) with one of 50+ kid-friendly SPOOKY phrases and a random
 # spooky face, then falls through to the SAME conversation loop as Concierge so it can banter back. It is
 # still 100% STATIONARY (every move/explore/find is refused, spookily). Everything else -- the PIR wake, the
-# conversation loop, sleep-on-silence -- is Concierge's, unchanged. The face pipeline is SKIPPED: motion alone
-# triggers a spook, because masks and costumes defeat face detection.
+# conversation loop, sleep-on-silence -- is Concierge's, unchanged. Recognition is SKIPPED, but the camera
+# CONFIRMS the motion before a spook (check_doorway): a face OR anything moving in frame, because masks and
+# costumes defeat face detection but not movement.
 #
-# Pure stdlib -- safe to import anywhere. See main.py for the wake-flow branch and docs/halloween.md.
+# Stdlib at import -- safe to import anywhere. OpenCV/numpy are imported lazily, only when a frame is actually
+# compared. See main.py for the wake-flow branch and docs/halloween.md.
 
 import os
 import random
+import time
 
 import concierge   # Halloween is a sub-mode of Concierge -- it reuses concierge.enabled() as the base gate
 
@@ -25,6 +28,110 @@ def enabled():
     """True ONLY when Concierge Mode is on AND ROBOT_HALLOWEEN_MODE is set. Halloween does nothing on its
     own -- it layers onto Concierge (which provides the PIR wake + stationary persona)."""
     return concierge.enabled() and os.environ.get("ROBOT_HALLOWEEN_MODE", "0").strip().lower() in _TRUE
+
+
+# --- The doorway check: does the camera agree somebody is there before we scare them?
+#
+# The PIR alone is not enough. A field log had this build's sensor firing every ~11s for hours with nobody
+# there, and on motion alone every one of those edges became a full scare at an empty doorway. Faces alone
+# are not enough either -- a masked trick-or-treater has no face to find, which is why this mode once dropped
+# the camera altogether. So the camera looks for EITHER: a face (catches a visitor standing still), or a
+# change between frames (catches a mask, a hood, a kid in a box).
+#
+# LOOK_FRAMES is the floor, always taken; past it the look continues for as long as the PIR still asserts,
+# up to LOOK_MAX_S -- a visitor who tripped the sensor 4m out needs a few seconds to walk into frame.
+LOOK_FRAMES = 4
+LOOK_INTERVAL_S = 0.2
+LOOK_MAX_S = 6.0
+# Per-pixel brightness change (0-255) that counts as "this pixel changed". The frames are decoded at quarter
+# scale and blurred first, which leaves sensor noise and JPEG artefacts a few levels wide -- 25 is well clear.
+_PIXEL_DELTA = 25
+
+
+def camera_check():
+    """ROBOT_HALLOWEEN_CAMERA_CHECK (default ON): a spook needs the PIR AND the camera. With it on, no camera
+    (or one that returns no frames) means no spooks at all. 0 = spook on motion alone (the old behaviour)."""
+    return os.environ.get("ROBOT_HALLOWEEN_CAMERA_CHECK", "1").strip().lower() in _TRUE
+
+
+def move_fraction():
+    """ROBOT_HALLOWEEN_MOVE_FRACTION (default 0.01): the share of the picture that must change between two
+    frames to count as somebody moving. A trick-or-treater walking up changes far more than 1%; an empty
+    porch changes almost nothing. Raise it if the view has its own movement (an animated prop, a TV)."""
+    try:
+        return min(1.0, max(0.0, float(os.environ.get("ROBOT_HALLOWEEN_MOVE_FRACTION", "") or 0.01)))
+    except ValueError:
+        return 0.01
+
+
+def _small_gray(jpeg):
+    """JPEG bytes -> a small, blurred, brightness-centred greyscale array, or None. Quarter-scale decoding
+    happens inside libjpeg, so it costs a few ms. Centring on the mean cancels a whole-frame exposure shift,
+    which would otherwise read as 'every pixel moved'."""
+    if not jpeg:
+        return None
+    import cv2                      # lazy: keeps this module importable on a box without OpenCV
+    import numpy as np
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_REDUCED_GRAYSCALE_4)
+    if img is None:
+        return None
+    img = cv2.GaussianBlur(img, (5, 5), 0).astype(np.int16)
+    return img - int(img.mean())
+
+
+def movement_detector(fraction=None, prepare=None):
+    """A per-look `detect(jpeg) -> bool` that is True when this frame differs from the one TWO frames back
+    by at least `fraction` of its pixels (the second frame compares against the first). Make a new one for
+    every look; it keeps the last two frames.
+
+    Why two back and not the previous frame: the webcam's V4L2 queue hands a burst its frames back to back,
+    so neighbouring frames can be a single frame-time apart -- a walking visitor barely moves in 33ms. Two
+    back spans a few hundred ms, while still never comparing against a frame old enough for the light to
+    have drifted. Never raises: a frame that won't decode just doesn't count."""
+    want = move_fraction() if fraction is None else min(1.0, max(0.0, float(fraction)))
+    prep = prepare or _small_gray
+    recent = []
+
+    def moved(jpeg):
+        try:
+            cur = prep(jpeg)
+        except Exception:
+            return False
+        if cur is None:
+            return False
+        ref = recent[0] if recent else None
+        recent.append(cur)
+        del recent[:-2]
+        if ref is None or getattr(ref, "shape", None) != getattr(cur, "shape", None):
+            return False
+        try:
+            return float((abs(cur - ref) > _PIXEL_DELTA).mean()) >= want
+        except Exception:
+            return False
+
+    return moved
+
+
+def check_doorway(capture, has_face, still_present=None, fraction=None, sleep=time.sleep,
+                  clock=time.monotonic):
+    """Look before spooking. Returns (verdict, look). ONLY "seen" may spook -- sensor AND camera, never the
+    sensor alone:
+      "seen"   -- a frame showed a face, or something moving -> spook.
+      "nobody" -- frames came back and none showed either -> don't spook.
+      "blind"  -- the camera returned no frame at all -> don't spook either. It is reported separately only
+                  so the caller can say the camera is broken, rather than letting it pass as an empty porch.
+    `look` is concierge.presence_probe's dict (frame count + the last JPEG). Movement is checked first: it is
+    the cheap test, and it has to see every frame to keep its two-frame history. Dependency-injected, so it
+    runs without a camera in tests/test_halloween_look.py."""
+    moved = movement_detector(fraction)
+    look = concierge.presence_probe(capture, lambda jpeg: moved(jpeg) or has_face(jpeg),
+                                    attempts=LOOK_FRAMES, interval_s=LOOK_INTERVAL_S, sleep=sleep,
+                                    still_present=still_present, max_s=LOOK_MAX_S, clock=clock)
+    if look["present"]:
+        return "seen", look
+    if look.get("jpeg") is None:
+        return "blind", look
+    return "nobody", look
 
 
 # The spooky identity injected as the robot's persona (replaces the concierge persona) when Halloween is ON,

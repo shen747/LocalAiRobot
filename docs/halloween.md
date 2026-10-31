@@ -4,10 +4,12 @@ A spooky **sub-mode of [Concierge Mode](concierge.md)**. When a trick-or-treater
 sensor, Jarvis doesn't give a friendly "Hello!" — it **spooks them**: a **LOUD jump-scare stinger**, one of
 **50+ kid-friendly spooky phrases**, and a **random spooky face held on the panel**, then it drops into the
 normal conversation loop so it can banter back in a spooky character. It stays **100 % stationary** (every
-drive request is refused, spookily). The trigger is **motion alone** — no camera, no face recognition — so a
-**masked, costumed stranger** gets spooked just the same, and nothing ever leaves the Pi.
+drive request is refused, spookily). A scare needs the **PIR and the camera to agree**: the camera looks for a
+face **or anything moving**, so a **masked, costumed stranger** still gets spooked but an empty doorway
+doesn't. There's no face recognition, and nothing ever leaves the Pi.
 
-> Perfect on a porch on Halloween night: motion → *SCREECH* → "Mwa-ha-ha… welcome, brave soul!" → chat → sleep.
+> Perfect on a porch on Halloween night: motion → camera sees someone → *SCREECH* → "Mwa-ha-ha… welcome, brave
+> soul!" → chat → sleep.
 
 ---
 
@@ -43,9 +45,11 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
 
 - **PIR motion sensor wired** — `ROBOT_PIR_PIN` (default GPIO4/pin 7). See
   [docs/wiring/pir-sensor-wiring.md](wiring/pir-sensor-wiring.md). Without it, only the wake word triggers.
-- **A camera is NOT required.** Halloween triggers on PIR **motion** alone — it never looks for a face
-  (costumes/masks defeat face detection anyway), so no camera, no face libraries, and no enrolment are
-  needed. (They're still installed as part of Concierge; Halloween just doesn't use them.)
+- **A camera** (the Concierge webcam). Every PIR trigger is confirmed by the camera before a scare —
+  `ROBOT_HALLOWEEN_CAMERA_CHECK=1`, the default. **Strict:** no camera, or one that returns no picture, means
+  **no scares at all**, and the log says `the camera gave no picture -- NOT spooking`. No enrolment is needed:
+  it only asks "is a face **or** anything moving in frame?", never "who is it?". Set
+  `ROBOT_HALLOWEEN_CAMERA_CHECK=0` to go back to scaring on motion alone.
 - A **speaker** for the stinger + phrases (the robot's normal voice). Turn it **up** — the stingers are
   synthesized hot on purpose.
 
@@ -53,10 +57,14 @@ car. To go back to a normal Concierge greeting, set `ROBOT_HALLOWEEN_MODE=0`. To
 
 ## What happens (the flow)
 
-1. **Motion** on the PIR wakes the robot — that motion *is* the "someone's at the door" signal, so it
-   spooks straight away. (No camera peek, no face-detect: trick-or-treaters wear **masks/costumes** that
-   defeat face detection, so gating on a detected face would let the best-costumed kids walk right up
-   unscared. Motion alone is the right trigger here.)
+1. **Motion** on the PIR wakes the robot, and the **camera confirms it**. It takes ~1 s of frames (longer
+   while the sensor still says someone is there, up to 6 s) and looks for **a face, or anything moving**.
+   Movement counts, not just faces, because trick-or-treaters wear **masks/costumes** that defeat face
+   detection. Nothing seen → **no scare**: a short `ROBOT_CONCIERGE_SILENT_COOLDOWN_S`, then back to sleep.
+   That is what stops a chattering PIR from scaring an empty doorway every half minute. The idle face stays
+   up during the look, so an empty room never flashes a monster. If the camera can see its own movement (an
+   animated prop, a flickering candle, a TV), raise `ROBOT_HALLOWEEN_MOVE_FRACTION` (default `0.01` = 1 % of
+   the picture).
 2. A **random spooky face** snaps onto the panel and is **held** — it stays that monster through the whole
    scare (no flicker back to the idle face).
 3. It plays a **LOUD jump-scare stinger** (a screech/boom/shriek) in **full** — the face + sound sit there a
@@ -125,8 +133,11 @@ Names are still pronounced via `ROBOT_TTS_PRONUNCIATIONS` (e.g. "Ramesh"), same 
   *are* loud, though — that's the whole point of a jump scare. Turn the speaker down if a porch full of
   little ones is too much.)
 - **Never moves** — it's a stationary Concierge; drive/explore/find are always refused.
-- **Private** — the trigger is a PIR motion pin, not the camera. No photo is taken; nothing leaves the Pi.
+- **Private** — the camera frames are checked on the Pi and never leave it. With
+  `ROBOT_DETECT_CAPTURE_MODE=all`, the last frame of each empty-porch look is kept in `~/detect-captures`
+  (so you can see what it saw) and purged after `ROBOT_DETECT_CAPTURE_KEEP_DAYS`.
 - **Graceful** — no PIR, or no speaker? It simply does less (e.g. wake-word only, or no earcon) rather than
-  crashing.
+  crashing. **No camera** is the exception, by design: with the camera check on, it won't scare at all until
+  the camera is back (or you set `ROBOT_HALLOWEEN_CAMERA_CHECK=0`).
 
 Have a spooky night! 🦇
