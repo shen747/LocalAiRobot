@@ -1,0 +1,37 @@
+# Raspberry Pi 5 hardware-control dependencies for the LocalAiRobot brain.
+# Install into a virtualenv (Raspberry Pi OS Bookworm is externally-managed):
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# The AI stack (Ollama, whisper.cpp, Piper, arecord/aplay) is NOT pip-installed --
+# it is set up by scripts/install_stack_pi5.sh and invoked as external processes.
+#
+# picamera2 is also NOT pip-installed: it comes from apt (python3-picamera2) and is visible to
+# this venv because install_stack_pi5.sh creates the venv with --system-site-packages.
+
+adafruit-circuitpython-servokit   # ESC (Electronic Speed Controller) + steering servo via PCA9685 (pulls in Blinka, PCA9685, motor)
+gpiozero                          # 3x HC-SR04P ultrasonic sensors (front / left / right)
+lgpio                             # gpiozero pin-factory backend for the Raspberry Pi 5
+adafruit-circuitpython-vl53l1x    # 3x VL53L1X laser ToF sensors -- ONLY when ROBOT_SENSOR_TYPE=vl53l1x (I2C, no GPIO)
+Pillow                            # camera frame letterbox/JPEG + procedural/animated face rendering
+numpy                             # RGB565 packing for the DSI/HDMI framebuffer face fallback
+opencv-python-headless<5          # Concierge Mode face detect (brain/face_id.py) + the USB-webcam v4l2 path.
+                                  # ALWAYS installed so ROBOT_CONCIERGE_MODE can be toggled on/off with no extra
+                                  # step. PINNED <5: OpenCV 5.0 dropped the top-level cv2.CascadeClassifier the
+                                  # Haar face detector uses. headless = no GUI libs (piwheels prebuilt aarch64).
+pyserial                          # USB-C face panel (turing-smart-screen serial protocol)
+
+# --- Wake word "Richard" (only exercised when ROBOT_WAKEWORD_ENABLE=1; still 100% offline) ---
+# openWakeWord needs an ONNX runtime and a continuous mic stream (sounddevice/PortAudio); the
+# PortAudio system lib is installed by scripts/install_stack_pi5.sh (apt portaudio19-dev). When the
+# wake word is off these are unused -- but then LIVE has no trigger (ENTER works only in --dry).
+openwakeword==0.4.0               # PINNED: 0.5+ require tflite-runtime, which has no Python 3.13 /
+                                  # aarch64 wheel, so pip backtracks unpredictably. 0.4.0 installs with
+                                  # onnxruntime and BUNDLES its models in the wheel (no separate download).
+onnxruntime                       # runs the wake-word + feature models on CPU
+sounddevice                       # continuous 16 kHz mic capture for the wake listener (needs PortAudio)
+
+# OPTIONAL -- only for the WIRELESS Zigbee wake sensor (ROBOT_ZIGBEE_WAKE=1, brain/zigbee_wake.py). Not
+# installed by default and not needed by any other feature: without it the Zigbee source logs one line and
+# degrades to available=False, leaving the wired PIR untouched. The patch installs it on demand:
+#     ./scripts/patches/common/6_wake_zigbee_pir.sh zigbee2mqtt/<your_sensor>
+# paho-mqtt>=2.0            # 2.x REQUIRES CallbackAPIVersion; brain/zigbee_wake.py is written for VERSION2

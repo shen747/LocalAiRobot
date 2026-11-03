@@ -1,0 +1,257 @@
+# brain/gst_camera.py -- OpenCV camera backend (USB/V4L2 or CSI/GStreamer-Argus).
+#
+# Two capture paths, both through OpenCV:
+#   * v4l2      -- a USB webcam (cv2.VideoCapture(index)); the simplest bring-up. Board-neutral, so BOTH the
+#                  Jetson AND the Raspberry Pi use this for a USB webcam (Pi: ROBOT_CAMERA_BACKEND=v4l2 --
+#                  the Pi's CSI default stays Picamera2, see brain/boards/pi5.py / picamera2_backend.py).
+#   * gstreamer -- a CSI camera through NVIDIA's Argus (nvarguscamerasrc) via cv2.CAP_GSTREAMER (Jetson-only).
+# Exposes the SAME .capture_jpeg()/.close()/.available surface as the Pi's Picamera2 backend, so the rest
+# of the vision pipeline is unchanged. Errors are caught internally -> available=False (vision degrades to
+# 'no frame'), mirroring picamera2_backend.py.
+#
+# cv2 is imported LAZILY (inside __init__) so this module imports fine when OpenCV is absent (e.g. a Pi CSI
+# build that never installs it); only make_camera() constructing a GstCamera pulls it in. On the Jetson the
+# venv must be --system-site-packages so it sees JetPack's system OpenCV + GStreamer plugins; on the Pi the
+# USB path needs `pip install opencv-python` (or apt python3-opencv).
+
+import logging
+import os
+import threading
+import time
+from io import BytesIO
+
+from PIL import Image                   # this module is imported LAZILY (only on a live camera build), where
+from camera import _letterbox_square    # Pillow is required anyway -- so the import is safe at module scope
+
+log = logging.getLogger("robot.cam")
+
+# Capture geometry for the CSI/Argus pipeline (downscaled off the sensor by nvvidconv before it reaches us).
+def _envi(key, default):
+    try:
+        return int(os.environ.get(key, default) or default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _envf(key, default):
+    try:
+        return float(os.environ.get(key, default) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+_CSI_W = _envi("ROBOT_CSI_WIDTH", 1280)
+_CSI_H = _envi("ROBOT_CSI_HEIGHT", 720)
+
+
+class GstCamera:
+    """Single-frame still capture on the Jetson via OpenCV. .capture_jpeg() returns JPEG bytes or None."""
+
+    def __init__(self, size, backend):
+        self.size = size
+        self.backend = backend or "gstreamer"
+        self._cv2 = None
+        self._cap = None
+        self.available = False
+        # Single-flight capture watchdog state -- set BEFORE the try so close()/capture_jpeg are safe
+        # even if construction below fails (no camera).
+        self._cap_lock = threading.Lock()
+        self._cap_worker = None
+        self.capture_wh = (0, 0)     # set BEFORE the try, like the watchdog state: a failed construction
+                                     # must still leave every attribute readable (0,0 = "never opened")
+        try:
+            self._cap_timeout = float(os.environ.get("ROBOT_CAMERA_CAPTURE_TIMEOUT_S", "12") or 12)
+        except (TypeError, ValueError):
+            self._cap_timeout = 12.0
+        # How many frames to READ AND THROW AWAY before keeping one. Two numbers, because the reason for
+        # discarding changes completely once the stream is already running:
+        #   COLD (first capture, or the first after a gap) -- the V4L2 driver hands back whatever is sitting
+        #     in its buffer queue, which can be seconds old, and auto-exposure/white-balance have not settled.
+        #     Discarding several frames is the only way to be sure the frame is BOTH current and correctly
+        #     exposed. Worth ~5 frames.
+        #   WARM (another capture moments later, i.e. inside a Concierge recognition burst) -- the stream has
+        #     been running continuously, AE/AWB settled on the previous capture, and the queue is one frame
+        #     deep. Discarding 5 again buys nothing and costs a frame interval each: measured on the field
+        #     robot, capture was the dominant per-frame cost at ~400ms, so a 35-frame recognition window was
+        #     spending most of its time throwing away good frames.
+        # Set _WARM equal to _DISCARD to restore the old uniform behaviour exactly.
+        self._discard_cold = _envi("ROBOT_CAMERA_DISCARD_FRAMES", 5)
+        self._discard_warm = _envi("ROBOT_CAMERA_DISCARD_FRAMES_WARM", 1)
+        self._warm_window_s = _envf("ROBOT_CAMERA_WARM_WINDOW_S", 2.0)
+        self._last_capture_at = 0.0
+        try:
+            import cv2
+            self._cv2 = cv2
+            src = os.environ.get("ROBOT_CAMERA_SOURCE", "").strip()
+            if self.backend == "v4l2":
+                # digit -> USB webcam index; a /dev/videoN path is used verbatim (v4l2-ctl --list-devices
+                # emits paths, and once the CSI driver claims /dev/video0 the USB cam is no longer index 0).
+                cap = cv2.VideoCapture(int(src) if src.isdigit() else (src or 0))
+            else:                                                          # CSI camera via Argus
+                # A bare digit (e.g. a leftover ROBOT_CAMERA_SOURCE=0 from the USB bring-up step) is a SENSOR
+                # id, not a pipeline -- build the Argus pipeline for it. Only a non-numeric value is treated
+                # as a full GStreamer pipeline string; empty -> the default CSI sensor 0 pipeline.
+                pipeline = self._gst(int(src)) if src.isdigit() else (src or self._gst())
+                cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if not cap.isOpened():
+                raise RuntimeError("cv2.VideoCapture could not open the camera "
+                                   f"(backend={self.backend}, source={src or 'CSI sensor 0'})")
+            # Keep the driver's buffer queue SHALLOW. With the default (often 4+) a read returns whatever was
+            # queued while nobody was looking, so the "current" frame can be a second or more stale -- which is
+            # exactly what forces a big discard count. Not all backends honour it (it's advisory), so the
+            # discard logic below still stands on its own; this just makes the warm path safe to shorten.
+            try:
+                cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            # ASK FOR A USABLE CAPTURE RESOLUTION. This used to be left entirely to the driver, and virtually
+            # every UVC webcam defaults to 640x480 -- so the face recogniser was being fed a fraction of the
+            # sensor the camera actually has. It matters more than it looks: face size in the final frame is
+            # (face's share of the frame width) x ROBOT_CAMERA_SIZE, and ArcFace needs real detail to fill a
+            # 112x112 aligned crop. On a wall-mounted concierge a visitor measured 70px -- soft enough that
+            # match scores sat at 0.25-0.40 against enrolment photos whose faces were 126-212px. Same person,
+            # same model: the live path simply had less to work with.
+            # A camera that can't do the requested mode silently gives its nearest one, so we LOG what we
+            # actually got rather than what we asked for -- otherwise this is a setting that lies.
+            want_w, want_h = _envi("ROBOT_CAMERA_CAPTURE_WIDTH", 1280), _envi("ROBOT_CAMERA_CAPTURE_HEIGHT", 720)
+            if want_w > 0 and want_h > 0:
+                try:
+                    cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, want_w)
+                    cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, want_h)
+                except Exception:
+                    pass
+            try:
+                self.capture_wh = (int(cap.get(self._cv2.CAP_PROP_FRAME_WIDTH)),
+                                   int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT)))
+            except Exception:
+                self.capture_wh = (0, 0)
+            self._cap = cap
+            self.available = True
+            cw, ch = self.capture_wh
+            note = ""
+            if cw and ch:
+                note = f", sensor {cw}x{ch}"
+                if want_w > 0 and (cw, ch) != (want_w, want_h):
+                    note += f" (asked {want_w}x{want_h} -- camera gave its nearest mode)"
+                # The recogniser sees (face's share of frame width) x size pixels, so capturing BELOW the
+                # square target throws detail away before face_id ever runs. Worth saying out loud.
+                if cw < self.size:
+                    note += (f" !! capture is narrower than the {self.size}px square target -- faces will be "
+                             "upscaled and soft; raise ROBOT_CAMERA_CAPTURE_WIDTH/HEIGHT")
+            log.info("camera: OpenCV %s backend started (still capture -> %dpx square JPEG%s)%s",
+                     self.backend, self.size, note, self._apply_autofocus())
+        except Exception as e:
+            # No camera / no cv2 / bad pipeline: degrade to 'no frame' rather than crash the brain.
+            log.warning("camera unavailable (%s) -- vision will report no frame (USB: `v4l2-ctl "
+                        "--list-devices`; CSI: test `gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! "
+                        "fakesink`)", e)
+            self.available = False
+
+    def _apply_autofocus(self):
+        """Apply ROBOT_CAMERA_AUTOFOCUS to a UVC webcam and return a short suffix for the startup line.
+
+        WHY THIS EXISTS: a UVC webcam's autofocus lives in the CAMERA's OWN FIRMWARE, and this backend used to
+        never touch it -- so `ROBOT_CAMERA_AUTOFOCUS` silently did NOTHING on a USB webcam (it was only ever
+        wired up in the Picamera2/CSI backend). That left focus in whatever state the firmware defaulted to,
+        usually CONTINUOUS AF, which can hunt mid-burst and hand the face matcher soft frames -- with nothing
+        in the log to say so. Now the key means the same thing on both backends, and the startup line reports
+        what the camera ACTUALLY came back with (cv2's AUTOFOCUS property is optional in UVC, so a set() can
+        legitimately fail -- we say so rather than pretend).
+
+        Only meaningful for v4l2; the Argus/CSI pipeline has no such control, so it's skipped there."""
+        if self.backend != "v4l2" or self._cap is None:
+            return ""
+        want_af = os.environ.get("ROBOT_CAMERA_AUTOFOCUS", "1") == "1"
+        cv2 = self._cv2
+        try:
+            ok = bool(self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if want_af else 0))
+            state = self._cap.get(cv2.CAP_PROP_AUTOFOCUS)
+        except Exception as e:
+            log.info("camera: could not set autofocus on this webcam (%s) -- leaving the firmware default", e)
+            return ", autofocus=firmware default"
+        if not ok:
+            # Very common: plenty of UVC cameras expose no software focus control at all. Not a failure --
+            # the firmware still does whatever it does; we just can't steer it. Say which, so 'soft frames'
+            # can be investigated with v4l2-ctl instead of being blamed on this code.
+            log.info("camera: this webcam does not accept a software autofocus setting -- leaving the firmware "
+                     "default. Inspect/force it with:  v4l2-ctl -d %s --list-ctrls  (look for "
+                     "focus_automatic_continuous / focus_absolute)", os.environ.get("ROBOT_CAMERA_SOURCE", "0"))
+            return ", autofocus=firmware default"
+        return f", autofocus={'ON' if want_af else 'OFF'} (camera reports {state:g})"
+
+    def _gst(self, sensor_id=0):
+        return (f"nvarguscamerasrc sensor-id={sensor_id} ! "
+                f"video/x-raw(memory:NVMM),width={_CSI_W},height={_CSI_H},framerate=30/1 ! "
+                f"nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! "
+                f"video/x-raw,format=BGR ! appsink drop=1 max-buffers=1")
+
+    def capture_jpeg(self):
+        """Capture one frame as preprocessed JPEG bytes, or None if no camera is available. The blocking
+        cv2.read() runs in a single-flight daemon worker joined with a deadline, so a wedged USB/V4L2 read
+        can never freeze the explore/command loop (only one worker ever touches the non-thread-safe handle)."""
+        if not self.available or self._cap is None:
+            return None
+        result = {"frame": None}
+        with self._cap_lock:
+            if self._cap_worker is not None and self._cap_worker.is_alive():
+                log.warning("capture still in-flight from a prior timeout -- skipping this frame")
+                return None
+            cap = self._cap                      # local ref: worker never touches a nulled attribute
+            # Cold vs warm (see __init__): a burst frame only needs the queue drained, not AE/AWB re-settled.
+            warm = (time.monotonic() - self._last_capture_at) <= self._warm_window_s
+            reads = max(1, self._discard_warm if warm else self._discard_cold)
+            def _grab():
+                try:
+                    frame = None
+                    for _ in range(reads):       # discard all but the last: newest frame, settled exposure
+                        ok, f = cap.read()
+                        if ok and f is not None:
+                            frame = f
+                    result["frame"] = frame
+                except Exception as e:
+                    log.warning("capture worker failed: %s", e)
+            worker = threading.Thread(target=_grab, daemon=True, name="cam-grab")
+            self._cap_worker = worker
+            worker.start()
+        worker.join(self._cap_timeout)           # join the LOCAL ref -- a concurrent caller may have
+        if worker.is_alive():                    # replaced self._cap_worker by now
+            log.warning("capture timed out after %.0fs -- returning no frame", self._cap_timeout)
+            return None
+        frame = result["frame"]
+        # Stamp AFTER the read, not before: what makes the next capture "warm" is how recently the stream
+        # last delivered, and a slow read is exactly the case where that distinction matters.
+        self._last_capture_at = time.monotonic()
+        if frame is None:
+            log.warning("capture failed: no frame from the camera")
+            return None
+        try:
+            rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
+            img = _letterbox_square(Image.fromarray(rgb), self.size)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            data = buf.getvalue()
+            # DEBUG, not INFO -- see the note in brain/picamera2_backend.py: the Concierge recognition burst
+            # made this single line ~144MB of a four-day log. --verbose brings it back.
+            log.debug("captured frame: %d bytes JPEG", len(data))
+            return data
+        except Exception as e:
+            log.warning("capture failed: %s", e)
+            return None
+
+    def close(self):
+        self.available = False
+        with self._cap_lock:                     # can't interleave with a new worker spawn
+            w = self._cap_worker
+            if w is not None and w.is_alive():
+                w.join(timeout=2.0)              # grace for a normal in-flight capture
+            if self._cap is not None:
+                if w is not None and w.is_alive():
+                    # Worker still wedged inside cv2 read(); releasing the handle under it can double-free
+                    # in native code. Leak it -- the daemon worker + process exit clean up.
+                    log.warning("camera close: capture worker still wedged -- leaking the OpenCV handle")
+                else:
+                    try:
+                        self._cap.release()
+                    except Exception:
+                        pass
+                self._cap = None

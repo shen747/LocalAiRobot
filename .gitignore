@@ -1,0 +1,65 @@
+# Python
+brain/.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime audio scratch (normally written to /dev/shm, but guard anyway)
+*.wav
+# ...EXCEPTION: the spoken earcons under sounds/ ARE committed (you generate them with Piper on your PC --
+# see sounds/README.md) so they ship with the repo. Drop your own WAVs there and they're tracked too.
+!sounds/**/*.wav
+
+# Runtime logs -- e.g. log.log from redirecting a run's console output to a file. (The detached-run
+# log lives in ~/.localairobot/robot.log, outside the repo.)
+*.log
+
+# Model weights: too large to commit; fetched by scripts/install_stack.sh
+*.bin
+*.onnx
+*.onnx.json
+*.gguf
+# ...EXCEPTION: the small (~200 KB) wake-word model(s) in models/ ARE committed -- they're the robot's
+# default "hey richard" wake word (see models/README.md). Everything else .onnx stays ignored.
+!models/*.onnx
+
+# Your settings. Installing copies config/robot.env.example to config/robot.env, which git never sees, so
+# keys and tokens there stay on the robot and a pull never touches the file.
+/config/robot.env
+.env
+
+# Personal secrets scratch (API keys etc.). Never committed.
+*.secrets
+
+# Editor/IDE
+# .idea/
+# .vscode/
+
+# Local AI-assistant files (session notes, per-machine settings). Never committed.
+**/CLAUDE.md
+.claude/settings.local.json
+
+# Scratch planning / review notes at the repo root (working documents, not part of the shipped repo).
+# The pattern: a design doc is drafted here, and whatever survives it ships as an OPERATOR doc under docs/
+# -- e.g. WEATHER.md became docs/weather.md. Leaving these merely untracked was the worst of both worlds:
+# they showed up in every `git status` forever without ever being committed.
+/PLAN.md
+/REVIEW.md
+/CODE_REVIEW.md
+/WEATHER_IMP.md
+/DOC_PLAN.md
+
+# macOS Finder droppings. Harmless, invisible on Linux, and a nuisance in every diff if one ever lands.
+.DS_Store
+
+# Generated batch enrollment script (scripts/create_enrollments.sh output) -- personal (names + descriptions),
+# regenerated on demand; never committed. The GENERATOR is committed; its OUTPUT is not.
+/enroll_all.sh
+
+# Personal data that must never be published: the enrolment photos (real people's faces), local API keys,
+# and full disk images of the robot (which contain all of the above). Ignored HERE, in the shared file, so a
+# fresh clone on another machine is protected too -- not only the one with a local .git/info/exclude.
+/people/
+/API_KEYS.txt
+/DISK_IMAGES/
+

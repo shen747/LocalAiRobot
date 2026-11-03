@@ -1,0 +1,65 @@
+# robot.service -- systemd unit to AUTO-START the brain on boot (headless, no SSH needed).
+# Don't edit YOUR_USER by hand. Install it with:  ./scripts/run_me.sh --install-boot
+#   (that fills in your username + repo path, copies this to /etc/systemd/system/, and enables it.)
+# Remove it with:  ./scripts/run_me.sh --disable-boot
+[Unit]
+Description=Local AI Robot Brain (RC crawler)
+# network-online.target: the brain runs FULLY OFFLINE, so it doesn't NEED the network -- this ordering just
+# brings Wi-Fi/SSH (and the Comitup portal) up FIRST. The wait is only actually enforced when
+# NetworkManager-wait-online.service is enabled (./scripts/install_stack_pi5.sh --bootstrap does that). If
+# booting away from known Wi-Fi feels slow, disable that wait -- see docs/change-pi-wifi.md.
+# ollama.service: the local LLM the brain talks to.
+# mosquitto/zigbee2mqtt: ONLY used by the optional wireless Zigbee wake sensor (ROBOT_ZIGBEE_WAKE=1). Listed
+# unconditionally because systemd ignores ordering against units that are not installed -- a robot without a
+# dongle is unaffected. Deliberately Wants= and NOT Requires=: if Zigbee2MQTT fails to start, the greeter
+# must still come up on its wired PIR. A hard Requires= would take the whole robot down because a gateway
+# for a secondary sensor crashed. After= also does NOT wait for Zigbee2MQTT to finish opening its serial
+# link (several seconds) -- brain/zigbee_wake.py uses connect_async + paho's reconnect backoff precisely so
+# late arrival is a non-event, which is why there is no sleep here.
+After=network-online.target ollama.service mosquitto.service zigbee2mqtt.service
+Wants=network-online.target ollama.service mosquitto.service zigbee2mqtt.service
+# SURVIVE random switch-off/on + repeated brownouts: never let systemd's start-rate limiter permanently give
+# up. By default >5 restarts within 10s (a brown-out crash loop) latches the unit 'failed' and it stays dead
+# until a manual restart -- exactly when an unattended robot must self-recover. 0 = no limit, always retry.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/LocalAiRobot/brain
+# Re-detect + re-apply the USB audio setup BEFORE the brain starts: re-point the ALSA default (~/.asoundrc)
+# + volume AND refresh the auto-detected device NAMES in config/robot.env. USB-audio volume resets to 0 across
+# every reboot, AND -- critically -- ALSA USB card ids are enumeration-ORDER dependent: across a power cycle a
+# speaker's and mic's ids can SWAP (especially two dongles that share a USB product string, e.g. "UACDemo
+# V1.0"), which silently breaks the explicit ROBOT_SOUNDS_DEVICE / ROBOT_MIC the ExecStart below reads
+# (aplay/arecord 'No such file or directory' -> silent earcons + dead mic). A FULL setup_audio (NOT
+# --audio-only) rewrites those names to THIS boot's enumeration; because ExecStartPre fully completes before
+# ExecStart, the config the brain then sources is already corrected. Best-effort: `|| true` never blocks boot.
+ExecStartPre=/bin/bash -c '/home/YOUR_USER/LocalAiRobot/scripts/setup_audio.sh || true'
+# NB: the Concierge face-recognition model is NOT provisioned here on purpose -- a slow first-boot download
+# could exceed systemd's start timeout. It's installed by scripts/install_stack_pi5.sh / _jetson.sh (with the
+# other models), so by the time this service boots the model is already present.
+# Load config/robot.env through bash, exactly like run_me.sh / a manual shell run. Do NOT switch
+# this to systemd's EnvironmentFile= -- that parser keeps trailing "# comments" as part of each
+# value, silently corrupting most settings in robot.env (numbers fall back to code defaults).
+ExecStart=/bin/bash -c 'if [ -f /home/YOUR_USER/LocalAiRobot/config/robot.env ]; then set -a; . /home/YOUR_USER/LocalAiRobot/config/robot.env; set +a; fi; exec /home/YOUR_USER/LocalAiRobot/brain/.venv/bin/python /home/YOUR_USER/LocalAiRobot/brain/main.py'
+# CRIT-02: stop with SIGINT (Python raises KeyboardInterrupt natively -> the graceful cleanup that
+# NEUTRALISES the ESC + closes devices runs) instead of the default SIGTERM (a hard kill that leaves the
+# PCA9685 holding its last pulse). TimeoutStopSec gives the bounded device closes time before SIGKILL.
+# NOTE: this is a template -- after editing, re-run ./scripts/run_me.sh --install-boot on any robot that
+# already has the boot service (or edit the installed unit + `sudo systemctl daemon-reload`).
+KillSignal=SIGINT
+TimeoutStopSec=15
+# Restart=always (not on-failure): bring the brain back after ANY exit -- a crash, a brown-out reboot, or an
+# unexpected CLEAN exit -- so flicking the power off and on always recovers to a running robot. A commanded
+# `systemctl stop` / `--disable-boot` still stops it (systemd never restarts a unit it deliberately stopped).
+Restart=always
+# Step 17: 10s (was 3s) so a PERSISTENT crash-loop (bad config, missing mic, corrupt venv, OOM at model
+# load) re-imports the heavy stack ~6x/min instead of ~20x/min -- much less CPU/thermal/flash/battery burn
+# on an unattended robot. A real brown-out reboot does a single clean ExecStart next boot, so this barely
+# affects the designed common case. NB: this is the TEMPLATE -- re-run ./scripts/run_me.sh --install-boot
+# (or edit the installed unit + `sudo systemctl daemon-reload`) to apply it to an already-provisioned robot.
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
